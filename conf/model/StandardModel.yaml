@@ -1,0 +1,16 @@
+name: StandardModel
+dim_model: 128
+num_head: 8
+dim_hid: 256
+nlayers: 6
+dropout: 0.2
+training:
+  lr: 1e-4
+  masking_rate: 0.3
+  optimizer_class: AdamW
+  scheduler: True
+  warmup: 15000
+  max_steps: 500000
+  accelerator: gpu
+  devices: 1
+  val_check_interval: 0.1

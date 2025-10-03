@@ -1,0 +1,226 @@
+name: GeneToken
+columns: ["cell_type", "donor_id"]
+normalization: log1p
+gene_sampling_strategy: random-nonzero
+model_speed_sanity_check: False
+precomp_embs_key: null
+dataset:
+  train:
+    max_tokens: 1000
+    variable_size: False
+    panel_overlap: False
+    panel_selection: mixed
+    panel_selection_mixed_prob: 0.5
+    panel_filter_regex: ".*"
+    panel_size_min: 400
+    panel_size_max: 5000
+    anchor_panel_size: 40000
+    anchor_max_tokens: 100
+    panel_max_drop_rate: null
+    feature_max_drop_rate: null
+  val:
+    same:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: ${datamodule.dataset.train.variable_size}
+      panel_overlap: ${datamodule.dataset.train.panel_overlap}
+      panel_selection: ${datamodule.dataset.train.panel_selection}
+      panel_selection_mixed_prob: ${datamodule.dataset.train.panel_selection_mixed_prob}
+      panel_filter_regex: ${datamodule.dataset.train.panel_filter_regex}
+      panel_size_min: ${datamodule.dataset.train.panel_size_min}
+      panel_size_max: ${datamodule.dataset.train.panel_size_max}
+    within_P200_B256:
+      max_tokens: 200
+      variable_size: False
+      panel_selection: random
+      panel_size_min: 200
+      panel_size_max: 200
+    within_P800_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: random
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P6400_B256:
+      max_tokens: 6400
+      panel_selection: random
+      variable_size: False
+      panel_size_min: 6400
+      panel_size_max: 6400
+    # across_P800_B256:
+    #   max_tokens: 800
+    #   variable_size: False
+    #   panel_selection: random
+    #   panel_size_min: 800
+    #   panel_size_max: 800
+    # within_donor_P800_B256:
+    #   max_tokens: 800
+    #   variable_size: False
+    #   panel_selection: random
+    #   panel_size_min: 800
+    #   panel_size_max: 800
+    # within_P800_B256_variable:
+    #   max_tokens: 800
+    #   variable_size: True
+    #   panel_selection: random
+    #   panel_size_min: 800
+    #   panel_size_max: 800
+    within_Preselected_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: ".*"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_Xenium_hIO_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_hIO_v1"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_Xenium_hIO_vs_all_B256:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_hIO_v1"
+      panel_size_min: 100000
+      panel_size_max: 100000
+      panel_overlap: True
+    within_P_SEAAD_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Merfish-SEA-AD"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_SEAAD_vs_all_B256:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Merfish-SEA-AD"
+      panel_size_min: 100000
+      panel_size_max: 100000
+      panel_overlap: True
+    within_P_Xenium_Human_Prime_5K_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_Human_Prime_5K"
+      panel_size_min: 800
+      panel_size_max: 800
+
+
+dataloader:
+  train:
+    within_group_sampling: "dataset"
+    batch_size: 256
+    shuffle: True
+    num_workers: 4
+    pin_memory: False
+    drop_last: True
+    num_samples: null
+  val:
+    same:
+      within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
+      batch_size: ${datamodule.dataloader.train.batch_size}
+      shuffle: ${datamodule.dataloader.train.shuffle}
+      num_workers: 2
+      pin_memory: False
+      drop_last: ${datamodule.dataloader.train.drop_last}
+      num_samples: 100000
+    within_P200_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P800_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P6400_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    # across_P800_B256:
+    #   within_group_sampling: null
+    #   batch_size: 256
+    #   shuffle: True
+    #   num_workers: 2
+    #   pin_memory: False
+    #   drop_last: True
+    #   num_samples: 100000
+    # within_donor_P800_B256:
+    #   within_group_sampling: "donor_id"
+    #   batch_size: 256
+    #   shuffle: True
+    #   num_workers: 2
+    #   pin_memory: False
+    #   drop_last: True
+    #   num_samples: 100000
+    # within_P800_B256_variable:
+    #   within_group_sampling: "dataset"
+    #   batch_size: 256
+    #   shuffle: True
+    #   num_workers: 2
+    #   pin_memory: False
+    #   drop_last: True
+    #   num_samples: 100000
+    within_Preselected_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_hIO_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_hIO_vs_all_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_SEAAD_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_SEAAD_vs_all_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_Human_Prime_5K_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000

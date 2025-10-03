@@ -1,0 +1,14 @@
+[venv]
+# Use .venv directory for virtual environments
+path = ".venv"
+
+[install]
+# Prefer binary wheels when available
+prefer-binary = true
+
+# Use index-url for PyTorch and related packages
+index-url = "https://download.pytorch.org/whl/cu126"
+
+[global]
+# Use system Python if available
+python = "python3.10" 
