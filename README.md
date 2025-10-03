@@ -1,4 +1,4 @@
-contrastive-transformer
+scConcept
 =======
 
 Single-Cell Contrastive Transformer
@@ -38,7 +38,7 @@ conda env create -f environment.yml
 
 2. Activate the environment:
 ```bash
-conda activate contrastive-transformer
+conda activate concept
 ```
 
 3. Install the package in development mode:
@@ -75,14 +75,14 @@ Flash Attention is installed separately because it requires PyTorch to be alread
 Usage
 ------------
 
-1. To Train from scrath refer to the example script [train.sh](https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/ct_rep/get_embs/train.sh) in the reproducibility repo
+1. To Train from scrath refer to the example script [train.sh](https://github.com/theislab/scConcept-reproducibility/blob/main/ct_rep/get_embs/train.sh) in the reproducibility repo
 
-2. To get the embeddings from a pre-trained model refer to the example script [get_embs.sh](https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/ct_rep/get_embs/get_embs.sh) in the reproducibility repo
+2. To get the embeddings from a pre-trained model refer to the example script [get_embs.sh](https://github.com/theislab/scConcept-reproducibility/blob/main/ct_rep/get_embs/get_embs.sh) in the reproducibility repo
 
-3. To validate a pre-trained model on a new hold-out dataset refert the example script [validate.sh](https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/scripts/validate.sh) in the reproducibility repo
+3. To validate a pre-trained model on a new hold-out dataset refert the example script [validate.sh](https://github.com/theislab/scConcept-reproducibility/blob/main/scripts/validate.sh) in the reproducibility repo
 
-4. To adapt a pre-trained model for a new hold-out dataset refer to the example script [adapt.sh](https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/scripts/adapt.sh) in the reproducibility repo
+4. To adapt a pre-trained model for a new hold-out dataset refer to the example script [adapt.sh](https://github.com/theislab/scConcept-reproducibility/blob/main/scripts/adapt.sh) in the reproducibility repo
 
 Licence
 -------
-`contrastive-transformer` is licensed under the [MIT License](https://opensource.org/licenses/MIT)
+`scConcept` is licensed under the [MIT License](https://opensource.org/licenses/MIT)

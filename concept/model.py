@@ -51,16 +51,16 @@ class BaseTransformerModel(L.LightningModule):
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
         # if self.flash_attention:
-        #     from contrastive_transformer.modules.flash_attention_layer import FlashTransformerEncoderLayer
-        #     from contrastive_transformer.modules.transformer import TransformerEncoder
+        #     from concept.modules.flash_attention_layer import FlashTransformerEncoderLayer
+        #     from concept.modules.transformer import TransformerEncoder
         #     # from torch.nn import TransformerEncoder
         #     print(f'####### Using flash_attention encoder implementation !!!!')
         #     encoder_layers = FlashTransformerEncoderLayer(
         #         self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
         #     )
         if self.flash_attention:
-            from contrastive_transformer.modules.flash_attention_layer_v2 import FlashTransformerEncoderLayer
-            from contrastive_transformer.modules.transformer import TransformerEncoder
+            from concept.modules.flash_attention_layer_v2 import FlashTransformerEncoderLayer
+            from concept.modules.transformer import TransformerEncoder
             print(f'####### Using flash_attention encoder implementation !!!!')
             encoder_layers = FlashTransformerEncoderLayer(
                 self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, device=self.device, dtype=self.dtype
@@ -72,8 +72,8 @@ class BaseTransformerModel(L.LightningModule):
         #         self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
         #     )
         else:
-            from contrastive_transformer.modules.te_layer import TransformerEncoderLayer
-            from contrastive_transformer.modules.transformer import TransformerEncoder
+            from concept.modules.te_layer import TransformerEncoderLayer
+            from concept.modules.transformer import TransformerEncoder
             print(f'####### Using New TransformerEncoderLayer implementation !!!!')
             encoder_layers = TransformerEncoderLayer(
                 self.dim_model, self.num_head, self.dim_hid, self.dropout,

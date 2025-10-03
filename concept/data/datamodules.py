@@ -7,8 +7,8 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler
 from lamin_dataloader.dataset import TokenizedDataset, Tokenizer
-from contrastive_transformer.data.collate import CustomCollate
-from contrastive_transformer.data.samplers import WithinGroupSampler
+from concept.data.collate import CustomCollate
+from concept.data.samplers import WithinGroupSampler
 from lamin_dataloader.collections import MappedCollection
 from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
 import multiprocessing

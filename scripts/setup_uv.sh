@@ -4,7 +4,7 @@
 
 set -e
 
-echo "🚀 Setting up contrastive-transformer with uv package manager..."
+echo "🚀 Setting up concept with uv package manager..."
 
 # Check if uv is installed
 if ! command -v uv &> /dev/null; then
@@ -27,7 +27,7 @@ source .venv/bin/activate
 
 # Install dependencies
 echo "📥 Installing dependencies..."
-uv sync --dev
+uv sync --extra dev
 
 # Check for CUDA availability
 check_cuda() {

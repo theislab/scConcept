@@ -1,4 +1,4 @@
-name: contrastive_transformer
+name: concept
 channels:
   - pytorch
   - nvidia
