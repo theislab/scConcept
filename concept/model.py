@@ -13,6 +13,7 @@ import numpy as np
 from torch.distributed.nn.functional import all_gather
 from collections import defaultdict
 from functools import partial
+from flash_attn.bert_padding import unpad_input, pad_input
 
 # set random seed
 random.seed(42)
@@ -50,36 +51,22 @@ class BaseTransformerModel(L.LightningModule):
         self.values_only_sanity_check = config['values_only_sanity_check']
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
-        # if self.flash_attention:
-        #     from contrastive_transformer.modules.flash_attention_layer import FlashTransformerEncoderLayer
-        #     from contrastive_transformer.modules.transformer import TransformerEncoder
-        #     # from torch.nn import TransformerEncoder
-        #     print(f'####### Using flash_attention encoder implementation !!!!')
-        #     encoder_layers = FlashTransformerEncoderLayer(
-        #         self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
-        #     )
         if self.flash_attention:
-            from contrastive_transformer.modules.flash_attention_layer_v2 import FlashTransformerEncoderLayer
-            from contrastive_transformer.modules.transformer import TransformerEncoder
+            from concept.modules.flash_attention_layer_v2 import FlashTransformerEncoderLayer
+            from concept.modules.transformer import TransformerEncoder
             print(f'####### Using flash_attention encoder implementation !!!!')
             encoder_layers = FlashTransformerEncoderLayer(
                 self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, device=self.device, dtype=self.dtype
             )
-        # else:
-        #     from torch.nn import TransformerEncoder, TransformerEncoderLayer
-        #     print(f'####### Using standard TransformerEncoderLayer implementation !!!!')
-        #     encoder_layers = TransformerEncoderLayer(
-        #         self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
-        #     )
         else:
-            from contrastive_transformer.modules.te_layer import TransformerEncoderLayer
-            from contrastive_transformer.modules.transformer import TransformerEncoder
+            from concept.modules.te_layer import TransformerEncoderLayer
+            from concept.modules.transformer import TransformerEncoder
             print(f'####### Using New TransformerEncoderLayer implementation !!!!')
             encoder_layers = TransformerEncoderLayer(
                 self.dim_model, self.num_head, self.dim_hid, self.dropout,
             )
         self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
-        # self.transformer_encoder = torch.compile(self.transformer_encoder)
+        # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
 
         if self.decoder_head:
             self.expression_decoder = GeneExpressionDecoder(self.dim_model)
@@ -91,7 +78,6 @@ class BaseTransformerModel(L.LightningModule):
         src_key_padding_mask: Tensor,
     ) -> Tensor:
 
-        from flash_attn.bert_padding import unpad_input, pad_input
         batch_size = tokens.size(0)
         tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask)
         tokens = tokens.squeeze(-1)
@@ -140,14 +126,6 @@ class BaseTransformerModel(L.LightningModule):
         raise NotImplementedError(
             "Subclasses must implement _encode_values method.")
 
-    def mask_values(self, values: Tensor, rate: float, ignore_idxs=None) -> Tensor:
-        mask = torch.rand(values.shape) < rate
-        if ignore_idxs is not None:
-            mask[:, ignore_idxs] = False
-        masked_values = values.clone()
-        masked_values[mask] = self.MASK_VALUE
-        return masked_values, mask
-
     def forward(self, input_tokens, input_values, src_key_padding_mask: Tensor = None):
         
         embs_padded, cell_embs = self._encode(input_tokens, input_values, src_key_padding_mask=src_key_padding_mask)
@@ -156,13 +134,8 @@ class BaseTransformerModel(L.LightningModule):
         return pred, embs_padded, cell_embs
 
     def _step(self, batch):
-        input_tokens, input_values = batch['tokens'], batch['values']
-        input_values_masked, masked_positions = self.mask_values(
-            input_values, self.masking_rate)
-        pred = self(input_tokens, input_values_masked)
-        # mlm: masked language modeling
-        loss = self._mlm_loss(pred, input_values, masked_positions)
-        return loss
+        raise NotImplementedError(
+            "Subclasses must implement _step method.")
 
     def training_step(self, batch, batch_idx):
         loss = self._step(batch)
@@ -192,6 +165,14 @@ class BaseTransformerModel(L.LightningModule):
             return [optimizer], [{'scheduler': lr_scheduler, 'interval': 'step'}]
         else:
             return optimizer
+
+    def mask_values(self, values: Tensor, rate: float, ignore_idxs=None) -> Tensor:
+        mask = torch.rand(values.shape) < rate
+        if ignore_idxs is not None:
+            mask[:, ignore_idxs] = False
+        masked_values = values.clone()
+        masked_values[mask] = self.MASK_VALUE
+        return masked_values, mask
 
     def _mlm_loss(self, pred, target, mask=None):
         if mask is not None:
@@ -236,6 +217,14 @@ class StandardModel(BaseTransformerModel):
 
         self.value_encoder = ContinuousValueEncoder(
             self.dim_model, dropout=0.0)
+
+    def _step(self, batch):
+        input_tokens, input_values = batch['tokens'], batch['values']
+        input_values_masked, masked_positions = self.mask_values(input_values, self.masking_rate)
+        pred = self(input_tokens, input_values_masked)
+        
+        loss = self._mlm_loss(pred, input_values, masked_positions)
+        return loss
 
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         return self.gene_token_encoder(tokens)
@@ -531,10 +520,7 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             
         logit_size = len(logits_both_batch)
         logits_both_batch *= torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
-        # if logit_size not in self.logit_masks:
-        #     self.logit_masks[logit_size] = torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
-        #     print(f'######## Creating logit mask[{logit_size}] with requires_grad={self.logit_masks[logit_size].requires_grad}')
-        # logits_both_batch *= self.logit_masks[logit_size]
+
         
         # if stage == 'train':
         #     length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
@@ -560,9 +546,9 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         #         print(f'match in batch_1, {idx} values: ', batch_1['values'][idx])
 
         if self.contrastive_loss == 'binary':
-            loss_cont, acc_cont = self._contrastive_binary_loss(
-                embs_1[:, 0, :], embs_2[:, 0, :])  # get cls token embedding
+            loss_cont, acc_cont = self._contrastive_binary_loss(logits)
             top5_acc_cont = 0
+            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_binary_loss(logits_both_batch)
         elif self.contrastive_loss == 'multiclass':
             loss_cont, acc_cont, top5_acc_cont = self._clip_loss(logits)
             loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_multiclass_loss(logits_both_batch)

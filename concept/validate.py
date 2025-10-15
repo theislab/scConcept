@@ -140,4 +140,4 @@ if __name__ == "__main__":
 
 
 
-# Usage Example: refert to https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/scripts/validate.sh
+# Usage Example: refert to https://github.com/theislab/scConcept-reproducibility/blob/main/scripts/validate.sh

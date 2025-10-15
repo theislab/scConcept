@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='contrastive_transformer',
+    name='concept',
     version='0.1.0',
-    url="https://github.com/theislab/contrastive-transformer",
+    url="https://github.com/theislab/scConcept",
     license='MIT',
     description='Contrastive Transformer for Single-Cell Genomics',
     author='Mojtaba Bahrami',

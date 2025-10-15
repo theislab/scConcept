@@ -1,9 +1,7 @@
 import torch
 from torch import Tensor
 from typing import Optional
-# from flash_attn.flash_attention import FlashMHA
 from flash_attn.modules.mha import MHA # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
-# from .FlashMHA_v2 import MHA
 
 import torch.nn as nn
 import torch.nn.functional as F

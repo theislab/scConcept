@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "contrastive_transformer"
+name = "concept"
 version = "0.1.0"
 description = "Contrastive Transformer for Single-Cell Genomics"
 readme = "README.md"
@@ -59,13 +59,13 @@ jupyter = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/theislab/contrastive-transformer"
-Repository = "https://github.com/theislab/contrastive-transformer"
-Documentation = "https://github.com/theislab/contrastive-transformer"
-"Bug Tracker" = "https://github.com/theislab/contrastive-transformer/issues"
+Homepage = "https://github.com/theislab/scConcept"
+Repository = "https://github.com/theislab/scConcept"
+Documentation = "https://github.com/theislab/scConcept"
+"Bug Tracker" = "https://github.com/theislab/scConcept/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["contrastive_transformer"]
+packages = ["concept"]
 
 [tool.black]
 line-length = 88
@@ -89,7 +89,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["contrastive_transformer"]
+known_first_party = ["concept"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -114,7 +114,7 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--cov=contrastive_transformer",
+    "--cov=concept",
     "--cov-report=term-missing",
     "--cov-report=html",
 ] 

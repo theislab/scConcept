@@ -2,8 +2,8 @@ import os
 import torch
 from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer
-from contrastive_transformer.data.datamodules import MappedCollectionDataModule
-from contrastive_transformer.model import BiEncoderContrastiveModel
+from concept.data.datamodules import MappedCollectionDataModule
+from concept.model import BiEncoderContrastiveModel
 import wandb
 from tqdm import tqdm
 import numpy as np
@@ -156,4 +156,4 @@ if __name__ == "__main__":
     get_embs(cfg, ckpt_path, emb_path)
     
     
-# Usage example: refer to https://github.com/theislab/contrastive-transformer-reproducibility/blob/main/ct_rep/get_embs/get_embs.sh
+# Usage example: refer to https://github.com/theislab/scConcept-reproducibility/blob/main/ct_rep/get_embs/get_embs.sh
