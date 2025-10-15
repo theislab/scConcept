@@ -11,7 +11,7 @@ Explicit differences from nn.TransformerEncoderLayer:
 
 import torch
 import torch.nn as nn
-from flash_attn.modules.mha import MHA
+from flash_attn.modules.mha import MHA # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
 from typing import Optional
 
 class TransformerEncoderLayer(nn.Module):
