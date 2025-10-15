@@ -20,22 +20,25 @@ sh ./scripts/setup_uv.sh
 
 ## Option 2: Using pip
 
-1. Create a virtual environment:
+1. Create and activate virtual environment:
 ```bash
 python -m venv venv
-```
-
-2. Activate the environment:
-```bash
-# On macOS/Linux:
 source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
 ```
 
-3. Install the package and dependencies:
+2. Install the package and dependencies:
 ```bash
 pip install -e .
+```
+
+3. Install [Flash Attention 2](https://github.com/Dao-AILab/flash-attention):
+```bash
+pip install flash-attn==2.7.* --no-build-isolation
+```
+
+4. Install `lamin-dataloader` (optional: only required for training over large number of anndata objects):
+```bash
+pip install git+https://github.com/theislab/lamin_dataloader.git
 ```
 
 
