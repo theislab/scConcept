@@ -520,10 +520,7 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             
         logit_size = len(logits_both_batch)
         logits_both_batch *= torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
-        # if logit_size not in self.logit_masks:
-        #     self.logit_masks[logit_size] = torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
-        #     print(f'######## Creating logit mask[{logit_size}] with requires_grad={self.logit_masks[logit_size].requires_grad}')
-        # logits_both_batch *= self.logit_masks[logit_size]
+
         
         # if stage == 'train':
         #     length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
