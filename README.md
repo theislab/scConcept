@@ -6,7 +6,7 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/mojtababahrami/scConcept/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/scConcept
 
-code for scConcept
+This repository contains the python package to train and use scConcept (Single-cell contrastive cell pre-training) method for single-cell transcriptomics.
 
 ## Getting started
 
@@ -45,7 +45,7 @@ If you found a bug, please use the [issue tracker][].
 
 ## Citation
 
-> t.b.a
+> Bahrami, M., Tejada-Lapuerta, A., Becker, S., Hashemi G, F.S. and Theis, F.J., 2025. scConcept: Contrastive pretraining for technology-agnostic single-cell representations beyond reconstruction. bioRxiv, pp.2025-10. doi: https://doi.org/10.1101/2025.10.14.682419
 
 [uv]: https://github.com/astral-sh/uv
 [scverse discourse]: https://discourse.scverse.org/

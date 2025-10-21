@@ -26,6 +26,21 @@ dependencies = [
   "anndata",
   # for debug logging (referenced from the issue template)
   "session-info2",
+  "numpy",
+  "pandas",
+  "torch==2.6.0",
+  "torchvision",
+  "lightning",
+  "scanpy>=1.10.0",
+  "hydra-core",
+  "wandb==0.20",
+  "anndata",
+  "torchmetrics",
+  "h5py",
+  "tqdm",
+  "einops",
+  "ninja",
+  "lamindb==1.6.2",
 ]
 optional-dependencies.dev = [
   "pre-commit",

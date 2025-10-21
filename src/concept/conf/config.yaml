@@ -1,0 +1,25 @@
+defaults:
+  - model: BiEncoderContrastiveModel
+  - datamodule: GeneToken
+  - split: split_v1_large
+  - _self_
+
+wandb:
+  enabled: True
+  run_id: null
+  run_name: ???
+  entity: theislab-transformer
+  project: contrastive-transformer
+  
+  
+PATH:
+  PROJECT_PATH: /lustre/groups/ml01/projects/contrastive_transformer
+  PROJECT_DATA_PATH: ${PATH.PROJECT_PATH}/data
+  CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
+  DATASET_PATH: ${PATH.PROJECT_DATA_PATH}/cxg_raw_2023-12-15
+  ADATA_PATH: ${PATH.DATASET_PATH}/h5ads
+  PANELS_PATH: ${PATH.PROJECT_PATH}/panels/human
+  LOCAL_DIR: null
+  SPLIT: ${split}
+  label_encoders_path: ${PATH.DATASET_PATH}/label_encoders.joblib
+  gene_mapping_path: ${PATH.DATASET_PATH}/pc_gene_token_mapping.pkl

@@ -1,0 +1,39 @@
+name: BiEncoderContrastiveModel
+flash_attention: False
+dim_model: 128
+num_head: 8
+dim_hid: 256
+projection_dim: null
+nlayers: 6
+dropout: 0.2
+decoder_head: False
+values_only_sanity_check: False
+data_loading_speed_sanity_check: False
+mlm_loss_weight: 0.0
+cont_loss_weight: 1.0
+contrastive_loss: multiclass # multiclass or binary
+logit_scale_init_value: 3.0
+per_view_normalization: False
+random_split: False
+mask_padding: False
+pe_max_len: 5000
+input_encoding: "rank_encoding" # "value_encoding"
+loss_switch_step: 20000
+training:
+  resume_from_checkpoint: False
+  validate_before_training: True
+  masking_rate: 0
+  lr: 1e-4
+  weight_decay: 0.0
+  optimizer_class: AdamW
+  scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
+  warmup: 20000
+  max_steps: 100000000
+  min_lr: 0.0
+  accelerator: gpu
+  devices: -1
+  num_nodes: 1
+  limit_train_batches: 1.0
+  val_check_interval: 0.1
+  check_val_every_n_epoch: 1
+  accumulate_grad_batches: 1
