@@ -13,7 +13,10 @@ import numpy as np
 from torch.distributed.nn.functional import all_gather
 from collections import defaultdict
 from functools import partial
-from flash_attn.bert_padding import unpad_input, pad_input
+from concept.modules.bert_padding import unpad_input, pad_input
+from concept.modules.flash_attention_layer import FlashTransformerEncoderLayer
+from concept.modules.transformer import TransformerEncoder
+
 
 # set random seed
 random.seed(42)
@@ -40,31 +43,20 @@ class BaseTransformerModel(L.LightningModule):
         self.input_encoding = config['input_encoding']
         self.PAD_TOKEN_ID = pad_token_id
         self.CLS_TOKEN_ID = cls_token_id
-        self.masking_rate = config.training['masking_rate']
-        self.lr = config.training['lr']
-        self.weight_decay = config.training['weight_decay']
-        self.optimizer_class = config.training['optimizer_class']
-        self.scheduler = config.training['scheduler']
-        self.warmup = config.training['warmup']
-        self.max_steps = config.training['max_steps']
-        self.min_lr = config.training['min_lr']
+        self.masking_rate = config['training']['masking_rate']
+        self.lr = config['training']['lr']
+        self.weight_decay = config['training']['weight_decay']
+        self.optimizer_class = config['training']['optimizer_class']
+        self.scheduler = config['training']['scheduler']
+        self.warmup = config['training']['warmup']
+        self.max_steps = config['training']['max_steps']
+        self.min_lr = config['training']['min_lr']
         self.values_only_sanity_check = config['values_only_sanity_check']
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
-        if self.flash_attention:
-            from concept.modules.flash_attention_layer_v2 import FlashTransformerEncoderLayer
-            from concept.modules.transformer import TransformerEncoder
-            print(f'####### Using flash_attention encoder implementation !!!!')
-            encoder_layers = FlashTransformerEncoderLayer(
-                self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, device=self.device, dtype=self.dtype
-            )
-        else:
-            from concept.modules.te_layer import TransformerEncoderLayer
-            from concept.modules.transformer import TransformerEncoder
-            print(f'####### Using New TransformerEncoderLayer implementation !!!!')
-            encoder_layers = TransformerEncoderLayer(
-                self.dim_model, self.num_head, self.dim_hid, self.dropout,
-            )
+        encoder_layers = FlashTransformerEncoderLayer(
+            self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, device=self.device, dtype=self.dtype
+        )
         self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
         # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
 

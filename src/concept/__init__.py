@@ -1,7 +1,7 @@
 from importlib.metadata import version
 
-from . import pl, pp, tl
+from . import model
 
-__all__ = ["pl", "pp", "tl"]
+__all__ = ["model"]
 
 __version__ = version("scConcept")
