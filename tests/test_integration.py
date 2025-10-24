@@ -26,6 +26,8 @@ try:
 except ImportError:
     FLASH_ATTN_AVAILABLE = False
 
+print(f"FLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
+
 # Mock flash_attn and its submodules only if flash-attn is not installed
 if not FLASH_ATTN_AVAILABLE:
     sys.modules['flash_attn'] = MagicMock()
@@ -266,7 +268,8 @@ def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset):
     
     # Forward pass
     with torch.no_grad():
-        pred, embs, cell_embs = model(tokens_tensor, values_tensor, padding_mask)
+        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+            pred, embs, cell_embs = model(tokens_tensor, values_tensor, padding_mask)
     
     # Check output shapes
     assert cell_embs.shape == (batch_size, mock_config['dim_model'])
@@ -308,7 +311,8 @@ def test_training_step(mock_config, mock_tokenizer, mock_dataset):
     # Test training step
     model.train()
     with patch.object(model, "log") as mock_log:
-        loss = model.training_step(batch, batch_idx=0)
+        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+            loss = model.training_step(batch, batch_idx=0)
         
         call_args_list = [call.args[0] for call in mock_log.call_args_list]
         assert any(call == 'train/loss' for call in call_args_list)
@@ -345,7 +349,8 @@ def test_predict_step(mock_config, mock_tokenizer, mock_dataset):
     # Test predict step
     model.eval()
     with torch.no_grad():
-        result = model.predict_step(batch, batch_idx=0)
+        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+            result = model.predict_step(batch, batch_idx=0)
     
     # Check that we get the expected keys
     expected_keys = ['pred', 'cls_cell_emb', 'mean_cell_emb', 'context_sizes']
@@ -396,7 +401,8 @@ def test_validation_step(mock_config, mock_tokenizer, mock_dataset):
     # Test validation step and check model.log calls
     model.eval()
     with torch.no_grad(), patch.object(model, "log") as mock_log:
-        model.validation_step(batch, batch_idx=0, dataloader_idx=0)
+        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+            model.validation_step(batch, batch_idx=0, dataloader_idx=0)
 
         call_args_list = [call.args[0] for call in mock_log.call_args_list]
         assert any(call == 'val/test_val/loss' for call in call_args_list)
