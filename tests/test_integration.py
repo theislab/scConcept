@@ -30,6 +30,7 @@ print(f"FLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
 
 # Mock flash_attn and its submodules only if flash-attn is not installed
 if not FLASH_ATTN_AVAILABLE:
+    print("Mocking flash_attn")
     sys.modules['flash_attn'] = MagicMock()
     sys.modules['flash_attn.modules'] = MagicMock()
     sys.modules['flash_attn.modules.mha'] = MagicMock()
@@ -69,6 +70,7 @@ def mock_model_methods():
         # Only mock _encode if flash-attn is not available
         if not FLASH_ATTN_AVAILABLE:
             with patch.object(BiEncoderContrastiveModel, '_encode', _mock_encode):
+                print("Mocking model._encode")
                 yield
         else:
             yield
