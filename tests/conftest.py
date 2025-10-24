@@ -1,6 +1,21 @@
 import anndata as ad
 import numpy as np
 import pytest
+import torch
+
+
+def get_device():
+    """Get the best available device (CUDA if available, otherwise CPU)"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+
+@pytest.fixture
+def device():
+    """Fixture providing the best available device for tests"""
+    return get_device()
 
 
 @pytest.fixture

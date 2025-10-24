@@ -227,7 +227,8 @@ def mock_dataset():
     return MockDataset(num_samples=20, vocab_size=100, max_tokens=30)
 
 
-def test_model_initialization(mock_config, mock_tokenizer):
+
+def test_model_initialization(mock_config, mock_tokenizer, device):
     """Test that the model can be initialized with mock config"""
     model = BiEncoderContrastiveModel(
         config=mock_config,
@@ -238,13 +239,17 @@ def test_model_initialization(mock_config, mock_tokenizer):
         val_loader_names=[]
     )
     
+    # Move model to device
+    model = model.to(device)
+    
     assert model is not None
     assert model.vocab_size == 100
     assert model.dim_model == 64
     assert model.num_head == 4
+    assert model.device.type == device.type
 
 
-def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset):
+def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset, device):
     """Test that the model can perform a forward pass with batch size 5"""
     model = BiEncoderContrastiveModel(
         config=mock_config,
@@ -254,6 +259,9 @@ def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset):
         world_size=1,
         val_loader_names=[]
     )
+    
+    # Move model to device
+    model = model.to(device)
     
     # Create mock batch using the helper function
     batch_size = 5
@@ -266,9 +274,14 @@ def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset):
         mask_value=-1
     )
     
+    # Move tensors to device
+    tokens_tensor = tokens_tensor.to(device)
+    values_tensor = values_tensor.to(device)
+    padding_mask = padding_mask.to(device)
+    
     # Forward pass
     with torch.no_grad():
-        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             pred, embs, cell_embs = model(tokens_tensor, values_tensor, padding_mask)
     
     # Check output shapes
@@ -276,9 +289,12 @@ def test_model_forward_pass(mock_config, mock_tokenizer, mock_dataset):
     assert embs.shape[0] == batch_size  # batch size
     assert embs.shape[1] == tokens_tensor.shape[1]  # sequence length
     assert embs.shape[2] == mock_config['dim_model']  # embedding dimension
+    # Check that outputs are on the correct device
+    assert cell_embs.device.type == device.type
+    assert embs.device.type == device.type
 
 
-def test_training_step(mock_config, mock_tokenizer, mock_dataset):
+def test_training_step(mock_config, mock_tokenizer, mock_dataset, device):
     """Test that the model can perform a training step"""
     model = BiEncoderContrastiveModel(
         config=mock_config,
@@ -289,6 +305,9 @@ def test_training_step(mock_config, mock_tokenizer, mock_dataset):
         val_loader_names=["val_test"]
     )
     
+    # Move model to device
+    model = model.to(device)
+    
     # Create mock batch data
     batch_size = 8
     seq_len = 20
@@ -298,20 +317,20 @@ def test_training_step(mock_config, mock_tokenizer, mock_dataset):
     
     # Create mock batch with paired data
     batch = {
-        'tokens_1': torch.randint(2, 100, (batch_size, seq_len)),
-        'values_1': torch.randn(batch_size, seq_len),
-        'panel_1': panel,
-        'tokens_2': torch.randint(2, 100, (batch_size, seq_len)),
-        'values_2': torch.randn(batch_size, seq_len),
-        'panel_2': panel,
-        'dataset_id': torch.randint(0, 2, (batch_size,)),
+        'tokens_1': torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        'values_1': torch.randn(batch_size, seq_len).to(device),
+        'panel_1': panel.to(device),
+        'tokens_2': torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        'values_2': torch.randn(batch_size, seq_len).to(device),
+        'panel_2': panel.to(device),
+        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name': 'test_panel'
     }
 
     # Test training step
     model.train()
     with patch.object(model, "log") as mock_log:
-        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             loss = model.training_step(batch, batch_idx=0)
         
         call_args_list = [call.args[0] for call in mock_log.call_args_list]
@@ -321,9 +340,10 @@ def test_training_step(mock_config, mock_tokenizer, mock_dataset):
         assert isinstance(loss, torch.Tensor)
         assert loss.requires_grad
         assert not torch.isnan(loss)
+        assert loss.device.type == device.type
 
 
-def test_predict_step(mock_config, mock_tokenizer, mock_dataset):
+def test_predict_step(mock_config, mock_tokenizer, mock_dataset, device):
     """Test that the model can perform a predict step"""
     model = BiEncoderContrastiveModel(
         config=mock_config,
@@ -334,22 +354,25 @@ def test_predict_step(mock_config, mock_tokenizer, mock_dataset):
         val_loader_names=["val_test"]
     )
     
+    # Move model to device
+    model = model.to(device)
+    
     # Create mock batch data for prediction
     batch_size = 8
     seq_len = 20
     
     # Create mock batch for prediction (single view, not paired)
     batch = {
-        'tokens': torch.randint(2, 100, (batch_size, seq_len)),
-        'values': torch.randn(batch_size, seq_len),
-        'dataset_id': torch.randint(0, 2, (batch_size,)),
+        'tokens': torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        'values': torch.randn(batch_size, seq_len).to(device),
+        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name': 'test_panel'
     }
     
     # Test predict step
     model.eval()
     with torch.no_grad():
-        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             result = model.predict_step(batch, batch_idx=0)
     
     # Check that we get the expected keys
@@ -365,11 +388,15 @@ def test_predict_step(mock_config, mock_tokenizer, mock_dataset):
     
     # Check that pred is None when decoder_head is False
     assert result['pred'] is None
+    
+    # Check that outputs are on the correct device
+    assert result['cls_cell_emb'].device.type == device.type
+    assert result['mean_cell_emb'].device.type == device.type
 
 
 from unittest.mock import patch
 
-def test_validation_step(mock_config, mock_tokenizer, mock_dataset):
+def test_validation_step(mock_config, mock_tokenizer, mock_dataset, device):
     """Test that the model can perform a validation step and calls model.log appropriately"""
     model = BiEncoderContrastiveModel(
         config=mock_config,
@@ -380,6 +407,9 @@ def test_validation_step(mock_config, mock_tokenizer, mock_dataset):
         val_loader_names=['test_val']
     )
     
+    # Move model to device
+    model = model.to(device)
+    
     # Create mock batch data
     batch_size = 8
     seq_len = 20
@@ -388,20 +418,20 @@ def test_validation_step(mock_config, mock_tokenizer, mock_dataset):
     panel = panel.repeat(batch_size, 1)
     
     batch = {
-        'tokens_1': torch.randint(2, 100, (batch_size, seq_len)),
-        'values_1': torch.randn(batch_size, seq_len),
-        'panel_1': panel,
-        'tokens_2': torch.randint(2, 100, (batch_size, seq_len)),
-        'values_2': torch.randn(batch_size, seq_len),
-        'panel_2': panel,
-        'dataset_id': torch.randint(0, 2, (batch_size,)),
+        'tokens_1': torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        'values_1': torch.randn(batch_size, seq_len).to(device),
+        'panel_1': panel.to(device),
+        'tokens_2': torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        'values_2': torch.randn(batch_size, seq_len).to(device),
+        'panel_2': panel.to(device),
+        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name': 'test_panel'
     }
     
     # Test validation step and check model.log calls
     model.eval()
     with torch.no_grad(), patch.object(model, "log") as mock_log:
-        with torch.autocast(device_type=model.device.type, dtype=torch.bfloat16):
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             model.validation_step(batch, batch_idx=0, dataloader_idx=0)
 
         call_args_list = [call.args[0] for call in mock_log.call_args_list]

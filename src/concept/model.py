@@ -55,7 +55,7 @@ class BaseTransformerModel(L.LightningModule):
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
         encoder_layers = FlashTransformerEncoderLayer(
-            self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, device=self.device, dtype=self.dtype
+            self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
         )
         self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
         # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation

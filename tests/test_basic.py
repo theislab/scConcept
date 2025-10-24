@@ -1,10 +1,21 @@
 import pytest
+import torch
 
 import concept
 
 
 def test_package_has_version():
     assert concept.__version__ is not None
+
+
+def test_cuda_availability(device):
+    """Test that CUDA is available when expected"""
+    if torch.cuda.is_available():
+        assert device.type == "cuda"
+        assert torch.cuda.is_available()
+    else:
+        assert device.type == "cpu"
+        print("CUDA not available, using CPU for tests")
 
 
 @pytest.mark.skip(reason="This decorator should be removed when test passes.")
