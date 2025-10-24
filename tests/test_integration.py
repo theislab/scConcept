@@ -38,7 +38,9 @@ if not FLASH_ATTN_AVAILABLE:
 from concept.model import BiEncoderContrastiveModel
 from concept.data.datamodules import MappedCollectionDataModule
 from concept.data.collate import CustomCollate
-from lamin_dataloader.dataset import GeneIdTokenizer
+from lamin_dataloader.dataset import GeneIdTokenizer, InMemoryTokenizedDataset
+from lamin_dataloader.dataset import CustomCollate as LaminCustomCollate
+from torch.utils.data import DataLoader
 
 
 def _mock_encode(self, tokens, values, src_key_padding_mask=None):
@@ -439,110 +441,94 @@ def test_validation_step(mock_config, mock_tokenizer, mock_dataset, device):
         assert any(call == 'val/test_val/loss_cont' for call in call_args_list)
         
 
-
-# @patch('concept.data.datamodules.MappedCollection')
-# @patch('concept.data.datamodules.TokenizedDataset')
-# def test_datamodule_initialization(mock_dataset_class, mock_collection, mock_tokenizer):
-#     """Test that the datamodule can be initialized with mock data"""
-#     # Mock the dataset and collection
-#     mock_dataset_instance = MockDataset()
-#     mock_dataset_class.return_value = mock_dataset_instance
-#     mock_collection.return_value = MagicMock()
+@pytest.mark.parametrize("batch_size,max_tokens,gene_sampling_strategy", [
+    (8, 20, 'random'),
+    (8, 20, 'top'),
+    (8, 20, 'random-nonzero'),
+    (8, 20, 'top-nonzero'),
+    (1, 20, 'top-nonzero'),
+    (8, 2, 'top-nonzero'),
+    (8, 1, 'top-nonzero'),
+])
+def test_predict_step_with_lamin_dataloader(mock_config, device, adata, tokenizer, batch_size, max_tokens, gene_sampling_strategy):
+    """Test predict_step using InMemoryTokenizedDataset and CustomCollate from lamin_dataloader with different parameters"""
     
-#     # Create temporary directory for panels
-#     with tempfile.TemporaryDirectory() as temp_dir:
-#         # Create a mock panel file
-#         panel_file = Path(temp_dir) / "test_panel.csv"
-#         panel_df = pd.DataFrame({
-#             'Ensembl_ID': [f'GENE_{i}' for i in range(10)]
-#         })
-#         panel_df.to_csv(panel_file, index=False)
-        
-#         # Initialize datamodule
-#         datamodule = MappedCollectionDataModule(
-#             dataset_path=temp_dir,
-#             split={'train': ['test.h5ad'], 'val': ['test_val.h5ad']},
-#             panels_path=temp_dir,
-#             tokenizer=mock_tokenizer,
-#             columns=['test_col'],
-#             precomp_embs_key=None,
-#             normalization='log1p',
-#             gene_sampling_strategy='random-nonzero',
-#             model_speed_sanity_check=False,
-#             dataset_kwargs={},
-#             dataloader_kwargs={
-#                 'batch_size': 4,
-#                 'shuffle': True,
-#                 'drop_last': True,
-#                 'num_workers': 0,
-#                 'num_samples': None,
-#                 'within_group_sampling': None
-#             },
-#             val_loader_names=[]
-#         )
-        
-#         assert datamodule is not None
-#         assert datamodule.tokenizer == mock_tokenizer
-
-
-# def test_collate_functionality(mock_tokenizer):
-#     """Test that the collate function works with mock data"""
-#     with tempfile.TemporaryDirectory() as temp_dir:
-#         # Create a mock panel file
-#         panel_file = Path(temp_dir) / "test_panel.csv"
-#         panel_df = pd.DataFrame({
-#             'Ensembl_ID': [f'GENE_{i}' for i in range(10)]
-#         })
-#         panel_df.to_csv(panel_file, index=False)
-        
-#         # Initialize collate function
-#         collate_fn = CustomCollate(
-#             tokenizer=mock_tokenizer,
-#             panels_path=temp_dir,
-#             max_tokens=50,
-#             min_tokens=5,
-#             split_input=True,
-#             variable_size=False,
-#             gene_sampling_strategy='random-nonzero',
-#             panel_selection='random',
-#             panel_selection_mixed_prob=1.0,
-#             panel_filter_regex='.*',
-#             panel_size_min=None,
-#             panel_size_max=None,
-#             panel_overlap=False,
-#             anchor_panel_size=None,
-#             anchor_max_tokens=None,
-#             panel_max_drop_rate=None,
-#             feature_max_drop_rate=None,
-#             model_speed_sanity_check=False
-#         )
-        
-#         # Create mock batch
-#         batch = [
-#             {
-#                 'tokens': np.random.randint(2, 100, size=20),
-#                 'values': np.random.exponential(1.0, size=20).astype(np.float32),
-#                 'dataset_id': np.array([0]),
-#                 'panel': np.random.randint(2, 100, size=10),
-#                 'panel_name': 'test_panel'
-#             }
-#             for _ in range(4)
-#         ]
-        
-#         # Test collate function
-#         collated_batch = collate_fn(batch)
-        
-#         # Check that we get the expected keys
-#         expected_keys = ['tokens_1', 'values_1', 'panel_1', 'tokens_2', 'values_2', 'panel_2', 'dataset_id', 'panel_name']
-#         for key in expected_keys:
-#             assert key in collated_batch
-        
-#         # Check tensor shapes
-#         assert collated_batch['tokens_1'].shape[0] == 4  # batch size
-#         assert collated_batch['values_1'].shape[0] == 4  # batch size
-#         assert collated_batch['tokens_2'].shape[0] == 4  # batch size
-#         assert collated_batch['values_2'].shape[0] == 4  # batch size
-
+    # Create model
+    model = BiEncoderContrastiveModel(
+        config=mock_config,
+        pad_token_id=0,
+        cls_token_id=1,
+        vocab_size=len(tokenizer.gene_mapping),
+        world_size=1,
+        val_loader_names=[]
+    )
+    model = model.to(device)
+    model.eval()
+    
+    # Create InMemoryTokenizedDataset
+    test_dataset = InMemoryTokenizedDataset(
+        adata.copy(),
+        tokenizer,
+        normalization='raw',
+        var_column=None
+    )
+    
+    # Create CustomCollate with parameterized max_tokens
+    collate_fn = LaminCustomCollate(
+        tokenizer.PAD_TOKEN,
+        max_tokens=max_tokens,
+        gene_sampling_strategy=gene_sampling_strategy
+    )
+    
+    # Create DataLoader with parameterized batch_size
+    dataloader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        shuffle=False,
+        drop_last=False
+    )
+    
+    # Test predict_step with real data pipeline
+    all_outputs = []
+    with torch.no_grad():
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            for batch_idx, batch in enumerate(dataloader):
+                # Move batch to device
+                batch = {key: value.to(device) if isinstance(value, torch.Tensor) else value 
+                        for key, value in batch.items()}
+                
+                # Call predict_step
+                output = model.predict_step(batch, batch_idx)
+                all_outputs.append(output)
+                
+                # Verify output structure
+                expected_keys = ['pred', 'cls_cell_emb', 'mean_cell_emb']
+                for key in expected_keys:
+                    assert key in output, f"Missing key: {key}"
+                
+                # Verify output shapes
+                actual_batch_size = batch['tokens'].shape[0]
+                assert output['cls_cell_emb'].shape == (actual_batch_size, mock_config['dim_model'])
+                assert output['mean_cell_emb'].shape == (actual_batch_size, mock_config['dim_model'])
+                
+                # Only test first few batches to keep test fast
+                if batch_idx >= 2:
+                    break
+    
+    # Verify we got some outputs
+    assert len(all_outputs) > 0, f"No outputs generated for batch_size={batch_size}, max_tokens={max_tokens}"
+    
+    # Test that we can concatenate all cell embeddings
+    all_cls_embs = torch.cat([output['cls_cell_emb'] for output in all_outputs], dim=0)
+    all_mean_embs = torch.cat([output['mean_cell_emb'] for output in all_outputs], dim=0)
+    
+    # Verify final shapes
+    total_cells = sum(batch['tokens'].shape[0] for batch in list(dataloader)[:3])
+    assert all_cls_embs.shape[0] == total_cells
+    assert all_mean_embs.shape[0] == total_cells
+    assert all_cls_embs.shape[1] == mock_config['dim_model']
+    assert all_mean_embs.shape[1] == mock_config['dim_model']
 
 if __name__ == "__main__":
     pytest.main([__file__])
