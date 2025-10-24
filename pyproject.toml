@@ -149,7 +149,10 @@ testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
   "--import-mode=importlib", # allow using test files with same name
+  "--cache-clear", # clear cache before running tests
 ]
+# SLURM-compatible cache settings
+cache_dir = "/tmp/.pytest_cache"
 
 [tool.coverage.run]
 source = [ "concept" ]
