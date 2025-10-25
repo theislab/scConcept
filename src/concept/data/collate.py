@@ -17,7 +17,7 @@ class CustomCollate:
                  min_tokens=0, 
                  split_input=True, 
                  variable_size=False, 
-                 gene_sampling_strategy='random-nonzero',
+                 gene_sampling_strategy='top-nonzero',
                  panel_selection='random', 
                  panel_selection_mixed_prob=1.0, 
                  panel_filter_regex='.*', 
@@ -36,14 +36,15 @@ class CustomCollate:
         self.variable_size = variable_size
         self.min_tokens = min_tokens
         self.max_tokens = max_tokens
-        self.panel_dir = Path(panels_path)
-        self.panel_names = [panel_name for panel_name in os.listdir(self.panel_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
-        self.panels = [self.tokenizer.encode(pd.read_csv(self.panel_dir / panel_name)['Ensembl_ID'].values) 
-                       for panel_name in self.panel_names]
-        for i in range(len(self.panels)):
-            print(f'Panel {self.panel_names[i]} size: {len(self.panels[i])} genes')
         self.panel_selection = panel_selection
         self.panel_selection_mixed_prob = panel_selection_mixed_prob
+        if self.panel_selection != 'random':
+            self.panel_dir = Path(panels_path)
+            self.panel_names = [panel_name for panel_name in os.listdir(self.panel_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
+            self.panels = [self.tokenizer.encode(pd.read_csv(self.panel_dir / panel_name)['Ensembl_ID'].values) 
+                       for panel_name in self.panel_names]
+            for i in range(len(self.panels)):
+                print(f'Panel {self.panel_names[i]} size: {len(self.panels[i])} genes')
         self.panel_size_min = panel_size_min
         self.panel_size_max = panel_size_max
         self.panel_overlap = panel_overlap
