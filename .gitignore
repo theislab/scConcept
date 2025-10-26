@@ -172,3 +172,4 @@ lightning_logs/
 figures/
 untracked/
 temp/
+cache/

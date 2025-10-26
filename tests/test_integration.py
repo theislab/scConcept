@@ -368,5 +368,81 @@ def test_predict_step_with_lamin_dataloader(
     assert all_cls_embs.shape[1] == mock_config['dim_model']
     assert all_mean_embs.shape[1] == mock_config['dim_model']
 
+def test_scConcept_integration(adata):
+    """Integration test for scConcept class with real wandb run"""
+    import tempfile
+    import os
+    from concept.scConcept import scConcept
+    
+    
+    # Initialize scConcept
+    sc_concept = scConcept()
+    
+    # Test model loading
+    sc_concept.load_config_and_model(run_id="6madwcoy", checkpoint="model-6madwcoy-1M")
+    
+    # Verify model is loaded correctly
+    assert sc_concept.model is not None
+    assert sc_concept.tokenizer is not None
+    assert sc_concept.device is not None
+    assert sc_concept.cfg is not None
+    
+    # Test embedding extraction from AnnData
+    batch_size = 4
+    
+    result = sc_concept.extract_embeddings(
+        adata=adata,
+        batch_size=batch_size,
+    )
+    
+    # Verify result structure
+    expected_keys = ['cls_cell_emb', 'mean_cell_emb']
+    for key in expected_keys:
+        assert key in result, f"Missing key: {key}"
+    
+    # Verify embedding shapes
+    n_cells = adata.shape[0]
+    assert result['cls_cell_emb'].shape == (n_cells, sc_concept.model.dim_model)
+    assert result['mean_cell_emb'].shape == (n_cells, sc_concept.model.dim_model)
+    
+    # Verify embeddings are numpy arrays
+    assert isinstance(result['cls_cell_emb'], np.ndarray)
+    assert isinstance(result['mean_cell_emb'], np.ndarray)
+    
+    # Verify embeddings are not all zeros or NaNs
+    assert not np.all(result['cls_cell_emb'] == 0)
+    assert not np.all(result['mean_cell_emb'] == 0)
+    assert not np.any(np.isnan(result['cls_cell_emb']))
+    assert not np.any(np.isnan(result['mean_cell_emb']))
+    
+    # Test embedding extraction from file
+    with tempfile.NamedTemporaryFile(suffix='.h5ad', delete=False) as tmp_file:
+        adata.write_h5ad(tmp_file.name)
+        
+        try:
+            result_from_file = sc_concept.extract_embeddings_from_file(
+                adata_path=tmp_file.name,
+                batch_size=batch_size
+            )
+            
+            # Verify file loading produces same results
+            np.testing.assert_array_almost_equal(
+                result['cls_cell_emb'], 
+                result_from_file['cls_cell_emb'], 
+                decimal=5
+            )
+            np.testing.assert_array_almost_equal(
+                result['mean_cell_emb'], 
+                result_from_file['mean_cell_emb'], 
+                decimal=5
+            )
+            
+        finally:
+            # Clean up temporary file
+            os.unlink(tmp_file.name)
+
+
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
