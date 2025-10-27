@@ -21,12 +21,6 @@ def device():
 
 @pytest.fixture
 def adata():
-    """Create a smaller mock AnnData object for testing with different batch sizes"""
-    n_cells = 10
-    n_genes = 30
-    np.random.seed(42)
-    
-    X = np.random.negative_binomial(n=3, p=0.7, size=(n_cells, n_genes)).astype(np.int32)
     # Use real gene names from the provided list
     real_gene_names = [
         'ENSG00000118454', 'ENSG00000134760', 'ENSG00000170917', 
@@ -38,12 +32,14 @@ def adata():
         'ENSG00000138095', 'ENSG00000174233'
     ]
     
-    # Repeat the real gene names to fill n_genes
-    gene_names = (real_gene_names * ((n_genes // len(real_gene_names)) + 1))[:n_genes]
+    n_cells = 10
+    np.random.seed(42)
+    
+    X = np.random.negative_binomial(n=3, p=0.7, size=(n_cells, len(real_gene_names))).astype(np.int32)
     
     adata = ad.AnnData(X=X)
-    adata.var_names = gene_names
-    adata.var['gene_symbols'] = gene_names
+    adata.var_names = real_gene_names
+    adata.var['gene_symbols'] = real_gene_names
     
     return adata
 

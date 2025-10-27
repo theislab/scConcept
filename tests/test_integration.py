@@ -368,12 +368,11 @@ def test_predict_step_with_lamin_dataloader(
     assert all_cls_embs.shape[1] == mock_config['dim_model']
     assert all_mean_embs.shape[1] == mock_config['dim_model']
 
+
+@pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
 def test_scConcept_integration(adata):
     """Integration test for scConcept class with real wandb run"""
-    import tempfile
-    import os
-    from concept.scConcept import scConcept
-    
+    from concept.scConcept import scConcept    
     
     # Initialize scConcept
     sc_concept = scConcept()
