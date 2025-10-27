@@ -4,6 +4,7 @@ from concept.scConcept import scConcept
 import numpy as np
 from pathlib import Path
 import argparse
+import anndata as ad
 
 
 def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_size: int,
@@ -44,9 +45,12 @@ def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_si
         print(f"Embeddings already exist in {emb_path} ...")
         return
     
+    # Load adata
+    adata = ad.read_h5ad(adata_path)
+
     # Extract embeddings
-    result = concept.extract_embeddings_from_file(
-        adata_path=str(adata_path),
+    result = concept.extract_embeddings(
+        adata=adata,
         batch_size=batch_size,
         max_tokens=max_tokens,
         gene_sampling_strategy=gene_sampling_strategy

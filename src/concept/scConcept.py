@@ -3,7 +3,7 @@ import shutil
 import torch
 from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer, InMemoryTokenizedDataset
-from lamin_dataloader.dataset import CustomCollate as LaminCustomCollate
+from lamin_dataloader.dataset import BaseCollate
 from concept.model import BiEncoderContrastiveModel
 import wandb
 from tqdm import tqdm
@@ -116,12 +116,10 @@ class scConcept:
         api = wandb.Api()
         self.run = api.run(f'{self.entity}/{self.project}/{run_id}')
         self.cfg = DictConfig(self.run.config)
+        self.cfg = self.apply_compatibility_changes(self.cfg)
         
         # Download artifacts if they don't exist
         self._download_artifacts_if_needed(api, ckpt_dir, checkpoint)
-        
-        # Apply compatibility changes for older checkpoints
-        self._apply_compatibility_changes()
         
         # Load gene mapping
         gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
@@ -144,40 +142,41 @@ class scConcept:
         self.model.eval()
         
         print(f"Model loaded successfully on {self.device}")
-        
-    def _apply_compatibility_changes(self):
-        """Apply compatibility changes for older checkpoints."""
-        if 'per_view_normalization' not in self.cfg.model:
-            self.cfg.model.per_view_normalization = False
-        if 'projection_dim' not in self.cfg.model:
-            self.cfg.model.projection_dim = None
-        if 'weight_decay' not in self.cfg.model.training:
-            self.cfg.model.training.weight_decay = 0.0
-        if 'min_lr' not in self.cfg.model.training:
-            self.cfg.model.training.min_lr = 0.0
-        if 'data_loading_speed_sanity_check' not in self.cfg.model:
-            self.cfg.model.data_loading_speed_sanity_check = False
-        if 'decoder_head' not in self.cfg.model:
-            self.cfg.model.decoder_head = True
-        if 'gene_sampling_strategy' in self.cfg.datamodule.dataset.train:
-            self.cfg.datamodule.gene_sampling_strategy = self.cfg.datamodule.dataset.train.gene_sampling_strategy
-        if 'gene_sampling_strategy' not in self.cfg.datamodule:
-            self.cfg.datamodule.gene_sampling_strategy = 'top-nonzero'
-        if 'model_speed_sanity_check' not in self.cfg.datamodule:
-            self.cfg.datamodule.model_speed_sanity_check = False
-        if 'min_tokens' not in self.cfg.model:
-            self.cfg.model.min_tokens = None
-        if 'max_tokens' not in self.cfg.model:
-            self.cfg.model.max_tokens = None
-        if 'mask_padding' not in self.cfg.model:
-            self.cfg.model.mask_padding = False
-        if 'flash_attention' not in self.cfg.model:
-            self.cfg.model.flash_attention = False
-        if 'pe_max_len' not in self.cfg.model:
-            self.cfg.model.pe_max_len = 5000
-        if 'loss_switch_step' not in self.cfg.model:
-            self.cfg.model.loss_switch_step = 2000
-   
+    
+    @staticmethod
+    def apply_compatibility_changes(cfg: DictConfig):
+        """Apply compatibility changes for older checkpoints. Returns updated cfg."""
+        if 'per_view_normalization' not in cfg.model:
+            cfg.model.per_view_normalization = False
+        if 'projection_dim' not in cfg.model:
+            cfg.model.projection_dim = None
+        if 'weight_decay' not in cfg.model.training:
+            cfg.model.training.weight_decay = 0.0
+        if 'min_lr' not in cfg.model.training:
+            cfg.model.training.min_lr = 0.0
+        if 'data_loading_speed_sanity_check' not in cfg.model:
+            cfg.model.data_loading_speed_sanity_check = False
+        if 'decoder_head' not in cfg.model:
+            cfg.model.decoder_head = True
+        if 'gene_sampling_strategy' in cfg.datamodule.dataset.train:
+            cfg.datamodule.gene_sampling_strategy = cfg.datamodule.dataset.train.gene_sampling_strategy
+        if 'gene_sampling_strategy' not in cfg.datamodule:
+            cfg.datamodule.gene_sampling_strategy = 'top-nonzero'
+        if 'model_speed_sanity_check' not in cfg.datamodule:
+            cfg.datamodule.model_speed_sanity_check = False
+        if 'min_tokens' not in cfg.model:
+            cfg.model.min_tokens = None
+        if 'max_tokens' not in cfg.model:
+            cfg.model.max_tokens = None
+        if 'mask_padding' not in cfg.model:
+            cfg.model.mask_padding = False
+        if 'flash_attention' not in cfg.model:
+            cfg.model.flash_attention = False
+        if 'pe_max_len' not in cfg.model:
+            cfg.model.pe_max_len = 5000
+        if 'loss_switch_step' not in cfg.model:
+            cfg.model.loss_switch_step = 2000
+        return cfg
    
     def extract_embeddings(self, adata: ad.AnnData, batch_size: int, max_tokens: int = None, 
                           gene_sampling_strategy: str = None):
@@ -211,8 +210,8 @@ class scConcept:
             var_column=None  # Use default var_names
         )
         
-        # Create CustomCollate
-        collate_fn = LaminCustomCollate(
+        # Create BaseCollate
+        collate_fn = BaseCollate(
             self.tokenizer.PAD_TOKEN,
             max_tokens=max_tokens,
             gene_sampling_strategy=gene_sampling_strategy
