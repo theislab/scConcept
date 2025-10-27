@@ -414,33 +414,6 @@ def test_scConcept_integration(adata):
     assert not np.all(result['mean_cell_emb'] == 0)
     assert not np.any(np.isnan(result['cls_cell_emb']))
     assert not np.any(np.isnan(result['mean_cell_emb']))
-    
-    # Test embedding extraction from file
-    with tempfile.NamedTemporaryFile(suffix='.h5ad', delete=False) as tmp_file:
-        adata.write_h5ad(tmp_file.name)
-        
-        try:
-            result_from_file = sc_concept.extract_embeddings_from_file(
-                adata_path=tmp_file.name,
-                batch_size=batch_size
-            )
-            
-            # Verify file loading produces same results
-            np.testing.assert_array_almost_equal(
-                result['cls_cell_emb'], 
-                result_from_file['cls_cell_emb'], 
-                decimal=5
-            )
-            np.testing.assert_array_almost_equal(
-                result['mean_cell_emb'], 
-                result_from_file['mean_cell_emb'], 
-                decimal=5
-            )
-            
-        finally:
-            # Clean up temporary file
-            os.unlink(tmp_file.name)
-
 
 
 

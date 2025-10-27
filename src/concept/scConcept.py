@@ -270,20 +270,3 @@ class scConcept:
         
         return result
     
-    def extract_embeddings_from_file(self, adata_path: str, batch_size: int, max_tokens: int = None,
-                                   gene_sampling_strategy: str = None):
-        """
-        Extract embeddings from an h5ad file.
-        
-        Args:
-            adata_path: Path to the h5ad file
-            batch_size: Batch size for dataloader
-            max_tokens: Maximum number of tokens per cell (if None, uses config default)
-            gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
-            
-        Returns:
-            dict: Dictionary containing embeddings and metadata
-        """
-        print(f"Loading AnnData from {adata_path}...")
-        adata = ad.read_h5ad(adata_path)
-        return self.extract_embeddings(adata, batch_size, max_tokens, gene_sampling_strategy)
