@@ -2,8 +2,9 @@ import os
 import shutil
 import torch
 from omegaconf import OmegaConf, DictConfig
-from lamin_dataloader.dataset import GeneIdTokenizer, InMemoryTokenizedDataset
-from lamin_dataloader.dataset import BaseCollate
+from lamin_dataloader.dataset import GeneIdTokenizer
+from lamin_dataloader.dataset import TokenizedDataset, BaseCollate
+from lamin_dataloader.collections import InMemoryCollection
 from concept.model import BiEncoderContrastiveModel
 import wandb
 from tqdm import tqdm
@@ -202,12 +203,12 @@ class scConcept:
         print(f"Extracting embeddings from AnnData with shape {adata.shape}")
         print(f"Parameters: max_tokens={max_tokens}, batch_size={batch_size}, gene_sampling_strategy={gene_sampling_strategy}")
         
-        # Create InMemoryTokenizedDataset
-        dataset = InMemoryTokenizedDataset(
-            adata,
+        # Create In memory TokenizedDataset
+        collection = InMemoryCollection([adata])
+        dataset = TokenizedDataset(
+            collection,
             self.tokenizer,
             normalization=self.cfg.datamodule.normalization,
-            var_column=None  # Use default var_names
         )
         
         # Create BaseCollate
@@ -224,7 +225,7 @@ class scConcept:
             collate_fn=collate_fn,
             shuffle=False,
             drop_last=False,
-            num_workers=0  # Use 0 for InMemoryDataset
+            num_workers=0
         )
         
         print(f"Processing {len(dataset)} cells...")

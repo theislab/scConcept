@@ -12,7 +12,7 @@ def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_si
              data_dir: str = 'h5ads', entity: str = 'theislab-transformer', 
              project: str = 'contrastive-transformer'):
     """
-    Generate embeddings using InMemoryTokenizedDataset.
+    Generate embeddings using InMemory TokenizedDataset.
     
     Args:
         run_id: Wandb run ID
@@ -67,7 +67,7 @@ def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_si
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate embeddings using InMemoryTokenizedDataset")
+    parser = argparse.ArgumentParser(description="Generate embeddings using InMemory TokenizedDataset")
     parser.add_argument("--run_id", type=str, help="Wandb-id of the run", required=True)
     parser.add_argument("--checkpoint", type=str, default='min_val_loss.ckpt', help="checkpoint name for loading")
     parser.add_argument("--max_tokens", type=int, default=None, help="number of tokens to use")

@@ -33,7 +33,8 @@ if not FLASH_ATTN_AVAILABLE:
 
 # Now we can import the modules
 from concept.model import BiEncoderContrastiveModel
-from lamin_dataloader.dataset import InMemoryTokenizedDataset
+from lamin_dataloader.dataset import TokenizedDataset
+from lamin_dataloader.collections import InMemoryCollection
 from lamin_dataloader.dataset import BaseCollate
 from torch.utils.data import DataLoader
 
@@ -288,7 +289,7 @@ def test_predict_step_with_lamin_dataloader(
     batch_size, 
     max_tokens, 
     gene_sampling_strategy):
-    """Test predict_step using InMemoryTokenizedDataset and 
+    """Test predict_step using InMemory TokenizedDataset and 
     BaseCollate from lamin_dataloader with different parameters"""
     
     # Create model
@@ -303,12 +304,11 @@ def test_predict_step_with_lamin_dataloader(
     model = model.to(device)
     model.eval()
     
-    # Create InMemoryTokenizedDataset
-    test_dataset = InMemoryTokenizedDataset(
-        adata.copy(),
-        tokenizer,
-        normalization='raw',
-        var_column=None
+    # Create InMemory TokenizedDataset
+    test_dataset = TokenizedDataset(
+        collection=InMemoryCollection([adata]),
+        tokenizer=tokenizer,
+        normalization='raw'
     )
     
     # Create BaseCollate with parameterized max_tokens
