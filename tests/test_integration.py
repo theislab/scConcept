@@ -371,14 +371,14 @@ def test_predict_step_with_lamin_dataloader(
 
 @pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
 def test_scConcept_integration(adata):
-    """Integration test for scConcept class with real wandb run"""
+    """Integration test for scConcept class with real HuggingFace model"""
     from concept.scConcept import scConcept    
     
     # Initialize scConcept
     sc_concept = scConcept()
     
     # Test model loading
-    sc_concept.load_config_and_model(run_id="6madwcoy", checkpoint="model-6madwcoy-1M")
+    sc_concept.load_config_and_model(model_name="Corpus-30M")
     
     # Verify model is loaded correctly
     assert sc_concept.model is not None

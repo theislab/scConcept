@@ -6,7 +6,7 @@ from lamin_dataloader.dataset import GeneIdTokenizer
 from lamin_dataloader.dataset import TokenizedDataset, BaseCollate
 from lamin_dataloader.collections import InMemoryCollection
 from concept.model import BiEncoderContrastiveModel
-import wandb
+from huggingface_hub import hf_hub_download
 from tqdm import tqdm
 from pathlib import Path
 import pandas as pd
@@ -21,106 +21,105 @@ class scConcept:
     
     def __init__(self, 
                  cfg: DictConfig = None,
-                 entity: str = 'theislab-transformer', 
-                 project: str = 'contrastive-transformer',
+                 repo_id: str = 'mojtababahrami/scConcept',
                  cache_dir: str = './cache/'):
         """
         Initialize the scConcept instance.
         
         Args:
-            cfg: Configuration dictionary (if provided, will use this instead of wandb)
-            entity: Wandb entity
-            project: Wandb project
-            cache_dir: Directory for caching checkpoints
+            cfg: Configuration dictionary (if provided, will use this instead of HuggingFace)
+            repo_id: HuggingFace repository ID
+            cache_dir: Directory for caching downloaded files
         """
-        self.entity = entity
-        self.project = project
+        self.repo_id = repo_id
         self.cfg = cfg
         self.cache_dir = cache_dir
         self.model = None
         self.tokenizer = None
         self.device = None
-        self.run = None
         
-    def _download_artifacts_if_needed(self, api, ckpt_dir: Path, checkpoint: str):
+    def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
-        Download model checkpoint and gene mapping artifacts from wandb if they don't exist.
+        Download model checkpoint, config, and gene mapping files from HuggingFace Hub if they don't exist.
         
         Args:
-            api: Wandb API instance
-            ckpt_dir: Directory to cache artifacts
-            checkpoint: Checkpoint filename
+            model_name: Model name (e.g., 'Corpus-30M')
+            model_dir: Directory to cache downloaded files
         """
-        
-        model_dir = ckpt_dir / checkpoint
         model_path = model_dir / 'model.ckpt'
         gene_mapping_path = model_dir / 'pc_gene_token_mapping.pkl'
+        config_path = model_dir / 'config.yaml'
+        
+        model_dir.mkdir(parents=True, exist_ok=True)
         
         # Download checkpoint if needed
         if not model_path.exists():
-            print(f"Downloading checkpoint artifact '{checkpoint}:latest' from wandb...")
-            artifact = api.artifact(f'{self.entity}/{self.project}/{checkpoint}:latest')
-            artifact_dir = Path(artifact.download(root=str(model_dir)))
-            
-            # Find and rename the downloaded checkpoint file
-            downloaded_files = list(artifact_dir.glob('*.ckpt')) + list(artifact_dir.glob('*.ckpt.*'))
-            if downloaded_files:
-                # Assuming the first ckpt file is the checkpoint we want
-                downloaded_file = downloaded_files[0]
-                model_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(downloaded_file), str(model_path))
-                print(f"Checkpoint renamed to {model_path}")
-            else:
-                raise FileNotFoundError(f"Could not find checkpoint file in downloaded artifact: {downloaded_files}")
+            print(f"Downloading model.ckpt from HuggingFace Hub ({self.repo_id}/{model_name}/model.ckpt)...")
+            downloaded_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=f"{model_name}/model.ckpt",
+                cache_dir=str(model_dir.parent),
+            )
+            # Move downloaded file to expected location
+            if downloaded_path != str(model_path):
+                shutil.copy2(downloaded_path, str(model_path))
+            print(f"Checkpoint saved to {model_path}")
         else:
             print(f"Checkpoint already exists at {model_path}")
         
         # Download gene mapping if needed
         if not gene_mapping_path.exists():
-            print(f"Downloading gene mapping artifact 'pc_gene_token_mapping.pkl:latest' from wandb...")
-            artifact = api.artifact(f'{self.entity}/{self.project}/pc_gene_token_mapping.pkl:latest')
-            artifact_dir = Path(artifact.download(root=str(model_dir)))
-            
-            # Find and rename the downloaded gene mapping file
-            downloaded_files = list(artifact_dir.glob('*.pkl'))
-            if downloaded_files:
-                # Assuming the first pkl file is the gene mapping we want
-                downloaded_file = downloaded_files[0]
-                model_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(downloaded_file), str(gene_mapping_path))
-                print(f"Gene mapping renamed to {gene_mapping_path}")
-            else:
-                raise FileNotFoundError(f"Could not find checkpoint file in downloaded artifact: {downloaded_files}")
+            print(f"Downloading pc_gene_token_mapping.pkl from HuggingFace Hub ({self.repo_id}/{model_name}/pc_gene_token_mapping.pkl)...")
+            downloaded_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=f"{model_name}/pc_gene_token_mapping.pkl",
+                cache_dir=str(model_dir.parent),
+            )
+            # Move downloaded file to expected location
+            if downloaded_path != str(gene_mapping_path):
+                shutil.copy2(downloaded_path, str(gene_mapping_path))
+            print(f"Gene mapping saved to {gene_mapping_path}")
         else:
             print(f"Gene mapping already exists at {gene_mapping_path}")
+        
+        # Download config if needed
+        if not config_path.exists():
+            print(f"Downloading config.yaml from HuggingFace Hub ({self.repo_id}/{model_name}/config.yaml)...")
+            downloaded_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=f"{model_name}/config.yaml",
+                cache_dir=str(model_dir.parent),
+            )
+            # Move downloaded file to expected location
+            if downloaded_path != str(config_path):
+                shutil.copy2(downloaded_path, str(config_path))
+            print(f"Config saved to {config_path}")
+        else:
+            print(f"Config already exists at {config_path}")
+        
+        return model_path, gene_mapping_path, config_path
     
     
     def load_config_and_model(self, 
-                              run_id, 
-                              checkpoint: str):
+                              model_name: str):
         """
-        Load configuration from wandb and initialize the model.
+        Load configuration from HuggingFace Hub and initialize the model.
         
         Args:
-            run_id: Wandb run ID
-            checkpoint: Checkpoint name
+            model_name: Model name (e.g., 'Corpus-30M')
         """
         
-        ckpt_dir = Path(self.cache_dir) / run_id
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        model_dir = Path(self.cache_dir) / model_name
+        model_dir.mkdir(parents=True, exist_ok=True)
         
-        model_path = ckpt_dir / checkpoint / 'model.ckpt'
-        gene_mapping_path = ckpt_dir / checkpoint / 'pc_gene_token_mapping.pkl'
+        print(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
         
-        print(f"Loading config from wandb run {run_id}...")
-        wandb.login()
-        api = wandb.Api()
-        self.run = api.run(f'{self.entity}/{self.project}/{run_id}')
-        self.cfg = DictConfig(self.run.config)
+        # Download files if they don't exist
+        model_path, gene_mapping_path, config_path = self._download_files_if_needed(model_name, model_dir)
+        
+        # Load config from downloaded file
+        self.cfg = OmegaConf.load(config_path)
         self.cfg = self.apply_compatibility_changes(self.cfg)
-        
-        # Download artifacts if they don't exist
-        self._download_artifacts_if_needed(api, ckpt_dir, checkpoint)
         
         # Load gene mapping
         gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
@@ -194,7 +193,7 @@ class scConcept:
             dict: Dictionary containing 'cls_cell_emb', 'mean_cell_emb', and optionally 'context_sizes'
         """
         if self.model is None:
-            raise ValueError("Model not loaded. Call load_model() first.")
+            raise ValueError("Model not loaded. Call load_config_and_model() first.")
         
         # Determine parameters with defaults from config
         max_tokens = max_tokens if max_tokens is not None else self.cfg.datamodule.dataset.train.max_tokens
