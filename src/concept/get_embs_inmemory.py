@@ -7,38 +7,34 @@ import argparse
 import anndata as ad
 
 
-def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_size: int,
-             gene_sampling_strategy: str, checkpoint: str = 'min_val_loss.ckpt',
-             data_dir: str = 'h5ads', entity: str = 'theislab-transformer', 
-             project: str = 'contrastive-transformer'):
+def get_embs(model_name: str, adata_path: str, batch_size: int,
+             gene_id_column: str = None, repo_id: str = 'mojtababahrami/scConcept', 
+             cache_dir: str = './cache/'):
     """
     Generate embeddings using InMemory TokenizedDataset.
     
     Args:
-        run_id: Wandb run ID
-        dataset: Dataset name/path
-        filename: AnnData filename
-        max_tokens: Maximum number of tokens per cell
+        model_name: Model name (e.g., 'Corpus-30M')
+        adata_path: Path to the AnnData file (.h5ad)
         batch_size: Batch size for dataloader
-        gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.)
-        checkpoint: Checkpoint name for loading
-        data_dir: Data directory name
-        entity: Wandb entity
-        project: Wandb project
+        gene_id_column: Column name in adata.var to use as gene IDs (default: None, uses index)
+        repo_id: HuggingFace repository ID
+        cache_dir: Directory for caching downloaded files
     """
     
     # Create scConcept instance
-    concept = scConcept(entity=entity, project=project)
+    concept = scConcept(repo_id=repo_id, cache_dir=cache_dir)
     
     # Load model
-    concept.load_config_and_model(run_id=run_id, checkpoint=checkpoint)
+    concept.load_config_and_model(model_name=model_name)
     
-    # Set paths
-    dataset_path = Path(concept.cfg.PATH.PROJECT_DATA_PATH) / dataset
-    adata_path = dataset_path / data_dir / filename
+    # Get the directory of the adata file
+    adata_path_obj = Path(adata_path)
+    adata_dir = adata_path_obj.parent
+    adata_filename = adata_path_obj.stem  # filename without extension
     
-    # Create output directory
-    emb_path = dataset_path / 'embs' / run_id / f'{max_tokens}' / checkpoint / filename
+    # Create output directory in the same directory as the adata file
+    emb_path = adata_dir / f'{adata_filename}_embs' / model_name
     
     # Check if embeddings already exist
     if (emb_path / 'cell_embs_cls.npy').exists():
@@ -52,8 +48,7 @@ def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_si
     result = concept.extract_embeddings(
         adata=adata,
         batch_size=batch_size,
-        max_tokens=max_tokens,
-        gene_sampling_strategy=gene_sampling_strategy
+        gene_id_column=gene_id_column
     )
     
     # Save embeddings
@@ -68,16 +63,12 @@ def get_embs(run_id: str, dataset: str, filename: str, max_tokens: int, batch_si
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate embeddings using InMemory TokenizedDataset")
-    parser.add_argument("--run_id", type=str, help="Wandb-id of the run", required=True)
-    parser.add_argument("--checkpoint", type=str, default='min_val_loss.ckpt', help="checkpoint name for loading")
-    parser.add_argument("--max_tokens", type=int, default=None, help="number of tokens to use")
+    parser.add_argument("--model_name", type=str, help="Model name (e.g., 'Corpus-30M')", required=True)
+    parser.add_argument("--adata_path", type=str, help="Path to the AnnData file (.h5ad)", required=True)
     parser.add_argument("--batch_size", type=int, default=32, help="batch size to use")
-    parser.add_argument("--dataset", type=str, default=None, required=True, help="path to the dataset")
-    parser.add_argument("--data_dir", type=str, default='h5ads', help="adata directory name")
-    parser.add_argument("--filename", type=str, default='adata_0.h5ad', help="adata filename to use")
-    parser.add_argument("--gene_sampling_strategy", type=str, default=None, help="gene sampling strategy to use")
-    parser.add_argument("--entity", type=str, default='theislab-transformer', help="wandb entity to use")
-    parser.add_argument("--project", type=str, default='contrastive-transformer', help="wandb project to use")
+    parser.add_argument("--gene_id_column", type=str, default=None, help="Column name in adata.var to use as gene IDs (default: None, uses index)")
+    parser.add_argument("--repo_id", type=str, default='mojtababahrami/scConcept', help="HuggingFace repository ID")
+    parser.add_argument("--cache_dir", type=str, default='./cache/', help="Directory for caching downloaded files")
     args = parser.parse_args()
 
     # Print GPU info if available
@@ -87,45 +78,23 @@ if __name__ == "__main__":
     else:
         print("Running on CPU")
     
-    # Create scConcept instance to get config and determine parameters
-    concept = scConcept(entity=args.entity, project=args.project)
-    concept.load_config_and_model(run_id=args.run_id, checkpoint=args.checkpoint)
-        
-    print(f"Getting {args.data_dir}/{args.filename} embeddings for run {args.run_id} with max_tokens={args.max_tokens}, batch_size={args.batch_size}, gene_sampling_strategy={args.gene_sampling_strategy}")
+    print(f"Getting embeddings for {args.adata_path} using model {args.model_name} with batch_size={args.batch_size}, gene_id_column={args.gene_id_column}")
     
     # Generate embeddings
     get_embs(
-        run_id=args.run_id,
-        dataset=args.dataset,
-        filename=args.filename,
-        max_tokens=args.max_tokens,
+        model_name=args.model_name,
+        adata_path=args.adata_path,
         batch_size=args.batch_size,
-        gene_sampling_strategy=args.gene_sampling_strategy,
-        checkpoint=args.checkpoint,
-        data_dir=args.data_dir,
-        entity=args.entity,
-        project=args.project
+        gene_id_column=args.gene_id_column,
+        repo_id=args.repo_id,
+        cache_dir=args.cache_dir
     )
     
     print("Done!")
 
 # Usage example:
 # python src/concept/get_embs_inmemory.py \
-#     --run_id YOUR_RUN_ID \
-#     --checkpoint min_val_loss.ckpt \
-#     --dataset YOUR_DATASET \
-#     --filename adata_0.h5ad \
+#     --model_name Corpus-30M \
+#     --adata_path /path/to/your/adata.h5ad \
 #     --batch_size 32 \
-#
-# Or use the class directly:
-# from concept.scConcept import scConcept
-# concept = scConcept()
-# concept.load_config_and_model(run_id='YOUR_RUN_ID')
-# embeddings = concept.extract_embeddings(adata, batch_size=32)
-#
-# Or with custom config and checkpoint:
-# concept = scConcept(cfg=my_config, cache_dir='./cache/')
-# # If using custom checkpoint path, you'll need to manually construct the path
-# # and use load_config_and_model directly
-# # concept.load_config_and_model(run_id='YOUR_RUN_ID', checkpoint='checkpoint.ckpt', ckpt_path='path/to/checkpoint.ckpt')
-# embeddings = concept.extract_embeddings(adata, batch_size=32)
+#     --gene_id_column gene_id \

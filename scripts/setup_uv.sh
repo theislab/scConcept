@@ -27,7 +27,7 @@ source .venv/bin/activate
 
 # Install dependencies
 echo "📥 Installing dependencies..."
-uv sync --extra dev
+uv sync --all-extras
 
 # Check for CUDA availability
 check_cuda() {

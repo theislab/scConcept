@@ -178,14 +178,15 @@ class scConcept:
             cfg.model.loss_switch_step = 2000
         return cfg
    
-    def extract_embeddings(self, adata: ad.AnnData, batch_size: int, max_tokens: int = None, 
+    def extract_embeddings(self, adata: ad.AnnData, gene_id_column: str = None, batch_size: int = 32, max_tokens: int = None, 
                           gene_sampling_strategy: str = None):
         """
         Extract embeddings from AnnData using the loaded model.
         
         Args:
             adata: AnnData object containing single-cell data
-            batch_size: Batch size for dataloader
+            gene_id_column: Column name in adata.var to use as gene IDs: ENSGXXXXXXXXXXX (default: None, uses index)
+            batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
             
@@ -203,7 +204,7 @@ class scConcept:
         print(f"Parameters: max_tokens={max_tokens}, batch_size={batch_size}, gene_sampling_strategy={gene_sampling_strategy}")
         
         # Create In memory TokenizedDataset
-        collection = InMemoryCollection([adata])
+        collection = InMemoryCollection([adata], var_column=gene_id_column)
         dataset = TokenizedDataset(
             collection,
             self.tokenizer,
