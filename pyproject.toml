@@ -69,8 +69,8 @@ optional-dependencies.test = [
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://scConcept.readthedocs.io/"
-urls.Homepage = "https://github.com/mojtababahrami/scConcept"
-urls.Source = "https://github.com/mojtababahrami/scConcept"
+urls.Homepage = "https://github.com/theislab/scConcept"
+urls.Source = "https://github.com/theislab/scConcept"
 
 [tool.hatch.build.targets.wheel]
 packages = [ "src/concept" ]

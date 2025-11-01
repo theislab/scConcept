@@ -21,7 +21,7 @@ class scConcept:
     
     def __init__(self, 
                  cfg: DictConfig = None,
-                 repo_id: str = 'mojtababahrami/scConcept',
+                 repo_id: str = 'theislab/scConcept',
                  cache_dir: str = './cache/'):
         """
         Initialize the scConcept instance.

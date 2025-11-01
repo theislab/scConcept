@@ -8,7 +8,7 @@ import anndata as ad
 
 
 def get_embs(model_name: str, adata_path: str, batch_size: int,
-             gene_id_column: str = None, repo_id: str = 'mojtababahrami/scConcept', 
+             gene_id_column: str = None, repo_id: str = 'theislab/scConcept', 
              cache_dir: str = './cache/'):
     """
     Generate embeddings using InMemory TokenizedDataset.
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     parser.add_argument("--adata_path", type=str, help="Path to the AnnData file (.h5ad)", required=True)
     parser.add_argument("--batch_size", type=int, default=32, help="batch size to use")
     parser.add_argument("--gene_id_column", type=str, default=None, help="Column name in adata.var to use as gene IDs (default: None, uses index)")
-    parser.add_argument("--repo_id", type=str, default='mojtababahrami/scConcept', help="HuggingFace repository ID")
+    parser.add_argument("--repo_id", type=str, default=None, help="HuggingFace repository ID")
     parser.add_argument("--cache_dir", type=str, default='./cache/', help="Directory for caching downloaded files")
     args = parser.parse_args()
 
