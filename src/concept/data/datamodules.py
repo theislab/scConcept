@@ -7,7 +7,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler
 from lamin_dataloader.dataset import TokenizedDataset, Tokenizer
-from concept.data.collate import CustomCollate
+from concept.data.collate import Collate
 from concept.data.samplers import WithinGroupSampler
 from lamin_dataloader.collections import MappedCollection
 from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
@@ -87,7 +87,7 @@ class MappedCollectionDataModule(L.LightningDataModule):
             'model_speed_sanity_check': self.model_speed_sanity_check,
             **{key: dataset_kwargs.pop(key) for key in keys_to_pop if key in dataset_kwargs}
         }
-        return CustomCollate(**collate_kwargs)
+        return Collate(**collate_kwargs)
     
     def _get_dataloader(self, dataset, dataloader_kwargs, collate_fn, stage):
         sampling_key = dataloader_kwargs.pop('within_group_sampling')

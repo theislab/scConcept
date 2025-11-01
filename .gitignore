@@ -164,14 +164,12 @@ dmypy.json
 # Github file
 .github
 
-# hydra outputs
+# Custom files and directories
 outputs/
 .vscode
 lightning_logs/
 *.sbatch
-
 figures/
-
 untracked/
-
 temp/
+cache/

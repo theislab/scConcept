@@ -4,12 +4,14 @@ import pandas as pd
 from typing import Dict, List
 from torch.utils.data import Dataset, default_collate, default_convert, get_worker_info
 import torch.distributed as dist
+from lamin_dataloader.dataset import BaseCollate
 from abc import ABC, abstractmethod
 import random
 from pathlib import Path
 import re
 
-class CustomCollate:
+
+class Collate(BaseCollate):
     def __init__(self, 
                  tokenizer, 
                  panels_path,
@@ -17,7 +19,7 @@ class CustomCollate:
                  min_tokens=0, 
                  split_input=True, 
                  variable_size=False, 
-                 gene_sampling_strategy='random-nonzero',
+                 gene_sampling_strategy='top-nonzero',
                  panel_selection='random', 
                  panel_selection_mixed_prob=1.0, 
                  panel_filter_regex='.*', 
@@ -30,20 +32,23 @@ class CustomCollate:
                  feature_max_drop_rate=None,
                  model_speed_sanity_check=False,
                  ):
+        super().__init__(PAD_TOKEN=tokenizer.PAD_TOKEN, 
+                         max_tokens=max_tokens, 
+                         gene_sampling_strategy=gene_sampling_strategy, 
+                         min_tokens=min_tokens
+        )
+        
         self.tokenizer = tokenizer
-        self.PAD_TOKEN = tokenizer.PAD_TOKEN
         self.split_input = split_input
-        self.variable_size = variable_size
-        self.min_tokens = min_tokens
-        self.max_tokens = max_tokens
-        self.panel_dir = Path(panels_path)
-        self.panel_names = [panel_name for panel_name in os.listdir(self.panel_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
-        self.panels = [self.tokenizer.encode(pd.read_csv(self.panel_dir / panel_name)['Ensembl_ID'].values) 
-                       for panel_name in self.panel_names]
-        for i in range(len(self.panels)):
-            print(f'Panel {self.panel_names[i]} size: {len(self.panels[i])} genes')
         self.panel_selection = panel_selection
         self.panel_selection_mixed_prob = panel_selection_mixed_prob
+        if self.panel_selection != 'random':
+            self.panel_dir = Path(panels_path)
+            self.panel_names = [panel_name for panel_name in os.listdir(self.panel_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
+            self.panels = [self.tokenizer.encode(pd.read_csv(self.panel_dir / panel_name)['Ensembl_ID'].values) 
+                       for panel_name in self.panel_names]
+            for i in range(len(self.panels)):
+                print(f'Panel {self.panel_names[i]} size: {len(self.panels[i])} genes')
         self.panel_size_min = panel_size_min
         self.panel_size_max = panel_size_max
         self.panel_overlap = panel_overlap
@@ -70,44 +75,6 @@ class CustomCollate:
                 self._rng = np.random.default_rng(42)
         return self._rng
 
-    def nonzero_sampling(self, item, feature_max_drop_rate=None):
-        tokens, values = item['tokens'], item['values']
-        if self.gene_sampling_strategy in ['random-nonzero', 'top-nonzero']:
-            nonzero_mask = (values > 0) & (~ np.isnan(values))
-        elif self.gene_sampling_strategy in ['random', 'top']:
-            nonzero_mask = ~ np.isnan(values)
-        if feature_max_drop_rate is not None and feature_max_drop_rate > 0:
-            drop_mask = self.rng.uniform(size=len(tokens)) < self.rng.uniform(0, feature_max_drop_rate)
-            nonzero_mask = nonzero_mask & (~ drop_mask)
-            # print(f'before drop: {(values > 0).sum()}, after drop: {nonzero_mask.sum()}')
-        tokens, values = tokens[nonzero_mask], values[nonzero_mask]
-        
-        # selected_vars = np.random.permutation(len(tokens))
-        # tokens, values = tokens[selected_vars], values[selected_vars]
-        return {'tokens': tokens, 'values': values}
-
-    def resize_and_pad(self, item, max_tokens=None):
-        tokens, values = item['tokens'], item['values']
-        
-        if self.gene_sampling_strategy in ['top-nonzero', 'top']:
-            sorted_indices = np.argsort(values)[::-1] #todo: sorted_indices = np.lexsort((tokens, -values))
-            tokens, values = tokens[sorted_indices], values[sorted_indices]
-                    
-        max_tokens = max_tokens if max_tokens is not None else self.max_tokens # this is redundant if max_tokens is allways passed
-        if self.variable_size:
-            context_size = random.randint(min(len(tokens), self.min_tokens), min(len(tokens), max_tokens))
-            # context_size = min(len(tokens), max_tokens)
-        else:
-            context_size = min(len(tokens), max_tokens)
-        tokens, values = tokens[:context_size], values[:context_size]
-
-        sorted_indices = np.argsort(values)[::-1] #todo: sorted_indices = np.lexsort((tokens, -values))
-        tokens, values = tokens[sorted_indices], values[sorted_indices]
-        
-        pad = max(max_tokens - context_size, 0)
-        tokens = np.pad(tokens, (0, pad), mode='constant', constant_values=self.PAD_TOKEN)
-        values = np.pad(values, (0, pad), mode='constant', constant_values=0)
-        return {'tokens': tokens, 'values': values}
 
     def shared_feature_stats(self, batch):
         num_shared_featrues = []
@@ -143,27 +110,31 @@ class CustomCollate:
         
         return batch, batch_1, batch_2
 
-    def _get_predesigned_panel(self, batch):
-        # tokens = batch[0]['tokens']
-        # count_nnz = batch[0]['count_nnz']
-        # if self.gene_sampling_strategy == 'random-nonzero':
-        #     # perc_nnz = count_nnz / len(batch)
-        #     # expressed_features = tokens[np.argsort(count_nnz)[::-1][:500]]
-        #     available_panels = []
-        #     panel_probs = []
-        #     for i in range(len(self.panels)):
-        #         panel = self.panels[i]
-        #         available_panels.append(i)
-        #         panel_probs.append(np.median(count_nnz[np.isin(tokens, panel)]))
-        #         # panel_probs.append(np.intersect1d(self.panels[i], expressed_features).size / len(self.panels[i]))
-        #         # if np.intersect1d(self.panels[i], expressed_features).size > (len(self.panels[i]) * 0.5):
-        #         #     available_panels.append(i)    
-        #         # available_panels.append((self.panel_names[i], len(self.panels[i]), f'{panel_probs[-1]:.2f}'))
+    # def _custom_panel_selection(self, batch):
+    #     tokens = batch[0]['tokens']
+    #     count_nnz = batch[0]['count_nnz']
+    #     if self.gene_sampling_strategy == 'random-nonzero':
+    #         # perc_nnz = count_nnz / len(batch)
+    #         # expressed_features = tokens[np.argsort(count_nnz)[::-1][:500]]
+    #         available_panels = []
+    #         panel_probs = []
+    #         for i in range(len(self.panels)):
+    #             panel = self.panels[i]
+    #             available_panels.append(i)
+    #             panel_probs.append(np.median(count_nnz[np.isin(tokens, panel)]))
+    #             # panel_probs.append(np.intersect1d(self.panels[i], expressed_features).size / len(self.panels[i]))
+    #             # if np.intersect1d(self.panels[i], expressed_features).size > (len(self.panels[i]) * 0.5):
+    #             #     available_panels.append(i)    
+    #             # available_panels.append((self.panel_names[i], len(self.panels[i]), f'{panel_probs[-1]:.2f}'))
             
-        #     panel_probs = panel_probs // panel_probs.sum()
-        #     # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
+    #         panel_probs = panel_probs // panel_probs.sum()
+    #         # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
+    #         return available_panels, panel_probs
+
+    def _get_predesigned_panel(self, batch):
 
         i = self.rng.integers(0, len(self.panels))
+        # available_panels, panel_probs = self._custom_panel_selection(batch)
         # i = self.rng.choice(available_panels, p=panel_probs)
         panel = self.panels[i]
         if self.panel_max_drop_rate is not None and self.panel_max_drop_rate > 0:
@@ -223,8 +194,8 @@ class CustomCollate:
             panel_1 = [item['tokens'] for item in batch_1]
             panel_2 = [item['tokens'] for item in batch_2]
 
-            batch_1 = [self.nonzero_sampling(item, self.feature_max_drop_rate) for item in batch_1]
-            batch_2 = [self.nonzero_sampling(item, self.feature_max_drop_rate) for item in batch_2]
+            batch_1 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_1]
+            batch_2 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_2]
 
             max_lenght_1 = max([len(item['tokens']) for item in batch_1])
             max_lenght_1 = min(max_lenght_1, self.max_tokens - 1) # todo
@@ -268,7 +239,7 @@ class CustomCollate:
             #         **{key: default_collate([item[key] for item in batch]) for key in batch[0].keys() if key not in ['tokens', 'values']}
             # }
         else:
-            batch_ = [self.nonzero_sampling(item) for item in batch_permute]
+            batch_ = [self.select_features(item) for item in batch_permute]
             
             max_lenght = max([len(item['tokens']) for item in batch_])
             
@@ -284,21 +255,3 @@ class CustomCollate:
             }
 
 
-# from TokenizedDataset get_item:
-# if self.model_speed_sanity_check:
-#     if self.split_input:
-#         return {'tokens_1': np.zeros(self.max_tokens, dtype=int),
-#                 'values_1': np.zeros(self.max_tokens, dtype=float),
-#                 'tokens_2': np.zeros(self.max_tokens, dtype=int),
-#                 'values_2': np.zeros(self.max_tokens, dtype=float),
-#                 'panel_1': np.zeros(self.max_tokens, dtype=int),
-#                 'panel_2': np.zeros(self.max_tokens, dtype=int),
-#                 'dataset_id': 0,
-#                 **{key: 0 for key in self.obs_keys},
-#                 }
-#     else:
-#         return {'tokens': np.zeros(self.max_tokens, dtype=int),
-#                 'values': np.zeros(self.max_tokens, dtype=float),
-#                 'dataset_id': 0,
-#                 **{key: 0 for key in self.obs_keys},
-#                 }

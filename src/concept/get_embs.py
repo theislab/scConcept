@@ -76,7 +76,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_id", type=str, help="Wandb-id of the run", required=True)
     parser.add_argument("--checkpoint", type=str, default='min_val_loss.ckpt', help="checkpoint name for loading")
-    parser.add_argument("--n_tokens", type=int, default=None, help="number of tokens to use")
+    parser.add_argument("--max_tokens", type=int, default=None, help="number of tokens to use")
     parser.add_argument("--batch_size", type=int, default=None, help="batch size to use")
     parser.add_argument("--devices", type=int, default=-1, help="devices to use")
     parser.add_argument("--dataset", type=str, default=None, required=True, help="path to the dataset")
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     if 'gene_sampling_strategy' in cfg.datamodule.dataset.train:
         cfg.datamodule.gene_sampling_strategy = cfg.datamodule.dataset.train.gene_sampling_strategy
     if 'gene_sampling_strategy' not in cfg.datamodule:
-        cfg.datamodule.gene_sampling_strategy = 'random'
+        cfg.datamodule.gene_sampling_strategy = 'top-nonzero'
     if 'model_speed_sanity_check' not in cfg.datamodule:
         cfg.datamodule.model_speed_sanity_check = False
     if 'min_tokens' not in cfg.model:
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     if args.devices is not None:
         cfg.model.training.devices = args.devices
     
-    max_tokens = args.n_tokens if args.n_tokens is not None else cfg.datamodule.dataset.train.max_tokens
+    max_tokens = args.max_tokens if args.max_tokens is not None else cfg.datamodule.dataset.train.max_tokens
     
     cfg.datamodule.dataset = {'test': {'max_tokens': max_tokens, 'variable_size': False, 'panel_size_min': None, 'panel_size_max': None, 'panel_selection': None}}
     cfg.datamodule.dataloader = {'test': {'shuffle': False, 'drop_last': False, 'batch_size': args.batch_size}}
