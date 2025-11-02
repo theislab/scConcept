@@ -50,7 +50,7 @@ pip install git+https://github.com/theislab/lamin_dataloader.git
 
 ## How to use
 
-scConcept provides a simple API to load pre-trained model, adapt and extract embeddings from scRNA-seq data. Here's a basic example:
+scConcept provides a simple API to load and adapt [pre-trained models](https://huggingface.co/theislab/scConcept/tree/main) and extract embeddings from scRNA-seq data. Here's a basic example:
 
 ```python
 from concept.scConcept import scConcept
