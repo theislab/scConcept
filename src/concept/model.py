@@ -30,8 +30,10 @@ class BaseTransformerModel(L.LightningModule):
         config,
         pad_token_id: int,
         cls_token_id: int,
+        debug: bool = False,
     ):
         super().__init__()
+        self.debug = debug
         self.flash_attention = config['flash_attention']
         self.dim_model = config['dim_model']
         self.dim_hid = config['dim_hid']
@@ -333,7 +335,8 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         vocab_size: int,
         precomp_embs_key: str = None,
         world_size: int = 1,
-        val_loader_names = [], 
+        val_loader_names = [],
+        debug: bool = False,
     ):
         
         if config['mlm_loss_weight'] > 0:
@@ -341,7 +344,8 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         
         super().__init__(config,
                          pad_token_id,
-                         cls_token_id
+                         cls_token_id,
+                         debug=debug
                          )
 
         self.mlm_loss_weight = config['mlm_loss_weight']
@@ -423,12 +427,10 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             token_intersect,
             ]
         
-        # if batch_idx < 5 and stage == 'train':
-        #     print(context_sizes)
-        #     print('batch_1 values:', batch_1['values'][0])
-        #     print('batch_2 values:', batch_2['values'][0])
-        
-        # print(f'batch_size: {len(batch_1["tokens"])}')
+        if self.debug and batch_idx < 5 and stage == 'train':
+            print(context_sizes)
+            print('batch_1 values:', batch_1['values'][0])
+            print('batch_2 values:', batch_2['values'][0])
         
 
         if self.values_only_sanity_check:
@@ -443,9 +445,6 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         batch_1 = self.add_cls_token(batch_1)
         batch_2 = self.add_cls_token(batch_2)
         
-        # if not isinstance(batch_1['tokens'], torch.Tensor):
-        #     batch_1['tokens'] = torch.nested.nested_tensor(batch_1['tokens'], layout=torch.jagged)
-        #     batch_2['tokens'] = torch.nested.nested_tensor(batch_2['tokens'], layout=torch.jagged)
 
         if self.masking_rate > 0:
             batch_1['values_masked'], batch_1['masked_positions'] = self.mask_values(
@@ -468,18 +467,6 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             loss_mlm = self._mlm_loss(pred_1, batch_1['values'], batch_1['masked_positions']) + self._mlm_loss(
                 pred_2, batch_2['values'], batch_2['masked_positions'])
             
-        # if isinstance(embs_1, torch.Tensor):
-        #     if embs_1.dim() == 3:
-        #         cell_embs_1 = embs_1[:, 0, :]
-        #         cell_embs_2 = embs_2[:, 0, :]
-        #     elif embs_1.dim() == 2:
-        #         cell_embs_1 = cell_embs_1
-        #         cell_embs_2 = cell_embs_2
-        # else:
-        #     # cell_embs_1 = torch.stack([e[0, :] for e in embs_1.unbind()], dim=0)
-        #     # cell_embs_2 = torch.stack([e[0, :] for e in embs_2.unbind()], dim=0)
-        #     cell_embs_1 = torch.stack([e[0, :] for e in embs_1], dim=0)
-        #     cell_embs_2 = torch.stack([e[0, :] for e in embs_2], dim=0)
         
         # Gather embeddings from GPUs and concatenate them
         if self.world_size > 1:
@@ -521,21 +508,21 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         #     self.log(f"{stage}/length_logit_corr", length_logit_corr, sync_dist=True)
 
 
-        # if self.world_size == 1 and self.global_rank == 0 and stage == 'train' and batch_idx % 1000 == 0:
-        #     print('Argmax: ', logits_both_batch.argmax(dim=1))
-        #     print(f'batch_1, 0 tokens: ', batch_1['tokens'][0])
-        #     print(f'batch_1, 0 values: ', batch_1['values'][0])
-        #     print(f'batch_2, 0 tokens: ', batch_2['tokens'][0])
-        #     print(f'batch_2, 0 values: ', batch_2['values'][0])
+        if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == 'train' and batch_idx % 1000 == 0:
+            print('Argmax: ', logits_both_batch.argmax(dim=1))
+            print(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
+            print(f'batch_1["values"][0]: {batch_1["values"][0]}')
+            print(f'batch_2["tokens"][0]: {batch_2["tokens"][0]}')
+            print(f'batch_2["values"][0]: {batch_2["values"][0]}')
 
-        #     idx = int(logits_both_batch.argmax(dim=1)[0])
-        #     if idx < logit_size //2:
-        #         print(f'match in batch_2, {idx} tokens: ', batch_2['tokens'][idx])
-        #         print(f'match in batch_2, {idx} values: ', batch_2['values'][idx])
-        #     else:
-        #         idx = idx - logit_size //2
-        #         print(f'match in batch_1, {idx} tokens: ', batch_1['tokens'][idx])
-        #         print(f'match in batch_1, {idx} values: ', batch_1['values'][idx])
+            idx = int(logits_both_batch.argmax(dim=1)[0])
+            if idx < logit_size //2:
+                print(f'match in batch_2, {idx} tokens: ', batch_2['tokens'][idx])
+                print(f'match in batch_2, {idx} values: ', batch_2['values'][idx])
+            else:
+                idx = idx - logit_size //2
+                print(f'match in batch_1, {idx} tokens: ', batch_1['tokens'][idx])
+                print(f'match in batch_1, {idx} values: ', batch_1['values'][idx])
 
         if self.contrastive_loss == 'binary':
             loss_cont, acc_cont = self._contrastive_binary_loss(logits)
@@ -602,12 +589,9 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             self.log('train/same_storage', 1, sync_dist=True, add_dataloader_idx=False) # todo: remove
         else:
             self.log('train/same_storage', 0, sync_dist=True, add_dataloader_idx=False)
-            if batch_idx < 3:
+            if self.debug and batch_idx < 3:
                 print('storage: ', storage)
 
-        # if batch_idx == 0:
-        #     print(batch['tokens_1'][:3])
-        #     print(batch['tokens_2'][:3])
 
         if 'donor_id' in batch:
             donor = torch.cat(all_gather(batch['donor_id']), dim=0) if self.world_size > 1 else batch['donor_id']
@@ -616,7 +600,7 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             else:
                 self.log('train/same_donor', 0, sync_dist=True, add_dataloader_idx=False)
         
-        if 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
+        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
 
         return loss
@@ -647,9 +631,6 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         else:
             self.log(f'{prefix}/same_storage', 0, sync_dist=True, add_dataloader_idx=False)
 
-        # if batch_idx == 0:
-        #     print(batch['tokens_1'][1:3])
-        #     print(batch['tokens_2'][1:3])
             
         if 'donor_id' in batch:
             donor = torch.cat(all_gather(batch['donor_id']), dim=0) if self.world_size > 1 else batch['donor_id']
@@ -658,8 +639,8 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             else:
                 self.log(f'{prefix}/same_donor', 0, sync_dist=True, add_dataloader_idx=False)
         
-        # if 'panel_1' in batch and 'panel_2' in batch and batch_idx % 10 == 0:
-            # self._validate_panels(batch['panel_1'], batch['panel_2'])
+        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
+            self._validate_panels(batch['panel_1'], batch['panel_2'])
 
     def predict_step(self, batch, batch_idx):
         if self.per_view_normalization:
@@ -670,7 +651,7 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         # print(int(context_size), nonzero_cnt[0].item())
 
         batch = self.add_cls_token(batch)
-        if batch_idx % 20 == 0:
+        if self.debug and batch_idx % 20 == 0:
             print('batch tokens:', batch['tokens'][0])
             print('batch values:', batch['values'][0])
         
