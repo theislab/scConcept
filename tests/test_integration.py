@@ -413,6 +413,42 @@ def test_scConcept_integration(adata):
     assert not np.all(result['mean_cell_emb'] == 0)
     assert not np.any(np.isnan(result['cls_cell_emb']))
     assert not np.any(np.isnan(result['mean_cell_emb']))
+    
+    # Test training with pre-trained model (resuming/fine-tuning)
+    # Store initial model state for comparison
+    initial_state = {}
+    for name, param in sc_concept.model.named_parameters():
+        if param.requires_grad:
+            initial_state[name] = param.data.clone()
+    
+    # Train for a few steps to verify training works
+    # Use small max_steps and batch_size to keep test fast
+    training_max_steps = 3
+    training_batch_size = 32
+    
+    # Verify model is in eval mode before training
+    assert not sc_concept.model.training, "Model should be in eval mode after loading"
+    
+    # Run training
+    sc_concept.train(
+        adata_list=adata,
+        max_steps=training_max_steps,
+        batch_size=training_batch_size
+    )
+    
+    # Verify model is still valid after training
+    assert sc_concept.model is not None
+    
+    # Verify that model parameters have changed (training occurred)
+    # Check at least one parameter has changed
+    parameters_changed = False
+    for name, param in sc_concept.model.named_parameters():
+        if param.requires_grad and name in initial_state:
+            if not torch.equal(param.data, initial_state[name]):
+                parameters_changed = True
+                break
+    
+    assert parameters_changed, "Model parameters should have changed after training"
 
 
 
