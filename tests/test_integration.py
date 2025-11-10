@@ -424,7 +424,7 @@ def test_scConcept_integration(adata):
     # Train for a few steps to verify training works
     # Use small max_steps and batch_size to keep test fast
     training_max_steps = 3
-    training_batch_size = 4
+    training_batch_size = 8
     
     # Verify model is in eval mode before training
     assert not sc_concept.model.training, "Model should be in eval mode after loading"
