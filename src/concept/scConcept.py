@@ -145,6 +145,7 @@ class scConcept:
         Args:
             model_name: Model name (e.g., 'Corpus-30M')
         """
+        self.model_name = model_name
         
         model_dir = Path(self.cache_dir) / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -154,13 +155,12 @@ class scConcept:
         # Download files if they don't exist
         model_path, gene_mapping_path, config_path, panels_dir = self._download_files_if_needed(model_name, model_dir)
         
+        self.panels_dir = panels_dir
+        
         # Load config from downloaded file
         self.cfg = OmegaConf.load(config_path)
         self.cfg = self.apply_compatibility_changes(self.cfg)
-        
-        # Set PANELS_PATH in config
-        self.cfg.PATH.PANELS_PATH = str(panels_dir)
-        
+                
         # Load gene mapping
         gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
         
@@ -331,6 +331,8 @@ class scConcept:
         
         adaptaion = self.model is not None
         
+        panels_dir = self.panels_dir if adaptaion else self.cfg.PATH.PANELS_PATH
+        
         # Override config values if provided
         if max_steps is not None:
             self.cfg.model.training.max_steps = max_steps
@@ -363,7 +365,7 @@ class scConcept:
             for key, filenames in self.cfg.PATH.SPLIT.items():
                 if filenames is not None and key == 'train':
                     split[key] = [os.path.join(dataset_path, file) for file in filenames]
-
+            
         if adaptaion:
             assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."
         else:
@@ -374,7 +376,7 @@ class scConcept:
         # Create datamodule
         datamodule_args = {
             'split': split,
-            'panels_path': self.cfg.PATH.PANELS_PATH,
+            'panels_path': panels_dir,
             'columns': self.cfg.datamodule.columns,
             'precomp_embs_key': self.cfg.datamodule.precomp_embs_key,
             'normalization': self.cfg.datamodule.normalization,
