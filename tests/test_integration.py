@@ -444,7 +444,9 @@ def test_scConcept_integration(adata):
     parameters_changed = False
     for name, param in sc_concept.model.named_parameters():
         if param.requires_grad and name in initial_state:
-            if not torch.equal(param.data, initial_state[name]):
+            # Ensure both tensors are on the same device for comparison
+            initial_param = initial_state[name].to(param.data.device)
+            if not torch.equal(param.data, initial_param):
                 parameters_changed = True
                 break
     
