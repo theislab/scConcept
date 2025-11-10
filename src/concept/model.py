@@ -675,9 +675,11 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
             max_size = 1000
             columns = ["panel_name", "panel_size_1", "panel_size_2", "context_size_1", "context_size_2", "nonzero_size_1", "nonzero_size_2", 
                         "min_1", "min_2", "max_1", "max_2", "panel_intersect", "token_intersect"]
-            table = wandb.Table(columns=columns, data=self.context_sizes['train'][:max_size])
-            self.logger.experiment.log({"train/length_plot": wandb.plot.scatter(table, "context_size_1", "context_size_2")})
-            self.logger.experiment.log({"train/nonzero_plot": wandb.plot.scatter(table, "nonzero_size_1", "nonzero_size_2")})
+            try:
+                table = wandb.Table(columns=columns, data=self.context_sizes['train'][:max_size])
+                self.logger.experiment.log({"train/sample_stats": table})
+            except:
+                pass
         self.context_sizes['train'] = []
     
     def on_validation_epoch_end(self):     
@@ -687,9 +689,11 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
                 max_size = 1000
                 columns = ["panel_name", "panel_size_1", "panel_size_2", "context_size_1", "context_size_2", "nonzero_size_1", "nonzero_size_2", 
                             "min_1", "min_2", "max_1", "max_2", "panel_intersect", "token_intersect"]
-                table = wandb.Table(columns=columns, data=self.context_sizes['val'][val_name][:max_size])
-                self.logger.experiment.log({f"{prefix}/length_plot": wandb.plot.scatter(table, "context_size_1", "context_size_2")})
-                self.logger.experiment.log({f"{prefix}/nonzero_plot": wandb.plot.scatter(table, "nonzero_size_1", "nonzero_size_2")})
+                try:
+                    table = wandb.Table(columns=columns, data=self.context_sizes['val'][val_name][:max_size])
+                    self.logger.experiment.log({f"{prefix}/sample_stats": table})
+                except:
+                    pass
             self.context_sizes['val'][val_name] = []
 
     def _validate_panels(self, panel_1, panel_2):
@@ -776,7 +780,11 @@ class BiEncoderContrastiveModel(BaseTransformerModel):
         
         loss_cont = F.cross_entropy(logits, cont_target)
         acc_cont = (logits.argmax(dim=1) == cont_target).float().mean()
-        top5_acc_cont = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float().mean()
+        
+        if len(logits) >= 5:
+            top5_acc_cont = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float().mean()
+        else:
+            top5_acc_cont = 0.0
         
         return loss_cont, acc_cont, top5_acc_cont
     

@@ -377,15 +377,14 @@ class scConcept:
         datamodule_args = {
             'split': split,
             'panels_path': panels_dir,
-            'columns': self.cfg.datamodule.columns,
+            'tokenizer': self.tokenizer,
+            'columns': [],
             'precomp_embs_key': self.cfg.datamodule.precomp_embs_key,
             'normalization': self.cfg.datamodule.normalization,
             'gene_sampling_strategy': self.cfg.datamodule.gene_sampling_strategy,
-            'model_speed_sanity_check': self.cfg.datamodule.model_speed_sanity_check,
             'dataset_kwargs': OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True),
             'dataloader_kwargs': OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True),
             'val_loader_names': [],
-            'tokenizer': self.tokenizer
         }
         datamodule = AnnDataModule(**datamodule_args)
         
@@ -407,6 +406,7 @@ class scConcept:
                 self.model.world_size = 1
             if hasattr(self.model, 'val_loader_names'):
                 self.model.val_loader_names = []
+            self.model.train()
         else:
             model_args = {
                 'config': self.cfg.model,
