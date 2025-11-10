@@ -35,7 +35,6 @@ class Collate(BaseCollate):
         super().__init__(PAD_TOKEN=tokenizer.PAD_TOKEN, 
                          max_tokens=max_tokens, 
                          gene_sampling_strategy=gene_sampling_strategy, 
-                         min_tokens=min_tokens
         )
         
         self.tokenizer = tokenizer
@@ -61,6 +60,8 @@ class Collate(BaseCollate):
         self.device_num = dist.get_rank() if dist.is_initialized() else 0
         self._rng = None
     
+    # This is crucial when running multiple GPUs. 
+    # It ensures that the random number generator is the same for each worker.
     @property
     def rng(self):
         if self._rng is None:

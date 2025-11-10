@@ -2,7 +2,7 @@ import os
 import torch
 from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer
-from concept.data.datamodules import MappedCollectionDataModule
+from concept.data.datamodules import AnnDataModule
 from concept.model import BiEncoderContrastiveModel
 import wandb
 from tqdm import tqdm
@@ -44,10 +44,13 @@ def get_embs(cfg: DictConfig, ckpt_path: str, emb_path: str):
         'vocab_size': len(gene_mapping),
     }
     model = BiEncoderContrastiveModel.load_from_checkpoint(ckpt_path, **model_args)
+    
+    split = {}
+    for key, filenames in cfg.PATH.SPLIT.items():
+        split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
 
     datamodule_args = {
-        'dataset_path': cfg.PATH.ADATA_PATH,
-        'split': cfg.PATH.SPLIT,
+        'split': split,
         'panels_path': cfg.PATH.PANELS_PATH,
         'columns': cfg.datamodule.columns,
         'normalization': cfg.datamodule.normalization,
@@ -56,7 +59,7 @@ def get_embs(cfg: DictConfig, ckpt_path: str, emb_path: str):
         'dataloader_kwargs': {**cfg.datamodule.dataloader},
         'tokenizer': GeneIdTokenizer(gene_mapping)
     }
-    datamodule = MappedCollectionDataModule(**datamodule_args)
+    datamodule = AnnDataModule(**datamodule_args)
 
     
     trainer_kwargs = {
