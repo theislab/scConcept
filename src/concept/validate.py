@@ -4,7 +4,7 @@ import lightning as L
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 from lamin_dataloader.dataset import GeneIdTokenizer
-from data.datamodules import MappedCollectionDataModule
+from concept.data.datamodules import AnnDataModule
 from model import BiEncoderContrastiveModel
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
@@ -18,9 +18,13 @@ def validate(cfg: DictConfig, ckpt_path: str):
     val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
     gene_mapping = pd.read_pickle(cfg.PATH.gene_mapping_path).to_dict()
     
+    split = {}
+    for key, filenames in cfg.PATH.SPLIT.items():
+        split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
+
     datamodule_args = {
-        'dataset_path': cfg.PATH.ADATA_PATH,
-        'split': cfg.PATH.SPLIT,
+        'split': split,
+        'panels_path': cfg.PATH.PANELS_PATH,
         'columns': cfg.datamodule.columns,
         'normalization': cfg.datamodule.normalization,
         'gene_sampling_strategy': cfg.datamodule.gene_sampling_strategy,
@@ -29,7 +33,7 @@ def validate(cfg: DictConfig, ckpt_path: str):
         'val_loader_names': val_loader_names,
         'tokenizer': GeneIdTokenizer(gene_mapping)
     }
-    datamodule = MappedCollectionDataModule(**datamodule_args)
+    datamodule = AnnDataModule(**datamodule_args)
 
     trainer_kwargs = {
         'accelerator': cfg.model.training.accelerator,

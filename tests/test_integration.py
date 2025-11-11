@@ -413,7 +413,199 @@ def test_scConcept_integration(adata):
     assert not np.all(result['mean_cell_emb'] == 0)
     assert not np.any(np.isnan(result['cls_cell_emb']))
     assert not np.any(np.isnan(result['mean_cell_emb']))
+    
+    # Test training with pre-trained model (resuming/fine-tuning)
+    # Store initial model state for comparison
+    initial_state = {}
+    for name, param in sc_concept.model.named_parameters():
+        if param.requires_grad:
+            initial_state[name] = param.data.clone()
+    
+    # Train for a few steps to verify training works
+    # Use small max_steps and batch_size to keep test fast
+    training_max_steps = 3
+    training_batch_size = 8
+    
+    # Verify model is in eval mode before training
+    assert not sc_concept.model.training, "Model should be in eval mode after loading"
+    
+    # Run training
+    sc_concept.train(
+        adata_list=adata,
+        max_steps=training_max_steps,
+        batch_size=training_batch_size
+    )
+    
+    # Verify model is still valid after training
+    assert sc_concept.model is not None
+    
+    # Verify that model parameters have changed (training occurred)
+    # Check at least one parameter has changed
+    parameters_changed = False
+    for name, param in sc_concept.model.named_parameters():
+        if param.requires_grad and name in initial_state:
+            # Ensure both tensors are on the same device for comparison
+            initial_param = initial_state[name].to(param.data.device)
+            if not torch.equal(param.data, initial_param):
+                parameters_changed = True
+                break
+    
+    assert parameters_changed, "Model parameters should have changed after training"
 
+
+
+def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
+    """Integration test for AnnDataModule with AnnData objects
+    
+    Tests that AnnDataModule can:
+    - Initialize with AnnData objects
+    - Create train and test dataloaders
+    - Iterate through dataloaders and produce valid batches
+    - Handle collate functions properly
+    """
+    from concept.data.datamodules import AnnDataModule
+    
+    # Create a simple panels file for testing
+    panels_dir = tmp_path / "panels"
+    panels_dir.mkdir()
+    panel_file = panels_dir / "test_panel.csv"
+    
+    # Create a panel with some genes from adata
+    import pandas as pd
+    panel_genes = adata.var_names[:5].tolist()  # Use first 5 genes
+    panel_df = pd.DataFrame({'Ensembl_ID': panel_genes})
+    panel_df.to_csv(panel_file, index=False)
+    
+    # Configuration for AnnDataModule
+    split = {
+        'train': [adata],  # List of AnnData objects
+        'test': [adata]
+    }
+    
+    columns = []  # No obs columns needed for basic test
+    
+    dataset_kwargs = {
+        'train': {
+            'max_tokens': 20,
+            'variable_size': False,
+            'panel_selection': 'mixed',
+            'panel_selection_mixed_prob': 0.5,
+            'panel_filter_regex': '.*',
+            'panel_size_min': 5,
+            'panel_size_max': 10,
+            'panel_max_drop_rate': 0.1,
+            'feature_max_drop_rate': 0.1,
+        },
+        'test': {
+            'max_tokens': 20,
+        }
+    }
+    
+    dataloader_kwargs = {
+        'train': {
+            'batch_size': 4,
+            'shuffle': True,
+            'drop_last': True,
+            'num_samples': None,
+            'num_workers': 0,
+            'within_group_sampling': 'dataset',
+        },
+        'test': {
+            'batch_size': 4,
+            'shuffle': False,
+            'drop_last': False,
+            'num_workers': 0,
+        }
+    }
+    
+    # Initialize AnnDataModule
+    datamodule = AnnDataModule(
+        split=split,
+        panels_path=str(panels_dir),
+        tokenizer=tokenizer,
+        columns=columns,
+        precomp_embs_key=None,
+        normalization='raw',
+        gene_sampling_strategy='top-nonzero',
+        dataset_kwargs=dataset_kwargs,
+        dataloader_kwargs=dataloader_kwargs,
+        val_loader_names=[]
+    )
+    
+    # Test train dataloader
+    train_loader = datamodule.train_dataloader()
+    assert train_loader is not None
+    
+    # Iterate through train loader
+    train_batches = []
+    for batch_idx, batch in enumerate(train_loader):
+        # Move batch to device
+        batch = {key: value.to(device) if isinstance(value, torch.Tensor) else value 
+                for key, value in batch.items()}
+        
+        # Verify batch structure
+        assert 'tokens_1' in batch
+        assert 'values_1' in batch
+        assert 'tokens_2' in batch
+        assert 'values_2' in batch
+        assert 'panel_1' in batch
+        assert 'panel_2' in batch
+        
+        # Verify batch shapes
+        batch_size = batch['tokens_1'].shape[0]
+        assert batch_size <= 4  # Max batch size
+        assert batch['values_1'].shape == batch['tokens_1'].shape
+        assert batch['values_2'].shape == batch['tokens_2'].shape
+        
+        # Verify tensors are on correct device
+        assert batch['tokens_1'].device.type == device.type
+        assert batch['values_1'].device.type == device.type
+        
+        train_batches.append(batch)
+        
+        # Only test first 2 batches to keep test fast
+        if batch_idx >= 1:
+            break
+    
+    assert len(train_batches) > 0, "No train batches generated"
+    
+    # Test test dataloader
+    test_loader = datamodule.test_dataloader()
+    assert test_loader is not None
+    
+    # Iterate through test loader
+    test_batches = []
+    for batch_idx, batch in enumerate(test_loader):
+        # Move batch to device
+        batch = {key: value.to(device) if isinstance(value, torch.Tensor) else value 
+                for key, value in batch.items()}
+        
+        # Verify batch structure (test loader doesn't split input)
+        assert 'tokens' in batch
+        assert 'values' in batch
+        
+        # Verify batch shapes
+        batch_size = batch['tokens'].shape[0]
+        assert batch_size <= 4  # Max batch size
+        assert batch['values'].shape == batch['tokens'].shape
+        
+        # Verify tensors are on correct device
+        assert batch['tokens'].device.type == device.type
+        assert batch['values'].device.type == device.type
+        
+        test_batches.append(batch)
+        
+        # Only test first 2 batches to keep test fast
+        if batch_idx >= 1:
+            break
+    
+    assert len(test_batches) > 0, "No test batches generated"
+    
+    print(f"\n✓ AnnDataModule test passed:")
+    print(f"  - Generated {len(train_batches)} train batches")
+    print(f"  - Generated {len(test_batches)} test batches")
+    print(f"  - Train batch shape: {train_batches[0]['tokens_1'].shape}")
+    print(f"  - Test batch shape: {test_batches[0]['tokens'].shape}")
 
 
 if __name__ == "__main__":

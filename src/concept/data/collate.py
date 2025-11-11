@@ -35,7 +35,6 @@ class Collate(BaseCollate):
         super().__init__(PAD_TOKEN=tokenizer.PAD_TOKEN, 
                          max_tokens=max_tokens, 
                          gene_sampling_strategy=gene_sampling_strategy, 
-                         min_tokens=min_tokens
         )
         
         self.tokenizer = tokenizer
@@ -61,6 +60,8 @@ class Collate(BaseCollate):
         self.device_num = dist.get_rank() if dist.is_initialized() else 0
         self._rng = None
     
+    # This is crucial when running multiple GPUs. 
+    # It ensures that the random number generator is the same for each worker.
     @property
     def rng(self):
         if self._rng is None:
@@ -161,7 +162,7 @@ class Collate(BaseCollate):
             panel_overlap = self.rng.uniform() <= float(self.panel_overlap)
             
             if self.panel_selection == 'random' or (self.panel_selection == 'mixed' and self.rng.uniform() <= self.panel_selection_mixed_prob) or n_tokens < 10_000:
-                n_tokens_available = n_tokens if panel_overlap else (n_tokens - self.panel_size_min)
+                n_tokens_available = n_tokens if panel_overlap else max((n_tokens - self.panel_size_min), 0)
                 panel_size_1 = self.log_int_samping(min(self.panel_size_min, n_tokens_available), min(self.panel_size_max, n_tokens_available))
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
                 # print(f'Panel_1 random size: {len(panel_idx_1)}')

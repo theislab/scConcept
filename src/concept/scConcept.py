@@ -1,12 +1,14 @@
 import os
 import shutil
 import torch
+import lightning as L
 from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer
 from lamin_dataloader.dataset import TokenizedDataset, BaseCollate
 from lamin_dataloader.collections import InMemoryCollection
 from concept.model import BiEncoderContrastiveModel
-from huggingface_hub import hf_hub_download
+from concept.data.datamodules import AnnDataModule
+from huggingface_hub import hf_hub_download, HfApi
 from tqdm import tqdm
 from pathlib import Path
 import pandas as pd
@@ -40,7 +42,7 @@ class scConcept:
         
     def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
-        Download model checkpoint, config, and gene mapping files from HuggingFace Hub if they don't exist.
+        Download model checkpoint, config, gene mapping files, and panels directory from HuggingFace Hub if they don't exist.
         
         Args:
             model_name: Model name (e.g., 'Corpus-30M')
@@ -49,6 +51,7 @@ class scConcept:
         model_path = model_dir / 'model.ckpt'
         gene_mapping_path = model_dir / 'pc_gene_token_mapping.pkl'
         config_path = model_dir / 'config.yaml'
+        panels_dir = model_dir / 'panels'
         
         model_dir.mkdir(parents=True, exist_ok=True)
         
@@ -97,7 +100,41 @@ class scConcept:
         else:
             print(f"Config already exists at {config_path}")
         
-        return model_path, gene_mapping_path, config_path
+        # Download panels directory if needed
+        panels_dir.mkdir(parents=True, exist_ok=True)
+        api = HfApi()
+        try:
+            # List all files in the panels directory on HuggingFace
+            repo_files = api.list_repo_files(repo_id=self.repo_id, repo_type="model")
+            panel_files = [f for f in repo_files if f.startswith(f"{model_name}/panels/") and f.endswith(".csv")]
+            
+            if panel_files:
+                print(f"Downloading panels directory from HuggingFace Hub ({self.repo_id}/{model_name}/panels/)...")
+                for panel_file in panel_files:
+                    panel_filename = os.path.basename(panel_file)
+                    panel_path = panels_dir / panel_filename
+                    
+                    if not panel_path.exists():
+                        print(f"  Downloading {panel_filename}...")
+                        downloaded_path = hf_hub_download(
+                            repo_id=self.repo_id,
+                            filename=panel_file,
+                            cache_dir=str(model_dir.parent),
+                        )
+                        # Move downloaded file to expected location
+                        if downloaded_path != str(panel_path):
+                            shutil.copy2(downloaded_path, str(panel_path))
+                        print(f"  Panel {panel_filename} saved to {panel_path}")
+                    else:
+                        print(f"  Panel {panel_filename} already exists at {panel_path}")
+                print(f"Panels directory saved to {panels_dir}")
+            else:
+                print(f"No panels found in HuggingFace Hub ({self.repo_id}/{model_name}/panels/)")
+        except Exception as e:
+            print(f"Warning: Could not download panels directory: {e}")
+            print(f"Panels directory will be created at {panels_dir} but may be empty")
+        
+        return model_path, gene_mapping_path, config_path, panels_dir
     
     
     def load_config_and_model(self, 
@@ -108,6 +145,7 @@ class scConcept:
         Args:
             model_name: Model name (e.g., 'Corpus-30M')
         """
+        self.model_name = model_name
         
         model_dir = Path(self.cache_dir) / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -115,12 +153,14 @@ class scConcept:
         print(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
         
         # Download files if they don't exist
-        model_path, gene_mapping_path, config_path = self._download_files_if_needed(model_name, model_dir)
+        model_path, gene_mapping_path, config_path, panels_dir = self._download_files_if_needed(model_name, model_dir)
+        
+        self.panels_dir = panels_dir
         
         # Load config from downloaded file
         self.cfg = OmegaConf.load(config_path)
         self.cfg = self.apply_compatibility_changes(self.cfg)
-        
+                
         # Load gene mapping
         gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
         
@@ -196,6 +236,8 @@ class scConcept:
         if self.model is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
         
+        self.model.eval()
+        
         # Determine parameters with defaults from config
         max_tokens = max_tokens if max_tokens is not None else self.cfg.datamodule.dataset.train.max_tokens
         gene_sampling_strategy = gene_sampling_strategy if gene_sampling_strategy is not None else self.cfg.datamodule.gene_sampling_strategy
@@ -269,4 +311,116 @@ class scConcept:
         print(f"Total cells processed: {len(cls_cell_embs)}")
         
         return result
+    
+    def train(self, adata_list=None, max_steps=None, batch_size=None):
+        """
+        Train a new model using the configuration in self.cfg.
+        Uses self.model if it exists, otherwise initializes a new model.
+        Assumes single GPU device with num_nodes=1.
+        
+        Args:
+            adata_list: Optional AnnData object or list of AnnData objects to use for training.
+                       If provided, will be used instead of loading from file paths.
+            max_steps: Optional maximum number of training steps. If provided, overrides config value.
+            batch_size: Optional batch size for training. If provided, overrides config value.
+        """
+        if self.cfg is None:
+            raise ValueError("Configuration not loaded. Set self.cfg or call load_config_and_model() first.")
+        
+        print("Starting training...")
+        
+        adaptaion = self.model is not None
+        
+        panels_dir = self.panels_dir if adaptaion else self.cfg.PATH.PANELS_PATH
+        
+        # Override config values if provided
+        if max_steps is not None:
+            self.cfg.model.training.max_steps = max_steps
+        if batch_size is not None:
+            if 'train' not in self.cfg.datamodule.dataloader:
+                self.cfg.datamodule.dataloader.train = {}
+            self.cfg.datamodule.dataloader.train.batch_size = batch_size
+        
+        
+        # Create split dictionary (only train, no validation)
+        if adata_list is not None:
+            # Handle single AnnData object or list of AnnData objects
+            if isinstance(adata_list, ad.AnnData):
+                # Convert single AnnData to list
+                adata_list = [adata_list]
+            elif isinstance(adata_list, list):
+                # Validate list
+                if len(adata_list) == 0:
+                    raise ValueError("adata_list cannot be empty")
+                if not all(isinstance(adata, ad.AnnData) for adata in adata_list):
+                    raise ValueError("All items in adata_list must be AnnData objects")
+            else:
+                raise ValueError("adata_list must be an AnnData object or a list of AnnData objects")
+            # Use provided AnnData objects
+            split = {'train': adata_list}
+        else:
+            # Load from file paths
+            dataset_path = self.cfg.PATH.ADATA_PATH
+            split = {}
+            for key, filenames in self.cfg.PATH.SPLIT.items():
+                if filenames is not None and key == 'train':
+                    split[key] = [os.path.join(dataset_path, file) for file in filenames]
+            
+        if adaptaion:
+            assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."
+        else:
+            # Load gene mapping
+            gene_mapping = pd.read_pickle(self.cfg.PATH.gene_mapping_path).to_dict()
+            self.tokenizer = GeneIdTokenizer(gene_mapping)
+        
+        # Create datamodule
+        datamodule_args = {
+            'split': split,
+            'panels_path': panels_dir,
+            'tokenizer': self.tokenizer,
+            'columns': [],
+            'precomp_embs_key': self.cfg.datamodule.precomp_embs_key,
+            'normalization': self.cfg.datamodule.normalization,
+            'gene_sampling_strategy': self.cfg.datamodule.gene_sampling_strategy,
+            'dataset_kwargs': OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True),
+            'dataloader_kwargs': OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True),
+            'val_loader_names': [],
+        }
+        datamodule = AnnDataModule(**datamodule_args)
+        
+        # Create trainer for single GPU (no validation)
+        trainer = L.Trainer(
+            max_steps=self.cfg.model.training.max_steps,
+            accelerator='gpu',
+            devices=1,
+            num_nodes=1,
+            limit_train_batches=float(self.cfg.model.training.limit_train_batches),
+            precision='bf16-mixed',
+            accumulate_grad_batches=self.cfg.model.training.accumulate_grad_batches,
+        )
+        
+        # Use existing model or create new one
+        if adaptaion:
+            # Update model's world_size if needed
+            if hasattr(self.model, 'world_size'):
+                self.model.world_size = 1
+            if hasattr(self.model, 'val_loader_names'):
+                self.model.val_loader_names = []
+            self.model.train()
+        else:
+            model_args = {
+                'config': self.cfg.model,
+                'pad_token_id': gene_mapping['<pad>'],
+                'cls_token_id': gene_mapping['<cls>'],
+                'vocab_size': len(gene_mapping),
+                'world_size': 1,  # Single GPU
+                'val_loader_names': [],  # No validation
+                'precomp_embs_key': self.cfg.datamodule.precomp_embs_key,
+            }
+            self.model = BiEncoderContrastiveModel(**model_args)
+        
+        # Train
+        trainer.fit(model=self.model, datamodule=datamodule)
+        
+        print("Training completed!")
     
