@@ -115,7 +115,6 @@ class scConcept:
                     panel_path = panels_dir / panel_filename
                     
                     if not panel_path.exists():
-                        print(f"  Downloading {panel_filename}...")
                         downloaded_path = hf_hub_download(
                             repo_id=self.repo_id,
                             filename=panel_file,
@@ -124,9 +123,8 @@ class scConcept:
                         # Move downloaded file to expected location
                         if downloaded_path != str(panel_path):
                             shutil.copy2(downloaded_path, str(panel_path))
-                        print(f"  Panel {panel_filename} saved to {panel_path}")
                     else:
-                        print(f"  Panel {panel_filename} already exists at {panel_path}")
+                        pass    
                 print(f"Panels directory saved to {panels_dir}")
             else:
                 print(f"No panels found in HuggingFace Hub ({self.repo_id}/{model_name}/panels/)")
@@ -267,7 +265,7 @@ class scConcept:
             collate_fn=collate_fn,
             shuffle=False,
             drop_last=False,
-            num_workers=0
+            num_workers=6
         )
         
         print(f"Processing {len(dataset)} cells...")
