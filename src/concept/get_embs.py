@@ -3,7 +3,7 @@ import torch
 from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer
 from concept.data.datamodules import AnnDataModule
-from concept.model import BiEncoderContrastiveModel
+from concept.model import ContrastiveModel
 import wandb
 from tqdm import tqdm
 import numpy as np
@@ -43,7 +43,7 @@ def get_embs(cfg: DictConfig, ckpt_path: str, emb_path: str):
         'cls_token_id': gene_mapping['<cls>'],
         'vocab_size': len(gene_mapping),
     }
-    model = BiEncoderContrastiveModel.load_from_checkpoint(ckpt_path, **model_args)
+    model = ContrastiveModel.load_from_checkpoint(ckpt_path, **model_args)
     
     split = {}
     for key, filenames in cfg.PATH.SPLIT.items():

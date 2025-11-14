@@ -1,4 +1,4 @@
-name: BiEncoderContrastiveModel
+name: ContrastiveModel
 flash_attention: False
 dim_model: 512
 num_head: 8

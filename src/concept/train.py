@@ -9,7 +9,7 @@ from lightning.pytorch.utilities import rank_zero_only
 
 from lamin_dataloader.dataset import GeneIdTokenizer
 from concept.data.datamodules import AnnDataModule
-from concept.model import BiEncoderContrastiveModel
+from concept.model import ContrastiveModel
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize
@@ -94,7 +94,7 @@ def train(cfg: DictConfig):
         'val_loader_names': val_loader_names, 
         'precomp_embs_key': cfg.datamodule.precomp_embs_key,
     }
-    model = BiEncoderContrastiveModel(**model_args)
+    model = ContrastiveModel(**model_args)
 
     if not cfg.initialize.resume and cfg.model.training.validate_before_training:
         trainer.validate(model=model, 
@@ -103,7 +103,7 @@ def train(cfg: DictConfig):
     
     if cfg.initialize.resume:
         ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
-        model = BiEncoderContrastiveModel.load_from_checkpoint(ckpt_path, **model_args, strict=False)
+        model = ContrastiveModel.load_from_checkpoint(ckpt_path, **model_args, strict=False)
     
     trainer.fit(model=model, 
                 datamodule = datamodule)

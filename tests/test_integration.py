@@ -1,7 +1,7 @@
 """
 Integration tests for the training pipeline and model.
 
-This test suite provides comprehensive testing of the BiEncoderContrastiveModel
+This test suite provides comprehensive testing of the ContrastiveModel
 and the training workflow.
 
 Note: flash_attn and _encode are conditionally mocked:
@@ -32,7 +32,7 @@ if not FLASH_ATTN_AVAILABLE:
     sys.modules['flash_attn.modules.mha'] = MagicMock()
 
 # Now we can import the modules
-from concept.model import BiEncoderContrastiveModel
+from concept.model import ContrastiveModel
 from lamin_dataloader.dataset import TokenizedDataset
 from lamin_dataloader.collections import InMemoryCollection
 from lamin_dataloader.dataset import BaseCollate
@@ -61,10 +61,10 @@ def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False):
 def mock_model_methods():
     """Automatically mock model methods for all tests in this module."""
     # Always mock log to avoid trainer reference errors
-    with patch.object(BiEncoderContrastiveModel, 'log', _mock_log):
+    with patch.object(ContrastiveModel, 'log', _mock_log):
         # Only mock _encode if flash-attn is not available
         if not FLASH_ATTN_AVAILABLE:
-            with patch.object(BiEncoderContrastiveModel, '_encode', _mock_encode):
+            with patch.object(ContrastiveModel, '_encode', _mock_encode):
                 yield
         else:
             yield
@@ -109,7 +109,7 @@ def mock_config():
 
 def test_model_initialization(mock_config, device):
     """Test that the model can be initialized with mock config"""
-    model = BiEncoderContrastiveModel(
+    model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
@@ -130,7 +130,7 @@ def test_model_initialization(mock_config, device):
 
 def test_training_step(mock_config, device):
     """Test that the model can perform a training step"""
-    model = BiEncoderContrastiveModel(
+    model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
@@ -179,7 +179,7 @@ def test_training_step(mock_config, device):
 
 def test_validation_step(mock_config, device):
     """Test that the model can perform a validation step and calls model.log appropriately"""
-    model = BiEncoderContrastiveModel(
+    model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
@@ -222,7 +222,7 @@ def test_validation_step(mock_config, device):
 
 def test_predict_step(mock_config, device):
     """Test that the model can perform a predict step"""
-    model = BiEncoderContrastiveModel(
+    model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
@@ -293,7 +293,7 @@ def test_predict_step_with_lamin_dataloader(
     BaseCollate from lamin_dataloader with different parameters"""
     
     # Create model
-    model = BiEncoderContrastiveModel(
+    model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,

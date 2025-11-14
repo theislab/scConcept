@@ -6,7 +6,7 @@ from omegaconf import OmegaConf, DictConfig
 from lamin_dataloader.dataset import GeneIdTokenizer
 from lamin_dataloader.dataset import TokenizedDataset, BaseCollate
 from lamin_dataloader.collections import InMemoryCollection
-from concept.model import BiEncoderContrastiveModel
+from concept.model import ContrastiveModel
 from concept.data.datamodules import AnnDataModule
 from huggingface_hub import hf_hub_download, HfApi
 from tqdm import tqdm
@@ -172,7 +172,7 @@ class scConcept:
             'cls_token_id': gene_mapping['<cls>'],
             'vocab_size': len(gene_mapping),
         }
-        self.model = BiEncoderContrastiveModel.load_from_checkpoint(str(model_path), **model_args)
+        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args)
         
         # Get device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -389,6 +389,7 @@ class scConcept:
         # Create trainer for single GPU (no validation)
         trainer = L.Trainer(
             max_steps=self.cfg.model.training.max_steps,
+            logger=False,
             accelerator='gpu',
             devices=1,
             num_nodes=1,
@@ -415,7 +416,7 @@ class scConcept:
                 'val_loader_names': [],  # No validation
                 'precomp_embs_key': self.cfg.datamodule.precomp_embs_key,
             }
-            self.model = BiEncoderContrastiveModel(**model_args)
+            self.model = ContrastiveModel(**model_args)
         
         # Train
         trainer.fit(model=self.model, datamodule=datamodule)

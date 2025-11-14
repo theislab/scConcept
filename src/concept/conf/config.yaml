@@ -1,5 +1,5 @@
 defaults:
-  - model: BiEncoderContrastiveModel
+  - model: ContrastiveModel
   - datamodule: GeneToken
   - split: split_v1_large
   - _self_

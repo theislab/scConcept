@@ -326,7 +326,7 @@ class GeneExpressionDecoder(nn.Module):
         return self.fc(x).squeeze(-1)
 
 
-class BiEncoderContrastiveModel(BaseTransformerModel):
+class ContrastiveModel(BaseTransformerModel):
     def __init__(
         self,
         config,

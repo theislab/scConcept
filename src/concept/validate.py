@@ -5,7 +5,7 @@ import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 from lamin_dataloader.dataset import GeneIdTokenizer
 from concept.data.datamodules import AnnDataModule
-from model import BiEncoderContrastiveModel
+from model import ContrastiveModel
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
 import argparse
@@ -49,7 +49,7 @@ def validate(cfg: DictConfig, ckpt_path: str):
         'world_size': trainer.world_size, 
         'val_loader_names': val_loader_names, 
     }    
-    model = BiEncoderContrastiveModel.load_from_checkpoint(ckpt_path, **model_args)
+    model = ContrastiveModel.load_from_checkpoint(ckpt_path, **model_args)
 
 
     model.eval()
