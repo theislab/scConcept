@@ -14,20 +14,13 @@ from lightning.pytorch.utilities import rank_zero_only
 
 from lamin_dataloader.dataset import GeneIdTokenizer
 from concept.data.datamodules import AnnDataModule
-from concept.data.utils import add_count_nnz
 from concept.model import BiEncoderContrastiveModel
 import wandb
-from lightning.pytorch.strategies import DDPStrategy, ParallelStrategy, SingleDeviceStrategy
-from pathlib import Path
-# load hydra config without decorative:
+from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize
-# with initialize(version_base=None, config_path="conf", job_name="test_app"):
-#     cfg = compose(config_name="config", overrides=overrides)
-#     print(OmegaConf.to_yaml(cfg))
 
 
-
-def train() -> None:
+def train():
     
     bash_cfg = OmegaConf.from_cli()
     resume_from_checkpoint = bash_cfg.pop("resume_from_checkpoint", False)
@@ -44,57 +37,14 @@ def train() -> None:
 
         cfg = OmegaConf.merge(cfg, bash_cfg) 
         print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
-        
-        # cfg.datamodule.dataset.train.panel_max_drop_rate=0.5
-        # cfg.datamodule.dataset.train.panel_filter_regex="SEA"
-        # cfg.datamodule.dataset.train.anchor_max_tokens=500
-        
-        cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.0) # for a bug in pytorch-lightning
+                
+        # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
         cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
-        # cfg.model.training.check_val_every_n_epoch = 0
-        # cfg.model.training.num_nodes = 1
-        # for name, path in cfg.PATH.items():
-        #     if isinstance(path, (str, Path)):
-        #         cfg.PATH[name] = str(path).replace('/localscratch/mojtaba.bahrami/projects/contrastive_transformer', '/p/project/nicheformer/contrastive_transformer_storage')
     else:
         print(f"Starting new training ...")
         print('overrides:', sys.argv[1:])
-        with initialize(version_base=None, config_path="../conf"):
+        with initialize(version_base=None, config_path="./conf"):
             cfg = compose(config_name="config", overrides=sys.argv[1:])
-        
-    
-    dataset_path = cfg.PATH.ADATA_PATH
-    if cfg.PATH.LOCAL_DIR is not None:
-        local_dir = cfg.PATH.LOCAL_DIR
-        assert len(set(local_dir.split("/"))) > 2, f"local_dir should not be root directory: {local_dir}"
-        print(f'Copying training anndata files to directory...')
-        if not os.path.exists(local_dir):
-            os.makedirs(local_dir, exist_ok=True)
-        copy_count = 0
-        for _, filenames in cfg.PATH.SPLIT.items():
-            if filenames is None:
-                continue
-            for file in filenames:
-                src_file = os.path.join(dataset_path, file)
-                dst_file = os.path.join(local_dir, file)
-                if not os.path.exists(dst_file) or not filecmp.cmp(src_file, dst_file):
-                # if not os.path.exists(dst_file):
-                    shutil.copy(src_file, dst_file)
-                    copy_count += 1
-        print(f'{copy_count} files copied successfully!')
-        dataset_path = local_dir
-        
-        # for _, filenames in cfg.PATH.SPLIT.items():
-        #     if filenames is None:
-        #         continue
-        #     for file in filenames:
-        #         src_file = os.path.join(local_dir, file)
-        #         with h5py.File(src_file) as f:
-        #             if "var/_count_nnz" in f:
-        #                 print(f'Count nnz already exists in {file}...')
-        #                 continue
-        #         print(f'Adding count nnz for {src_file}...')
-                # add_count_nnz(src_file)
     
     
     if 'val' in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
@@ -106,7 +56,7 @@ def train() -> None:
     
     split = {}
     for key, filenames in cfg.PATH.SPLIT.items():
-        split[key] = [os.path.join(dataset_path, file) for file in filenames]
+        split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
     
     datamodule_args = {    
         'split': split,
@@ -116,7 +66,7 @@ def train() -> None:
         'normalization': cfg.datamodule.normalization,
         'gene_sampling_strategy': cfg.datamodule.gene_sampling_strategy,
         'model_speed_sanity_check': cfg.datamodule.model_speed_sanity_check,
-        # make sure to pass a copy to vaoid being modified before uploading to wandb:
+        # make sure to pass a copy to avoid being modified before uploading to wandb:
         'dataset_kwargs': {**OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)}, 
         'dataloader_kwargs': {**OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)},
         'val_loader_names': val_loader_names,
@@ -132,7 +82,6 @@ def train() -> None:
         CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, logger.experiment.id if cfg.wandb.enabled else 'dummy')
         if cfg.wandb.enabled:
             logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
-        # print(OmegaConf.to_yaml(cfg))
 
     trainer_kwargs = {
         'max_steps': cfg.model.training.max_steps,
@@ -154,9 +103,7 @@ def train() -> None:
         ],
     }
     trainer = L.Trainer(**trainer_kwargs, 
-                        strategy=DDPStrategy(find_unused_parameters=True), # timeout = datetime.timedelta(seconds=1800*3)
-                        # strategy=DDPStrategy(), 
-                        # strategy=SingleDeviceStrategy(device='cuda'),
+                        strategy=DDPStrategy(find_unused_parameters=True),
                         precision='bf16-mixed', 
                         use_distributed_sampler=False,
                         accumulate_grad_batches=cfg.model.training.accumulate_grad_batches,
@@ -185,11 +132,6 @@ def train() -> None:
     
     trainer.fit(model=model, 
                 datamodule = datamodule)
-
-    # if cfg.PATH.LOCAL_DIR is not None and 'persistent' not in cfg.PATH.LOCAL_DIR:
-    #     print(f'Removing trianing local directory...')
-    #     shutil.rmtree(local_dir)
-    #     print(f'Local directory removed!')
 
 if __name__ == "__main__":
     train()
