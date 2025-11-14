@@ -79,7 +79,17 @@ result = concept.extract_embeddings(adata=adata, gene_id_column='gene_id')
 adata.obsm['X_scConcept_adapted'] = result['cls_cell_emb']
 ```
 
-For more detailed examples and tutorials, see the [notebook examples](docs/notebooks/embedding_extraction.ipynb).
+For more detailed example, see the [notebook example](docs/notebooks/embedding_extraction.ipynb).
+
+## Troubleshooting
+
+If you encounter an error when loading a pre-trained model, try the following:
+
+1. Remove the repository and clone the most recent version
+2. Remove the cache directory (`cache/` by default)
+3. Run again
+
+This will force a fresh download of the pre-trained model and should resolve most loading issues.
 
 <!-- ## Release notes
 

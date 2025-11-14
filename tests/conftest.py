@@ -116,10 +116,10 @@ def train_config(adata, tokenizer, device, tmp_path):
                     "datamodule.dataset.train.max_tokens=10",
                     "datamodule.dataset.train.panel_size_min=3",
                     "datamodule.dataset.val=null",
-                    "datamodule.dataloader.val=null",
                     # Override dataloader settings
                     "datamodule.dataloader.train.batch_size=8",
                     "datamodule.dataloader.train.num_workers=2",
+                    "datamodule.dataloader.val=null",
                     # Override model settings for faster testing
                     "model.dim_model=16",
                     "model.num_head=2",

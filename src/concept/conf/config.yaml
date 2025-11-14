@@ -6,7 +6,6 @@ defaults:
 
 wandb:
   enabled: True
-  run_id: null
   run_name: ???
   entity: theislab-transformer
   project: contrastive-transformer

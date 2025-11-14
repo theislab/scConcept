@@ -108,6 +108,7 @@ def train(cfg: DictConfig):
     trainer.fit(model=model, 
                 datamodule = datamodule)
 
+
 if __name__ == "__main__":
     bash_cfg = OmegaConf.from_cli()
     resume = bash_cfg.pop("initialize.resume", False)

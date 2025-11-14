@@ -118,7 +118,7 @@ class AnnDataModule(L.LightningDataModule):
         keys_to_pop = [
             'max_tokens', 'min_tokens', 'variable_size', 'panel_selection', 'panel_selection_mixed_prob',
             'panel_filter_regex', 'panel_size_min', 'panel_size_max', 'panel_overlap',
-            'anchor_panel_size', 'anchor_max_tokens', 'panel_max_drop_rate', 'feature_max_drop_rate',
+            'panel_max_drop_rate', 'feature_max_drop_rate',
         ]
 
         collate_kwargs = {

@@ -14,8 +14,6 @@ dataset:
     panel_filter_regex: ".*"
     panel_size_min: 400
     panel_size_max: 60000
-    anchor_panel_size: 40000
-    anchor_max_tokens: 100
     panel_max_drop_rate: 0.5
     feature_max_drop_rate: null
   val:
