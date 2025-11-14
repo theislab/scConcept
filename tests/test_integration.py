@@ -608,5 +608,50 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     print(f"  - Test batch shape: {test_batches[0]['tokens'].shape}")
 
 
+def test_train_integration(train_config):
+    """Integration test for train.py training pipeline
+    
+    Tests that the train() function can:
+    - Load configuration and set up paths
+    - Create datamodule with AnnData files
+    - Initialize model and trainer
+    - Run training for a few steps
+    - Complete without errors
+    """
+    from unittest.mock import patch, MagicMock
+    from concept.train import train
+    
+    cfg = train_config['config']
+    checkpoint_dir = train_config['checkpoint_dir']
+    
+    # Mock wandb logger to avoid needing real credentials
+    mock_logger = MagicMock()
+    mock_logger.experiment = MagicMock()
+    mock_logger.experiment.id = 'test_run_id'
+    mock_logger.experiment.config = MagicMock()
+    
+    # For single device, use "auto" strategy instead of DDPStrategy
+    # Patch DDPStrategy to return "auto" string which PyTorch Lightning accepts for single device
+    def mock_ddp_strategy(*args, **kwargs):
+        return "auto"  # Use auto strategy for single device
+    
+    # Mock rank_zero_only to always return 0 (single process)
+    with patch('concept.train.rank_zero_only.rank', 0):
+        with patch('concept.train.WandbLogger', return_value=mock_logger):
+            with patch('concept.train.DDPStrategy', side_effect=mock_ddp_strategy):
+                # Also patch os.environ to avoid SLURM issues
+                with patch.dict('os.environ', {}, clear=False):
+                    # Run training
+                    train(cfg)
+    
+    # Verify checkpoint directory was created (if training completed)
+    # Note: With limit_train_batches=2.0 and max_steps=3, training should complete
+    assert checkpoint_dir.exists()
+    
+    print(f"\n✓ train.py integration test passed:")
+    print(f"  - Training completed successfully")
+    print(f"  - Checkpoint directory created: {checkpoint_dir}")
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

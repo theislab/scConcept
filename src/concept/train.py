@@ -1,10 +1,5 @@
 import os
 import sys
-import shutil
-import filecmp
-import hydra
-import h5py
-import datetime
 import lightning as L
 import pandas as pd
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
@@ -20,33 +15,13 @@ from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize
 
 
-def train():
-    
-    bash_cfg = OmegaConf.from_cli()
-    resume_from_checkpoint = bash_cfg.pop("resume_from_checkpoint", False)
-    if resume_from_checkpoint:
-        
-        run_id = bash_cfg.pop("run_id")
-        checkpoint = bash_cfg.pop("checkpoint")
-        
-        wandb.login()
-        api = wandb.Api()
-        run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{run_id}')
-        print(f"Resuming training for {run.id} ...")
-        cfg = DictConfig(run.config)
+def train(cfg: DictConfig):
+    """
+    Train a model using the configuration in cfg.
 
-        cfg = OmegaConf.merge(cfg, bash_cfg) 
-        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
-                
-        # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
-        cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
-    else:
-        print(f"Starting new training ...")
-        print('overrides:', sys.argv[1:])
-        with initialize(version_base=None, config_path="./conf"):
-            cfg = compose(config_name="config", overrides=sys.argv[1:])
-    
-    
+    Args:
+        cfg: Configuration dictionary.
+    """
     if 'val' in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
     else:
@@ -121,17 +96,44 @@ def train():
     }
     model = BiEncoderContrastiveModel(**model_args)
 
-    if not resume_from_checkpoint and cfg.model.training.validate_before_training:
+    if not cfg.initialize.resume and cfg.model.training.validate_before_training:
         trainer.validate(model=model, 
                         datamodule=datamodule,
                         )
     
-    if resume_from_checkpoint:
-        ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id, checkpoint)
+    if cfg.initialize.resume:
+        ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
         model = BiEncoderContrastiveModel.load_from_checkpoint(ckpt_path, **model_args, strict=False)
     
     trainer.fit(model=model, 
                 datamodule = datamodule)
 
 if __name__ == "__main__":
-    train()
+    bash_cfg = OmegaConf.from_cli()
+    resume = bash_cfg.pop("initialize.resume", False)
+    if resume:
+        run_id = bash_cfg.pop("initialize.run_id")
+        checkpoint = bash_cfg.pop("initialize.checkpoint")
+        
+        wandb.login()
+        api = wandb.Api()
+        run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{run_id}')
+        print(f"Resuming training for {run.id} ...")
+        cfg = DictConfig(run.config)
+
+        cfg = OmegaConf.merge(cfg, bash_cfg) 
+        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+                
+        # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
+        cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
+        
+        cfg.initialize.resume = True
+        cfg.initialize.run_id = run_id
+        cfg.initialize.checkpoint = checkpoint
+    else:
+        print(f"Starting new training ...")
+        print('overrides:', sys.argv[1:])
+        with initialize(version_base=None, config_path="./conf"):
+            cfg = compose(config_name="config", overrides=sys.argv[1:])
+            
+    train(cfg)

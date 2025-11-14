@@ -1,10 +1,10 @@
 name: BiEncoderContrastiveModel
 flash_attention: False
-dim_model: 128
+dim_model: 512
 num_head: 8
-dim_hid: 256
+dim_hid: 1024
 projection_dim: null
-nlayers: 6
+nlayers: 8
 dropout: 0.2
 decoder_head: False
 values_only_sanity_check: False
@@ -18,7 +18,7 @@ random_split: False
 mask_padding: False
 pe_max_len: 5000
 input_encoding: "rank_encoding" # "value_encoding"
-loss_switch_step: 20000
+loss_switch_step: 10000
 training:
   resume_from_checkpoint: False
   validate_before_training: True
@@ -27,8 +27,8 @@ training:
   weight_decay: 0.0
   optimizer_class: AdamW
   scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
-  warmup: 20000
-  max_steps: 100000000
+  warmup: 10000
+  max_steps: 10000000
   min_lr: 0.0
   accelerator: gpu
   devices: -1

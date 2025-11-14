@@ -2,6 +2,11 @@ import anndata as ad
 import numpy as np
 import pytest
 import torch
+import pandas as pd
+import os
+from pathlib import Path
+from omegaconf import OmegaConf
+from hydra import compose, initialize
 from lamin_dataloader.dataset import GeneIdTokenizer
 
 
@@ -32,7 +37,7 @@ def adata():
         'ENSG00000138095', 'ENSG00000174233'
     ]
     
-    n_cells = 10
+    n_cells = 30
     np.random.seed(42)
     
     X = np.random.negative_binomial(n=3, p=0.7, size=(n_cells, len(real_gene_names))).astype(np.int32)
@@ -57,3 +62,87 @@ def tokenizer(adata):
     }
     
     return GeneIdTokenizer(gene_mapping)
+
+
+@pytest.fixture
+def train_config(adata, tokenizer, device, tmp_path):
+    """Create a training configuration and set up necessary files for train.py integration tests"""
+    # Create temporary directory structure
+    adata_dir = tmp_path / "h5ads"
+    adata_dir.mkdir()
+    panels_dir = tmp_path / "panels"
+    panels_dir.mkdir()
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_dir.mkdir()
+    
+    # Save adata as h5ad file
+    adata_file = adata_dir / "test_data.h5ad"
+    adata.write(adata_file)
+    
+    # Create gene mapping pickle file
+    gene_mapping = tokenizer.gene_mapping
+    gene_mapping_series = pd.Series(gene_mapping)
+    gene_mapping_path = tmp_path / "gene_mapping.pkl"
+    gene_mapping_series.to_pickle(gene_mapping_path)
+    
+    # Create a simple panel file
+    panel_file = panels_dir / "test_panel.csv"
+    panel_df = pd.DataFrame({'Ensembl_ID': adata.var_names[:5].tolist()})
+    panel_df.to_csv(panel_file, index=False)
+    
+    
+    try:
+        config_path = "../src/concept/conf"
+        
+        # Load base config using Hydra with overrides for testing
+        with initialize(version_base=None, config_path=config_path):
+            cfg = compose(
+                config_name="config",
+                overrides=[
+                    # Override paths
+                    f"PATH.PROJECT_PATH={tmp_path}",
+                    f"PATH.PROJECT_DATA_PATH={tmp_path}",
+                    f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
+                    f"PATH.DATASET_PATH={tmp_path}",
+                    f"PATH.ADATA_PATH={adata_dir}",
+                    f"PATH.PANELS_PATH={panels_dir}",
+                    f"PATH.gene_mapping_path={gene_mapping_path}",
+                    # Override split to use test data
+                    "split=split_v1_test",
+                    # Override datamodule settings
+                    "datamodule.columns=[]",
+                    "datamodule.normalization=raw",
+                    "datamodule.gene_sampling_strategy=top-nonzero",
+                    "datamodule.dataset.train.max_tokens=10",
+                    "datamodule.dataset.train.panel_size_min=3",
+                    "datamodule.dataset.val=null",
+                    "datamodule.dataloader.val=null",
+                    # Override dataloader settings
+                    "datamodule.dataloader.train.batch_size=8",
+                    "datamodule.dataloader.train.num_workers=2",
+                    # Override model settings for faster testing
+                    "model.dim_model=16",
+                    "model.num_head=2",
+                    "model.dim_hid=32",
+                    "model.nlayers=2",
+                    "model.loss_switch_step=1",
+                    # Override training settings
+                    "model.training.max_steps=5",
+                    "model.training.warmup=1",
+                    "model.training.devices=1",
+                    "model.training.num_nodes=1",
+                    # Disable wandb
+                    "wandb.enabled=False",
+                    "wandb.run_name=test_name",
+                ]
+            )
+    finally:
+        # Manually override the split to use our test file
+        cfg.PATH.SPLIT = {'train': ['test_data.h5ad']}
+        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+    
+    # Return config and checkpoint directory for verification
+    return {
+        'config': cfg,
+        'checkpoint_dir': checkpoint_dir
+    }

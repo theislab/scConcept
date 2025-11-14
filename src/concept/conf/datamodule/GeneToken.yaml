@@ -10,13 +10,13 @@ dataset:
     variable_size: False
     panel_overlap: False
     panel_selection: mixed
-    panel_selection_mixed_prob: 0.5
+    panel_selection_mixed_prob: 0.25
     panel_filter_regex: ".*"
     panel_size_min: 400
-    panel_size_max: 5000
+    panel_size_max: 60000
     anchor_panel_size: 40000
     anchor_max_tokens: 100
-    panel_max_drop_rate: null
+    panel_max_drop_rate: 0.5
     feature_max_drop_rate: null
   val:
     same:
@@ -113,9 +113,9 @@ dataset:
 dataloader:
   train:
     within_group_sampling: "dataset"
-    batch_size: 256
+    batch_size: 128
     shuffle: True
-    num_workers: 4
+    num_workers: 8
     pin_memory: False
     drop_last: True
     num_samples: null
