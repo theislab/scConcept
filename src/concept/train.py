@@ -7,9 +7,9 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch.utilities import rank_zero_only
 
-from lamin_dataloader.dataset import GeneIdTokenizer
-from concept.data.datamodules import AnnDataModule
-from concept.model import ContrastiveModel
+from lamin_dataloader import GeneIdTokenizer
+from concept.data import AnnDataModule
+from concept import ContrastiveModel
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize

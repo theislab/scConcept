@@ -13,9 +13,9 @@ import numpy as np
 from torch.distributed.nn.functional import all_gather
 from collections import defaultdict
 from functools import partial
-from concept.modules.bert_padding import unpad_input, pad_input
-from concept.modules.flash_attention_layer import FlashTransformerEncoderLayer
-from concept.modules.transformer import TransformerEncoder
+from .modules.bert_padding import unpad_input, pad_input
+from .modules.flash_attention_layer import FlashTransformerEncoderLayer
+from .modules.transformer import TransformerEncoder
 
 
 # set random seed

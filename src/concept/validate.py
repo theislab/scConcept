@@ -3,9 +3,9 @@ import os
 import lightning as L
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
-from lamin_dataloader.dataset import GeneIdTokenizer
-from concept.data.datamodules import AnnDataModule
-from model import ContrastiveModel
+from lamin_dataloader import GeneIdTokenizer
+from concept.data import AnnDataModule
+from concept import ContrastiveModel
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
 import argparse

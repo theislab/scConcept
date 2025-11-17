@@ -3,11 +3,11 @@ import shutil
 import torch
 import lightning as L
 from omegaconf import OmegaConf, DictConfig
-from lamin_dataloader.dataset import GeneIdTokenizer
-from lamin_dataloader.dataset import TokenizedDataset, BaseCollate
-from lamin_dataloader.collections import InMemoryCollection
-from concept.model import ContrastiveModel
-from concept.data.datamodules import AnnDataModule
+from lamin_dataloader import GeneIdTokenizer
+from lamin_dataloader import TokenizedDataset, BaseCollate
+from lamin_dataloader import InMemoryCollection
+from .model import ContrastiveModel
+from .data import AnnDataModule
 from huggingface_hub import hf_hub_download, HfApi
 from tqdm import tqdm
 from pathlib import Path

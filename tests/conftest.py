@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from omegaconf import OmegaConf
 from hydra import compose, initialize
-from lamin_dataloader.dataset import GeneIdTokenizer
+from lamin_dataloader import GeneIdTokenizer
 
 
 def get_device():
@@ -91,56 +91,55 @@ def train_config(adata, tokenizer, device, tmp_path):
     panel_df.to_csv(panel_file, index=False)
     
     
-    try:
-        config_path = "../src/concept/conf"
-        
-        # Load base config using Hydra with overrides for testing
-        with initialize(version_base=None, config_path=config_path):
-            cfg = compose(
-                config_name="config",
-                overrides=[
-                    # Override paths
-                    f"PATH.PROJECT_PATH={tmp_path}",
-                    f"PATH.PROJECT_DATA_PATH={tmp_path}",
-                    f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
-                    f"PATH.DATASET_PATH={tmp_path}",
-                    f"PATH.ADATA_PATH={adata_dir}",
-                    f"PATH.PANELS_PATH={panels_dir}",
-                    f"PATH.gene_mapping_path={gene_mapping_path}",
-                    # Override split to use test data
-                    "split=split_v1_test",
-                    # Override datamodule settings
-                    "datamodule.columns=[]",
-                    "datamodule.normalization=raw",
-                    "datamodule.gene_sampling_strategy=top-nonzero",
-                    "datamodule.dataset.train.max_tokens=10",
-                    "datamodule.dataset.train.panel_size_min=3",
-                    "datamodule.dataset.val=null",
-                    # Override dataloader settings
-                    "datamodule.dataloader.train.batch_size=8",
-                    "datamodule.dataloader.train.num_workers=2",
-                    "datamodule.dataloader.val=null",
-                    # Override model settings for faster testing
-                    "model.dim_model=16",
-                    "model.num_head=2",
-                    "model.dim_hid=32",
-                    "model.nlayers=2",
-                    "model.loss_switch_step=1",
-                    # Override training settings
-                    "model.training.max_steps=5",
-                    "model.training.warmup=1",
-                    "model.training.devices=1",
-                    "model.training.num_nodes=1",
-                    # Disable wandb
-                    "wandb.enabled=False",
-                    "wandb.run_name=test_name",
-                ]
-            )
-    finally:
-        # Manually override the split to use our test file
-        cfg.PATH.SPLIT = {'train': ['test_data.h5ad']}
-        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+    config_path = "../src/concept/conf"
     
+    # Load base config using Hydra with overrides for testing
+    with initialize(version_base=None, config_path=config_path):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                # Override paths
+                f"PATH.PROJECT_PATH={tmp_path}",
+                f"PATH.PROJECT_DATA_PATH={tmp_path}",
+                f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
+                f"PATH.DATASET_PATH={tmp_path}",
+                f"PATH.ADATA_PATH={adata_dir}",
+                f"PATH.PANELS_PATH={panels_dir}",
+                f"PATH.gene_mapping_path={gene_mapping_path}",
+                # Override split to use test data
+                "split=split_v1_large",
+                # Override datamodule settings
+                "datamodule.columns=[]",
+                "datamodule.normalization=raw",
+                "datamodule.gene_sampling_strategy=top-nonzero",
+                "datamodule.dataset.train.max_tokens=10",
+                "datamodule.dataset.train.panel_size_min=3",
+                "datamodule.dataset.val=null",
+                # Override dataloader settings
+                "datamodule.dataloader.train.batch_size=8",
+                "datamodule.dataloader.train.num_workers=2",
+                "datamodule.dataloader.val=null",
+                # Override model settings for faster testing
+                "model.dim_model=16",
+                "model.num_head=2",
+                "model.dim_hid=32",
+                "model.nlayers=2",
+                "model.loss_switch_step=1",
+                # Override training settings
+                "model.training.max_steps=5",
+                "model.training.warmup=1",
+                "model.training.devices=1",
+                "model.training.num_nodes=1",
+                # Disable wandb
+                "wandb.enabled=False",
+                "wandb.run_name=test_name",
+            ]
+        )
+
+    # Manually override the split to use our test file
+    cfg.PATH.SPLIT = {'train': ['test_data.h5ad']}
+    print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+
     # Return config and checkpoint directory for verification
     return {
         'config': cfg,

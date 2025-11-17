@@ -1,9 +1,9 @@
 import os
 import torch
 from omegaconf import OmegaConf, DictConfig
-from lamin_dataloader.dataset import GeneIdTokenizer
-from concept.data.datamodules import AnnDataModule
-from concept.model import ContrastiveModel
+from lamin_dataloader import GeneIdTokenizer
+from concept.data import AnnDataModule
+from concept import ContrastiveModel
 import wandb
 from tqdm import tqdm
 import numpy as np

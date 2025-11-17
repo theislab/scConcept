@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Dict, List
 from torch.utils.data import Dataset, default_collate, default_convert, get_worker_info
 import torch.distributed as dist
-from lamin_dataloader.dataset import BaseCollate
+from lamin_dataloader import BaseCollate
 from abc import ABC, abstractmethod
 import random
 from pathlib import Path

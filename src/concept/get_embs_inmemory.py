@@ -1,6 +1,6 @@
 import os
 import torch
-from concept.scConcept import scConcept
+from concept import scConcept
 import numpy as np
 from pathlib import Path
 import argparse

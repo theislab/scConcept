@@ -1,7 +1,8 @@
 from importlib.metadata import version
 
-from . import model
+from .model import ContrastiveModel
+from .scConcept import scConcept
 
-__all__ = ["model"]
+__all__ = ["ContrastiveModel", "scConcept"]
 
 __version__ = version("scConcept")

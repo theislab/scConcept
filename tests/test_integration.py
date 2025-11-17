@@ -32,10 +32,10 @@ if not FLASH_ATTN_AVAILABLE:
     sys.modules['flash_attn.modules.mha'] = MagicMock()
 
 # Now we can import the modules
-from concept.model import ContrastiveModel
-from lamin_dataloader.dataset import TokenizedDataset
-from lamin_dataloader.collections import InMemoryCollection
-from lamin_dataloader.dataset import BaseCollate
+from concept import ContrastiveModel
+from lamin_dataloader import TokenizedDataset
+from lamin_dataloader import InMemoryCollection
+from lamin_dataloader import BaseCollate
 from torch.utils.data import DataLoader
 
 
@@ -372,7 +372,7 @@ def test_predict_step_with_lamin_dataloader(
 @pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
 def test_scConcept_integration(adata):
     """Integration test for scConcept class with real HuggingFace model"""
-    from concept.scConcept import scConcept    
+    from concept import scConcept    
     
     # Initialize scConcept
     sc_concept = scConcept()
@@ -463,7 +463,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     - Iterate through dataloaders and produce valid batches
     - Handle collate functions properly
     """
-    from concept.data.datamodules import AnnDataModule
+    from concept.data import AnnDataModule
     
     # Create a simple panels file for testing
     panels_dir = tmp_path / "panels"

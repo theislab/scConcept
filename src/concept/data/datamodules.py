@@ -6,10 +6,10 @@ import lightning as L
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler
-from lamin_dataloader.dataset import TokenizedDataset, Tokenizer
-from concept.data.collate import Collate
-from concept.data.samplers import WithinGroupSampler
-from lamin_dataloader.collections import InMemoryCollection
+from lamin_dataloader import TokenizedDataset, Tokenizer
+from .collate import Collate
+from .samplers import WithinGroupSampler
+from lamin_dataloader import InMemoryCollection
 from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
 import multiprocessing
 from anndata import AnnData
