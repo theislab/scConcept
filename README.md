@@ -78,8 +78,15 @@ concept.train([adata1, adata2, ...], max_steps=20000, batch_size=128)
 result = concept.extract_embeddings(adata=adata, gene_id_column='gene_id')
 adata.obsm['X_scConcept_adapted'] = result['cls_cell_emb']
 ```
+<!-- For more detailed example, see the [notebook example](docs/notebooks/embedding_extraction.ipynb). -->
 
-For more detailed example, see the [notebook example](docs/notebooks/embedding_extraction.ipynb).
+
+## Large-scale pre-training from scratch
+
+`scConcept.train()` is only light adaptation of pretrained models or small trainings on the fly. Use [train.py](https://github.com/theislab/scConcept/blob/main/src/concept/train.py) for distributed model pre-training from scratch over large corpus of data.
+
+Before using `train.py` follow the instructions on [lamindb](https://github.com/laminlabs/lamindb) for setting up a lamin instance.
+
 
 ## Troubleshooting
 
