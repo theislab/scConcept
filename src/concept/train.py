@@ -31,7 +31,8 @@ def train(cfg: DictConfig):
     
     split = {}
     for key, filenames in cfg.PATH.SPLIT.items():
-        split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
+        if filenames is not None:
+            split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
     
     datamodule_args = {    
         'split': split,

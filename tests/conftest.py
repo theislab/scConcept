@@ -137,7 +137,7 @@ def train_config(adata, tokenizer, device, tmp_path):
         )
 
     # Manually override the split to use our test file
-    cfg.PATH.SPLIT = {'train': ['test_data.h5ad']}
+    cfg.PATH.SPLIT = {'train': ['test_data.h5ad'], 'val': None, 'test': None}
     print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     # Return config and checkpoint directory for verification
