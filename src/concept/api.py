@@ -184,8 +184,6 @@ class scConcept:
     @staticmethod
     def apply_compatibility_changes(cfg: DictConfig):
         """Apply compatibility changes for older checkpoints. Returns updated cfg."""
-        if 'per_view_normalization' not in cfg.model:
-            cfg.model.per_view_normalization = False
         if 'projection_dim' not in cfg.model:
             cfg.model.projection_dim = None
         if 'weight_decay' not in cfg.model.training:

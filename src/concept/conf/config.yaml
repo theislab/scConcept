@@ -5,10 +5,10 @@ defaults:
   - _self_
 
 wandb:
-  enabled: True
-  run_name: ???
-  entity: theislab-transformer
-  project: contrastive-transformer
+  enabled: False
+  run_name: null # Required if enabled=True
+  entity: null  # Required if enabled=True
+  project: null  # Required if enabled=True
 
 initialize:  
   resume: False

@@ -507,7 +507,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             'shuffle': True,
             'drop_last': True,
             'num_samples': None,
-            'num_workers': 0,
+            'num_workers': 2,
             'within_group_sampling': 'dataset',
         },
         'test': {

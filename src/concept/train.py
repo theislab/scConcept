@@ -51,6 +51,8 @@ def train(cfg: DictConfig):
     datamodule = AnnDataModule(**datamodule_args)
 
     if cfg.wandb.enabled:
+        if cfg.wandb.entity is None or cfg.wandb.project is None or cfg.wandb.run_name is None:
+            raise ValueError("wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True")
         logger = WandbLogger(name=cfg.wandb.run_name, entity=cfg.wandb.entity, project=cfg.wandb.project, save_dir=cfg.PATH.PROJECT_PATH, log_model=False)
     
     CHECKPOINT_PATH = "dummy"

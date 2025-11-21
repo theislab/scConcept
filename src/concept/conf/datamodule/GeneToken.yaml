@@ -1,6 +1,6 @@
 name: GeneToken
-columns: ["cell_type", "donor_id"]
-normalization: log1p
+columns: ["cell_type", "donor_id"] # Optional: If provided, will be used for more loggings. Pass [] if not available.
+normalization: raw
 gene_sampling_strategy: top-nonzero
 model_speed_sanity_check: False
 precomp_embs_key: null
@@ -113,8 +113,8 @@ dataloader:
     within_group_sampling: "dataset"
     batch_size: 128
     shuffle: True
-    num_workers: 8
-    pin_memory: False
+    num_workers: 14
+    pin_memory: True
     drop_last: True
     num_samples: null
   val:

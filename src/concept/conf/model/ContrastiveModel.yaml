@@ -1,5 +1,5 @@
 name: ContrastiveModel
-flash_attention: False
+flash_attention: True
 dim_model: 512
 num_head: 8
 dim_hid: 1024
@@ -13,9 +13,7 @@ mlm_loss_weight: 0.0
 cont_loss_weight: 1.0
 contrastive_loss: multiclass # multiclass or binary
 logit_scale_init_value: 3.0
-per_view_normalization: False
-random_split: False
-mask_padding: False
+mask_padding: True
 pe_max_len: 5000
 input_encoding: "rank_encoding" # "value_encoding"
 loss_switch_step: 10000
@@ -34,6 +32,6 @@ training:
   devices: -1
   num_nodes: 1
   limit_train_batches: 1.0
-  val_check_interval: 0.1
+  val_check_interval: 1.0
   check_val_every_n_epoch: 1
   accumulate_grad_batches: 1

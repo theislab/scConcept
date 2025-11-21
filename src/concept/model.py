@@ -352,9 +352,7 @@ class ContrastiveModel(BaseTransformerModel):
         self.cont_loss_weight = config['cont_loss_weight']
         self.contrastive_loss = config['contrastive_loss']
         self.loss_switch_step = config['loss_switch_step']
-        self.per_view_normalization = config['per_view_normalization']
         self.logit_scale_init_value = config['logit_scale_init_value']
-        self.random_split = config['random_split']
         self.projection_dim = config['projection_dim']
         self.pe_max_len = config['pe_max_len']
         self.precomp_embs_key = precomp_embs_key
@@ -381,10 +379,9 @@ class ContrastiveModel(BaseTransformerModel):
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
 
-    def _step(self, batch, batch_idx, stage='train', random_split=False):
+    def _step(self, batch, batch_idx, stage='train'):
         assert stage in ['train', 'val'], f"Invalid stage: {stage}"
         
-        # batch_1, batch_2 = self.split_inputs(batch, random_split)
         batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1']}
         batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2']}
 
@@ -438,10 +435,6 @@ class ContrastiveModel(BaseTransformerModel):
             batch_2['values'] = batch_2['values'][:, torch.randperm(batch_2['tokens'].size(1))]
 
         
-        if self.per_view_normalization:
-            batch_1['values'] = self.normalize(batch_1['values'])
-            batch_2['values'] = self.normalize(batch_2['values'])
-
         batch_1 = self.add_cls_token(batch_1)
         batch_2 = self.add_cls_token(batch_2)
         
@@ -573,7 +566,7 @@ class ContrastiveModel(BaseTransformerModel):
             self.log("train/loss", loss, sync_dist=True)
             return loss
         
-        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='train', random_split=self.random_split)
+        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='train')
         self.context_sizes['train'].append(context_sizes)
         self.log(f"train/label_acc", label_acc, sync_dist=True)
         self.log(f"train/acc_cont_{self.contrastive_loss}", acc_cont, sync_dist=True)
@@ -611,7 +604,7 @@ class ContrastiveModel(BaseTransformerModel):
             self.log("val/loss", loss, sync_dist=True)
             return loss
         val_name = self.val_loader_names[dataloader_idx]
-        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='val', random_split=False)
+        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='val')
         self.context_sizes['val'][val_name].append(context_sizes)
         prefix = prefix=f'val/{val_name}' if val_name != 'same' else 'val'
         self.log(f"{prefix}/label_acc", label_acc, sync_dist=True, add_dataloader_idx=False)
@@ -643,9 +636,6 @@ class ContrastiveModel(BaseTransformerModel):
             self._validate_panels(batch['panel_1'], batch['panel_2'])
 
     def predict_step(self, batch, batch_idx):
-        if self.per_view_normalization:
-            batch['values'] = self.normalize(batch['values'])
-
         context_size = batch['tokens'].shape[1]
         nonzero_cnt = (batch['tokens'] != self.PAD_TOKEN_ID).sum(dim=1)
         # print(int(context_size), nonzero_cnt[0].item())
@@ -704,29 +694,6 @@ class ContrastiveModel(BaseTransformerModel):
         assert (panel_2 == self.PAD_TOKEN_ID).sum() == 0
         # assert np.intersect1d(panel_1[0].cpu(), panel_2[0].cpu()).size == 0
 
-
-    def normalize(self, values, epsilon=1e-3):
-        values = values.float() / (values.sum(dim=1, keepdim=True) + epsilon) * values.shape[1]
-        values = torch.log1p(values)
-        return values
-    
-    def split_inputs(self, batch, random_split=False, min_size=1):
-        batch_1 = {}
-        batch_2 = {}
-        num_genes = batch['tokens'].shape[1]
-        if random_split:
-            context_size_1 = random.randint(min_size, num_genes - min_size)
-            context_size_2 = random.randint(min_size, num_genes - context_size_1)
-        else:
-            context_size_1 = num_genes//2
-            context_size_2 = num_genes//2
-        for k, v in batch.items():
-            if len(v.shape) > 1:
-                batch_1[k], batch_2[k], _ = torch.split(v, [context_size_1, context_size_2, num_genes - context_size_1 - context_size_2], dim=1)
-            else:
-                batch_1[k], batch_2[k] = v, v
-        return batch_1, batch_2
-    
 
     def add_cls_token(self, batch):
         if isinstance(batch['tokens'], torch.Tensor):
