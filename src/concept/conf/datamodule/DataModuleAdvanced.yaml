@@ -1,4 +1,4 @@
-name: GeneToken
+name: DataModule
 columns: ["cell_type", "donor_id"] # Optional: If provided, will be used for more loggings. Pass [] if not available.
 normalization: raw
 gene_sampling_strategy: top-nonzero
@@ -44,50 +44,50 @@ dataset:
       variable_size: False
       panel_size_min: 6400
       panel_size_max: 6400
-    # within_Preselected_B256:
-    #   max_tokens: 800
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: ".*"
-    #   panel_size_min: 800
-    #   panel_size_max: 800
-    # within_P_Xenium_hIO_B256:
-    #   max_tokens: 800
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: "Xenium_hIO_v1"
-    #   panel_size_min: 800
-    #   panel_size_max: 800
-    # within_P_Xenium_hIO_vs_all_B256:
-    #   max_tokens: ${datamodule.dataset.train.max_tokens}
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: "Xenium_hIO_v1"
-    #   panel_size_min: 100000
-    #   panel_size_max: 100000
-    #   panel_overlap: True
-    # within_P_SEAAD_B256:
-    #   max_tokens: 800
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: "Merfish-SEA-AD"
-    #   panel_size_min: 800
-    #   panel_size_max: 800
-    # within_P_SEAAD_vs_all_B256:
-    #   max_tokens: ${datamodule.dataset.train.max_tokens}
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: "Merfish-SEA-AD"
-    #   panel_size_min: 100000
-    #   panel_size_max: 100000
-    #   panel_overlap: True
-    # within_P_Xenium_Human_Prime_5K_B256:
-    #   max_tokens: 800
-    #   variable_size: False
-    #   panel_selection: preselected
-    #   panel_filter_regex: "Xenium_Human_Prime_5K"
-    #   panel_size_min: 800
-    #   panel_size_max: 800
+    within_Preselected_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: ".*"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_Xenium_hIO_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_hIO_v1"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_Xenium_hIO_vs_all_B256:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_hIO_v1"
+      panel_size_min: 100000
+      panel_size_max: 100000
+      panel_overlap: True
+    within_P_SEAAD_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Merfish-SEA-AD"
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P_SEAAD_vs_all_B256:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Merfish-SEA-AD"
+      panel_size_min: 100000
+      panel_size_max: 100000
+      panel_overlap: True
+    within_P_Xenium_Human_Prime_5K_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: preselected
+      panel_filter_regex: "Xenium_Human_Prime_5K"
+      panel_size_min: 800
+      panel_size_max: 800
     # across_P800_B256:
     #   max_tokens: 800
     #   variable_size: False
@@ -150,54 +150,54 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
-    # within_Preselected_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P_Xenium_hIO_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P_Xenium_hIO_vs_all_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P_SEAAD_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P_SEAAD_vs_all_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P_Xenium_Human_Prime_5K_B256:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
+    within_Preselected_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_hIO_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_hIO_vs_all_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_SEAAD_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_SEAAD_vs_all_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P_Xenium_Human_Prime_5K_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
     # across_P800_B256:
     #   within_group_sampling: null
     #   batch_size: 256

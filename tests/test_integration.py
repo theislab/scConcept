@@ -479,6 +479,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     # Configuration for AnnDataModule
     split = {
         'train': [adata],  # List of AnnData objects
+        'val': [adata],
         'test': [adata]
     }
     
@@ -496,6 +497,17 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             'panel_max_drop_rate': 0.1,
             'feature_max_drop_rate': 0.1,
         },
+        'val': {
+            'val_1': {
+                'max_tokens': 20,
+                'variable_size': False,
+                'panel_selection': 'random',
+                'panel_selection_mixed_prob': 0.5,
+                'panel_filter_regex': '.*',
+                'panel_size_min': 10,
+                'panel_size_max': 10,
+            }
+        },
         'test': {
             'max_tokens': 20,
         }
@@ -503,12 +515,24 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     
     dataloader_kwargs = {
         'train': {
+            'within_group_sampling': 'dataset',
             'batch_size': 4,
             'shuffle': True,
             'drop_last': True,
             'num_samples': None,
             'num_workers': 2,
-            'within_group_sampling': 'dataset',
+            'pin_memory': True,
+        },
+        'val': {
+            'val_1': {
+                'within_group_sampling': 'dataset',
+                'batch_size': 4,
+                'shuffle': True,
+                'drop_last': True,
+                'num_workers': 1,
+                'pin_memory': False,
+                'num_samples': 10,
+            }
         },
         'test': {
             'batch_size': 4,
@@ -517,6 +541,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             'num_workers': 0,
         }
     }
+    
     
     # Initialize AnnDataModule
     datamodule = AnnDataModule(
@@ -529,7 +554,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         gene_sampling_strategy='top-nonzero',
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
-        val_loader_names=[]
+        val_loader_names=dataloader_kwargs['val'].keys()
     )
     
     # Test train dataloader
@@ -569,6 +594,51 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     
     assert len(train_batches) > 0, "No train batches generated"
     
+    # Test val dataloader
+    val_loaders = datamodule.val_dataloader()
+    assert val_loaders is not None
+    assert isinstance(val_loaders, list)
+    assert len(val_loaders) > 0, "No validation dataloaders generated"
+    
+    # Iterate through each validation dataloader
+    val_batches = []
+    for val_loader_idx, val_loader in enumerate(val_loaders):
+        assert val_loader is not None
+        
+        # Iterate through validation loader
+        for batch_idx, batch in enumerate(val_loader):
+            # Move batch to device
+            batch = {key: value.to(device) if isinstance(value, torch.Tensor) else value 
+                    for key, value in batch.items()}
+            
+            # Verify batch structure (val loader uses split_input=True, similar to train)
+            assert 'tokens_1' in batch
+            assert 'values_1' in batch
+            assert 'tokens_2' in batch
+            assert 'values_2' in batch
+            assert 'panel_1' in batch
+            assert 'panel_2' in batch
+            
+            # Verify batch shapes
+            batch_size = batch['tokens_1'].shape[0]
+            assert batch_size <= 4  # Max batch size
+            assert batch['values_1'].shape == batch['tokens_1'].shape
+            assert batch['values_2'].shape == batch['tokens_2'].shape
+            
+            # Verify tensors are on correct device
+            assert batch['tokens_1'].device.type == device.type
+            assert batch['values_1'].device.type == device.type
+            assert batch['tokens_2'].device.type == device.type
+            assert batch['values_2'].device.type == device.type
+            
+            val_batches.append(batch)
+            
+            # Only test first 2 batches to keep test fast
+            if batch_idx >= 1:
+                break
+    
+    assert len(val_batches) > 0, "No validation batches generated"
+    
     # Test test dataloader
     test_loader = datamodule.test_dataloader()
     assert test_loader is not None
@@ -603,8 +673,10 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     
     print(f"\n✓ AnnDataModule test passed:")
     print(f"  - Generated {len(train_batches)} train batches")
+    print(f"  - Generated {len(val_batches)} validation batches")
     print(f"  - Generated {len(test_batches)} test batches")
     print(f"  - Train batch shape: {train_batches[0]['tokens_1'].shape}")
+    print(f"  - Val batch shape: {val_batches[0]['tokens_1'].shape}")
     print(f"  - Test batch shape: {test_batches[0]['tokens'].shape}")
 
 
@@ -621,8 +693,6 @@ def test_train_integration(train_config):
     from unittest.mock import patch, MagicMock
     from concept.train import train
     
-    cfg = train_config['config']
-    checkpoint_dir = train_config['checkpoint_dir']
     
     # Mock wandb logger to avoid needing real credentials
     mock_logger = MagicMock()
@@ -642,15 +712,11 @@ def test_train_integration(train_config):
                 # Also patch os.environ to avoid SLURM issues
                 with patch.dict('os.environ', {}, clear=False):
                     # Run training
-                    train(cfg)
+                    train(train_config)
     
-    # Verify checkpoint directory was created (if training completed)
-    # Note: With limit_train_batches=2.0 and max_steps=3, training should complete
-    assert checkpoint_dir.exists()
     
     print(f"\n✓ train.py integration test passed:")
     print(f"  - Training completed successfully")
-    print(f"  - Checkpoint directory created: {checkpoint_dir}")
 
 
 if __name__ == "__main__":

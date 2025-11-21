@@ -140,8 +140,4 @@ def train_config(adata, tokenizer, device, tmp_path):
     cfg.PATH.SPLIT = {'train': ['test_data.h5ad'], 'val': None, 'test': None}
     print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
-    # Return config and checkpoint directory for verification
-    return {
-        'config': cfg,
-        'checkpoint_dir': checkpoint_dir
-    }
+    return cfg

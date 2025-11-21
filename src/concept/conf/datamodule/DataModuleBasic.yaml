@@ -1,0 +1,90 @@
+name: DataModule
+columns: ["cell_type", "donor_id"] # Optional: If provided, will be used for more loggings. Pass [] if not available.
+normalization: raw
+gene_sampling_strategy: top-nonzero
+model_speed_sanity_check: False
+precomp_embs_key: null
+dataset:
+  train:
+    max_tokens: 1000
+    variable_size: False
+    panel_overlap: False
+    panel_selection: mixed
+    panel_selection_mixed_prob: 0.25
+    panel_filter_regex: ".*"
+    panel_size_min: 400
+    panel_size_max: 60000
+    panel_max_drop_rate: 0.5
+    feature_max_drop_rate: null
+  val:
+    same:
+      max_tokens: ${datamodule.dataset.train.max_tokens}
+      variable_size: ${datamodule.dataset.train.variable_size}
+      panel_overlap: ${datamodule.dataset.train.panel_overlap}
+      panel_selection: ${datamodule.dataset.train.panel_selection}
+      panel_selection_mixed_prob: ${datamodule.dataset.train.panel_selection_mixed_prob}
+      panel_filter_regex: ${datamodule.dataset.train.panel_filter_regex}
+      panel_size_min: ${datamodule.dataset.train.panel_size_min}
+      panel_size_max: ${datamodule.dataset.train.panel_size_max}
+    within_P200_B256:
+      max_tokens: 200
+      variable_size: False
+      panel_selection: random
+      panel_size_min: 200
+      panel_size_max: 200
+    within_P800_B256:
+      max_tokens: 800
+      variable_size: False
+      panel_selection: random
+      panel_size_min: 800
+      panel_size_max: 800
+    within_P6400_B256:
+      max_tokens: 6400
+      panel_selection: random
+      variable_size: False
+      panel_size_min: 6400
+      panel_size_max: 6400
+
+
+dataloader:
+  train:
+    within_group_sampling: "dataset"
+    batch_size: 128
+    shuffle: True
+    num_workers: 14
+    pin_memory: True
+    drop_last: True
+    num_samples: null
+  val:
+    same:
+      within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
+      batch_size: ${datamodule.dataloader.train.batch_size}
+      shuffle: ${datamodule.dataloader.train.shuffle}
+      num_workers: 2
+      pin_memory: False
+      drop_last: ${datamodule.dataloader.train.drop_last}
+      num_samples: 100000
+    within_P200_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P800_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_P6400_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
