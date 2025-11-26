@@ -34,7 +34,7 @@ class scConcept:
             cache_dir: Directory for caching downloaded files
         """
         self.repo_id = repo_id
-        self.cfg = cfg
+        self.cfg = self.load_config(cfg) if cfg is not None else None
         self.cache_dir = cache_dir
         self.model = None
         self.tokenizer = None
@@ -136,29 +136,43 @@ class scConcept:
     
     
     def load_config_and_model(self, 
-                              model_name: str):
+                              model_name: str = None,
+                              config: str | dict | DictConfig = None,
+                              model_path: str = None,
+                              gene_mapping_path: str = None,
+                              panels_dir: str = None):
         """
-        Load configuration from HuggingFace Hub and initialize the model.
+        Load configuration and initialize the model.
         
         Args:
-            model_name: Model name (e.g., 'Corpus-30M')
+            model_name: Model name to download from HuggingFace (e.g., 'Corpus-30M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
+            config: Configuration - can be a path to config file (.yaml) as string, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
+            model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
+            gene_mapping_path: Path to gene mapping file (.pkl) - if provided, bypasses HuggingFace download
+            panels_dir: Path to panels directory - if provided, bypasses HuggingFace download
         """
+        
+        if model_name:
+            # Fall back to HuggingFace download
+            model_dir = Path(self.cache_dir) / model_name
+            model_dir.mkdir(parents=True, exist_ok=True)
+            
+            print(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
+            
+            # Download files if they don't exist
+            model_path, gene_mapping_path, config, panels_dir = self._download_files_if_needed(model_name, model_dir)
+        else:
+            if not all([config, model_path, gene_mapping_path]):
+                raise ValueError("If using direct paths config, model_path and gene_mapping_path must be provided")
+
+        
         self.model_name = model_name
-        
-        model_dir = Path(self.cache_dir) / model_name
-        model_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
-        
-        # Download files if they don't exist
-        model_path, gene_mapping_path, config_path, panels_dir = self._download_files_if_needed(model_name, model_dir)
-        
         self.panels_dir = panels_dir
         
-        # Load config from downloaded file
-        self.cfg = OmegaConf.load(config_path)
-        self.cfg = self.apply_compatibility_changes(self.cfg)
-                
+        # Load config from file or use provided dict
+        if self.cfg is None:
+            self.cfg = self.load_config(config)
+            
         # Load gene mapping
         gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
         
@@ -181,6 +195,21 @@ class scConcept:
         
         print(f"Model loaded successfully on {self.device}")
     
+    @staticmethod
+    def load_config(config: str | Path | dict | DictConfig):
+        """Load configuration from file or dict."""
+        
+        if isinstance(config, (str, Path)):
+            cfg = OmegaConf.load(config)
+        elif isinstance(config, dict):
+            cfg = OmegaConf.create(config)
+        elif isinstance(config, DictConfig):
+            cfg = config
+        else:
+            raise ValueError("Config must be a string path, dict, or DictConfig")
+        cfg = scConcept.apply_compatibility_changes(cfg)
+        return cfg
+
     @staticmethod
     def apply_compatibility_changes(cfg: DictConfig):
         """Apply compatibility changes for older checkpoints. Returns updated cfg."""
@@ -263,7 +292,7 @@ class scConcept:
             collate_fn=collate_fn,
             shuffle=False,
             drop_last=False,
-            num_workers=6
+            num_workers=10
         )
         
         print(f"Processing {len(dataset)} cells...")

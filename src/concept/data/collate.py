@@ -40,9 +40,9 @@ class Collate(BaseCollate):
         self.panel_selection = panel_selection
         self.panel_selection_mixed_prob = panel_selection_mixed_prob
         if self.panel_selection != 'random':
-            self.panel_dir = Path(panels_path)
-            self.panel_names = [panel_name for panel_name in os.listdir(self.panel_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
-            self.panels = [self.tokenizer.encode(pd.read_csv(self.panel_dir / panel_name)['Ensembl_ID'].values) 
+            self.panels_dir = Path(panels_path)
+            self.panel_names = [panel_name for panel_name in os.listdir(self.panels_dir) if re.search(panel_filter_regex, panel_name) and panel_name.endswith('.csv')]
+            self.panels = [self.tokenizer.encode(pd.read_csv(self.panels_dir / panel_name)['Ensembl_ID'].values) 
                        for panel_name in self.panel_names]
             for i in range(len(self.panels)):
                 print(f'Panel {self.panel_names[i]} size: {len(self.panels[i])} genes')

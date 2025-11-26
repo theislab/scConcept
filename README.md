@@ -61,7 +61,16 @@ adata = sc.read_h5ad("your_data.h5ad")
 
 # Initialize scConcept and load a pretrained model
 concept = scConcept(cache_dir='./cache/')
-concept.load_config_and_model(model_name='Corpus-30M')
+
+# Option 1: Load a model directly from HuggingFace
+concept.load_config_and_model(model_name='Corpus-30M') 
+
+# Option 2: Load any local model
+concept.load_config_and_model(
+    config='<path-to-config.yaml>',
+    model_path='<path-to-model.ckpt>',
+    gene_mapping_path='<path-to-gene-mapping.pkl>',
+)
 
 # Extract embeddings --> adata.var['gene_id']: ENSGXXXXXXXXXXX
 result = concept.extract_embeddings(adata=adata, gene_id_column='gene_id')

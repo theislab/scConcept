@@ -370,15 +370,43 @@ def test_predict_step_with_lamin_dataloader(
 
 
 @pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
-def test_scConcept_integration(adata):
-    """Integration test for scConcept class with real HuggingFace model"""
+@pytest.mark.parametrize("use_direct_paths", [False, True])
+def test_scConcept_integration(adata, use_direct_paths, tmp_path):
+    """Integration test for scConcept class with real HuggingFace model
+    
+    Tests both loading methods:
+    - use_direct_paths=False: Load using model_name (HuggingFace download)
+    - use_direct_paths=True: Load using direct paths (bypasses HuggingFace download)
+    """
     from concept import scConcept    
+    from pathlib import Path
     
     # Initialize scConcept
-    sc_concept = scConcept()
+    cache_dir = str(tmp_path / "cache")
+    sc_concept = scConcept(cache_dir=cache_dir)
     
-    # Test model loading
-    sc_concept.load_config_and_model(model_name="Corpus-30M")
+    # Test model loading with either method
+    if use_direct_paths:
+        # Download model files to get paths for direct path testing
+        model_name = "Corpus-30M"
+        model_dir = Path(sc_concept.cache_dir) / model_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Download files
+        model_path, gene_mapping_path, config_path, panels_dir = sc_concept._download_files_if_needed(model_name, model_dir)
+        
+        # Load using direct paths
+        sc_concept = scConcept()
+        print(f"Loading model from {model_path}, {gene_mapping_path}, {config_path}, {panels_dir}")
+        sc_concept.load_config_and_model(
+            config=str(config_path),
+            model_path=str(model_path),
+            gene_mapping_path=str(gene_mapping_path),
+            panels_dir=str(panels_dir)
+        )
+    else:
+        # Load using model_name (original method)
+        sc_concept.load_config_and_model(model_name="Corpus-30M")
     
     # Verify model is loaded correctly
     assert sc_concept.model is not None
