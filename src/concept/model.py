@@ -1,5 +1,6 @@
 import os
-from typing import Optional
+import pandas as pd
+from typing import Optional, List
 import wandb
 import lightning as L
 import torch
@@ -336,6 +337,8 @@ class ContrastiveModel(BaseTransformerModel):
         precomp_embs_key: str = None,
         world_size: int = 1,
         val_loader_names = [],
+        label_keys_to_monitor: List[str] = [],
+        batch_keys_to_monitor: List[str] = [],
         debug: bool = False,
     ):
         
@@ -359,6 +362,8 @@ class ContrastiveModel(BaseTransformerModel):
         self.vocab_size = vocab_size
         self.world_size = world_size
         self.val_loader_names = val_loader_names
+        self.label_keys_to_monitor = label_keys_to_monitor
+        self.batch_keys_to_monitor = batch_keys_to_monitor
         assert self.contrastive_loss in ['binary', 'multiclass']
 
         self.gene_token_encoder = GeneEncoder(self.vocab_size, self.dim_model, padding_idx=None)
@@ -370,7 +375,7 @@ class ContrastiveModel(BaseTransformerModel):
         if self.projection_dim:
             self.projection = nn.Linear(self.dim_model, self.projection_dim, bias=False)
             
-        self.context_sizes = {'train': [], 'val': defaultdict(list)}
+        self.sample_stats = {'train': [], 'val': defaultdict(list)}
         self.logit_masks = {}
         
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
@@ -379,53 +384,17 @@ class ContrastiveModel(BaseTransformerModel):
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
 
-    def _step(self, batch, batch_idx, stage='train'):
+    def _step(self, batch, batch_idx, stage='train', log_prefix='train'):
         assert stage in ['train', 'val'], f"Invalid stage: {stage}"
         
-        batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1']}
-        batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2']}
+        sample_stats = self._get_sample_stats(batch)
+                
+        batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1'], 'panel_name': batch['panel_name_1']}
+        batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2'], 'panel_name': batch['panel_name_2']}
 
         
-        panel_size_1 = batch_1['panel'].shape[1]
-        panel_size_2 = batch_2['panel'].shape[1]
-        context_size_1 = len(batch_1['tokens'][0])
-        context_size_2 = len(batch_2['tokens'][0])
-        nonzero_cnt_1 = (batch_1['tokens'][0] != self.PAD_TOKEN_ID).sum().item()
-        nonzero_cnt_2 = (batch_2['tokens'][0] != self.PAD_TOKEN_ID).sum().item()
-        # if self.world_size > 1:
-        #     nonzero_cnt_1 = torch.cat(all_gather(nonzero_cnt_1), dim=0)
-        #     nonzero_cnt_2 = torch.cat(all_gather(nonzero_cnt_2), dim=0)
-        try:
-            min_1, min_2 = batch_1['values'][0].min().item(), batch_2['values'][0].min().item()
-            max_1, max_2 = batch_1['values'][0].max().item(), batch_2['values'][0].max().item()
-        except:
-            min_1, min_2 = 0, 0
-            max_1, max_2 = 0, 0
-        
-        panel_intersect = len(np.intersect1d(batch_1['panel'][0].cpu().numpy(), batch_2['panel'][0].cpu().numpy()))
-        token_intersect = len(np.intersect1d(batch_1['tokens'][0].cpu().numpy(), batch_2['tokens'][0].cpu().numpy()))
-        
-        # if stage == 'train':    
-        #     print(context_size_1, context_size_2)
-        #     assert context_size_1[0] == context_size_1[1], f"Context size mismatch: {context_size_1}"
-        #     assert context_size_2[0] == context_size_2[1], f"Context size mismatch: {context_size_2}"
-        
-        context_sizes = [
-            batch['panel_name'],
-            int(panel_size_1),
-            int(panel_size_2),
-            int(context_size_1),
-            int(context_size_2),
-            nonzero_cnt_1,
-            nonzero_cnt_2,
-            min_1, min_2,
-            max_1, max_2,
-            panel_intersect,
-            token_intersect,
-            ]
-        
         if self.debug and batch_idx < 5 and stage == 'train':
-            print(context_sizes)
+            print(sample_stats)
             print('batch_1 values:', batch_1['values'][0])
             print('batch_2 values:', batch_2['values'][0])
         
@@ -452,14 +421,14 @@ class ContrastiveModel(BaseTransformerModel):
         padding_mask_1 = (batch_1['tokens'] == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(batch_1['tokens'], dtype=torch.bool, device=self.device)
         padding_mask_2 = (batch_2['tokens'] == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(batch_2['tokens'], dtype=torch.bool, device=self.device)
 
-        pred_1, embs_1, cell_embs_1 = self(batch_1['tokens'], batch_1['values_masked'], src_key_padding_mask=padding_mask_1)
-        pred_2, embs_2, cell_embs_2 = self(batch_2['tokens'], batch_2['values_masked'], src_key_padding_mask=padding_mask_2)
+        pred_1, _, cell_embs_1 = self(batch_1['tokens'], batch_1['values_masked'], src_key_padding_mask=padding_mask_1)
+        pred_2, _, cell_embs_2 = self(batch_2['tokens'], batch_2['values_masked'], src_key_padding_mask=padding_mask_2)
 
         loss_mlm = torch.tensor(0.0, device=self.device)
         if self.mlm_loss_weight > 0:
             loss_mlm = self._mlm_loss(pred_1, batch_1['values'], batch_1['masked_positions']) + self._mlm_loss(
                 pred_2, batch_2['values'], batch_2['masked_positions'])
-            
+        self.log(f"{log_prefix}/loss_mlm", loss_mlm, sync_dist=True, add_dataloader_idx=False)
         
         # Gather embeddings from GPUs and concatenate them
         if self.world_size > 1:
@@ -471,36 +440,89 @@ class ContrastiveModel(BaseTransformerModel):
             cell_embs_2 = self.projection(cell_embs_2)
 
         
-        if self.precomp_embs_key and self.precomp_embs_key in batch:
+        if not self.precomp_embs_key or self.precomp_embs_key not in batch:
+            cell_embs_1 = F.normalize(cell_embs_1, p=2, dim=1)
+            cell_embs_2 = F.normalize(cell_embs_2, p=2, dim=1)
+            logits = torch.mm(cell_embs_1, cell_embs_2.t()) * self.logit_scale.exp()
+            cell_embs_concat_1 = torch.concat([cell_embs_1, cell_embs_2], dim=0)
+            cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
+            logits_both_batch = torch.mm(cell_embs_concat_1, cell_embs_concat_2.t()) * self.logit_scale.exp()
+        else:
             cell_embs_2 = torch.cat(all_gather(batch[self.precomp_embs_key]), dim=0)
-            
             logits = (1.0 / (torch.cdist(cell_embs_1, cell_embs_2, p=2) + 1e-4)) * self.logit_scale.exp()
-            
             cell_embs_concat_1 = torch.concat([cell_embs_1, cell_embs_2], dim=0)
             cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
             logits_both_batch = (1.0 / (torch.cdist(cell_embs_concat_1, cell_embs_concat_2, p=2) + 1e-4)) * self.logit_scale.exp()
 
-        else:
-            cell_embs_1 = F.normalize(cell_embs_1, p=2, dim=1)
-            cell_embs_2 = F.normalize(cell_embs_2, p=2, dim=1)
-        
-            logits = torch.mm(cell_embs_1, cell_embs_2.t()) * self.logit_scale.exp()
-            
-            cell_embs_concat_1 = torch.concat([cell_embs_1, cell_embs_2], dim=0)
-            cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
-            logits_both_batch = torch.mm(cell_embs_concat_1, cell_embs_concat_2.t()) * self.logit_scale.exp()
             
         logit_size = len(logits_both_batch)
         logits_both_batch *= torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
 
+        if self.contrastive_loss == 'binary':
+            loss_cont, acc_cont = self._contrastive_binary_loss(logits)
+            top5_acc_cont = 0
+            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_binary_loss(logits_both_batch)
+        elif self.contrastive_loss == 'multiclass':
+            loss_cont, acc_cont, top5_acc_cont = self._clip_loss(logits)
+            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_multiclass_loss(logits_both_batch)
         
-        # if stage == 'train':
-        #     length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
-        #     length_logit_corr = torch.tensor([torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))])
-        #     length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-        #     self.log(f"{stage}/length_logit_corr", length_logit_corr, sync_dist=True)
+        self.log(f"{log_prefix}/loss_cont", loss_cont, sync_dist=True, add_dataloader_idx=False)
+        self.log(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, sync_dist=True, add_dataloader_idx=False)
+        self.log(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, sync_dist=True, add_dataloader_idx=False)
+        self.log(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
+        self.log(f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
+        
+        if self.global_step < self.loss_switch_step:
+            loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont
+        else:
+            loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
+        self.log(f"{log_prefix}/loss", loss, sync_dist=True, add_dataloader_idx=False)
+        
+        
+        ######################################################################
+        # Log extra metrics for monitoring
+        ######################################################################
+        
+        for label_key in self.label_keys_to_monitor:
+            if stage != 'train' and label_key in batch:
+                labels_1, labels_2 = batch[label_key], batch[label_key]
+                if self.world_size > 1:
+                    labels_1 = torch.cat(all_gather(labels_1), dim=0)
+                    labels_2 = torch.cat(all_gather(labels_2), dim=0)
+                label_acc = 0.5 * (self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1))
+                self.log(f"{log_prefix}/knn_acc_{label_key}", label_acc, sync_dist=True, add_dataloader_idx=False)
 
 
+        if stage == 'train' and batch_idx % 100 == 0:
+            global_rank = torch.tensor([self.global_rank]*len(batch_1['tokens']), device=self.device)
+            if self.world_size > 1:
+                global_rank = torch.cat(all_gather(global_rank), dim=0)
+            global_rank_acc = 0.5 * (self._knn_accuracy(logits, global_rank, global_rank) + self._knn_accuracy(logits.t(), global_rank, global_rank))
+            self.log(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, sync_dist=True, add_dataloader_idx=False)
+        
+        if stage != 'train':
+            views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
+            views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
+            self.log(f"{log_prefix}/views_mixing_score", views_mixing_score, sync_dist=True, add_dataloader_idx=False)
+            self.log(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, sync_dist=True, add_dataloader_idx=False)
+        
+        
+        if self.debug and batch_idx % 100 == 0:
+            nonzero_cnt_1 = (batch_1['tokens'] != self.PAD_TOKEN_ID).sum(dim=1)
+            nonzero_cnt_2 = (batch_2['tokens'] != self.PAD_TOKEN_ID).sum(dim=1)
+            if self.world_size > 1:
+                nonzero_cnt_1 = torch.cat(all_gather(nonzero_cnt_1), dim=0)
+                nonzero_cnt_2 = torch.cat(all_gather(nonzero_cnt_2), dim=0)
+            
+            length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
+            length_logit_corr = torch.tensor([torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))])
+            length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
+            self.log(f"{log_prefix}/length_logit_corr", length_logit_corr, sync_dist=True, add_dataloader_idx=False)
+        
+            length_r2 = 0.5 * (self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2) + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1))
+            self.log(f"{log_prefix}/length_r2", length_r2, sync_dist=True, add_dataloader_idx=False)
+        
+        
         if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == 'train' and batch_idx % 1000 == 0:
             print('Argmax: ', logits_both_batch.argmax(dim=1))
             print(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
@@ -516,49 +538,10 @@ class ContrastiveModel(BaseTransformerModel):
                 idx = idx - logit_size //2
                 print(f'match in batch_1, {idx} tokens: ', batch_1['tokens'][idx])
                 print(f'match in batch_1, {idx} values: ', batch_1['values'][idx])
-
-        if self.contrastive_loss == 'binary':
-            loss_cont, acc_cont = self._contrastive_binary_loss(logits)
-            top5_acc_cont = 0
-            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_binary_loss(logits_both_batch)
-        elif self.contrastive_loss == 'multiclass':
-            loss_cont, acc_cont, top5_acc_cont = self._clip_loss(logits)
-            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_multiclass_loss(logits_both_batch)
+        ######################################################################
         
-        if self.global_step < self.loss_switch_step:
-            loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont
-        else:
-            loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
-        
-        if stage != 'train' and 'cell_type' in batch:
-            labels_1, labels_2 = batch['cell_type'], batch['cell_type']
-            if self.world_size > 1:
-                labels_1 = torch.cat(all_gather(labels_1), dim=0)
-                labels_2 = torch.cat(all_gather(labels_2), dim=0)
-            label_acc = 0.5 * (self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1))
-        else:
-            label_acc = 0.0
-            
-        # if stage == 'train' and batch_idx % 100 == 0:
-        #     length_r2 = 0.5 * (self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2) + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1))
-        #     self.log(f"length_r2/{stage}", length_r2, sync_dist=True)
-        
-        if stage == 'train' and batch_idx % 100 == 0:
-            global_rank = torch.tensor([self.global_rank]*len(batch_1['tokens']), device=self.device)
-            if self.world_size > 1:
-                global_rank = torch.cat(all_gather(global_rank), dim=0)
-            global_rank_acc = 0.5 * (self._knn_accuracy(logits, global_rank, global_rank) + self._knn_accuracy(logits.t(), global_rank, global_rank))
-            self.log(f"{stage}/global_rank_acc", global_rank_acc, sync_dist=True)
-        
-        if stage != 'train':
-            same_batch_score = self._same_batch_score(logits_both_batch, k=1)
-            same_batch_score_top_5 = self._same_batch_score(logits_both_batch, k=5)
-        else:
-            same_batch_score = 0.0
-            same_batch_score_top_5 = 0.0
-                
-        
-        return loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes
+        return loss, sample_stats
+    
 
     def training_step(self, batch, batch_idx):
         if self.data_loading_speed_sanity_check:
@@ -566,74 +549,43 @@ class ContrastiveModel(BaseTransformerModel):
             self.log("train/loss", loss, sync_dist=True)
             return loss
         
-        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='train')
-        self.context_sizes['train'].append(context_sizes)
-        self.log(f"train/label_acc", label_acc, sync_dist=True)
-        self.log(f"train/acc_cont_{self.contrastive_loss}", acc_cont, sync_dist=True)
-        self.log(f"train/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, sync_dist=True)
-        self.log(f"train/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, sync_dist=True)
-        self.log(f"train/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, sync_dist=True)
-        self.log("train/loss_mlm", loss_mlm, sync_dist=True)
-        self.log("train/loss_cont", loss_cont, sync_dist=True)
-        self.log("train/loss", loss, sync_dist=True)
+        loss, sample_stats = self._step(batch, batch_idx, stage='train', log_prefix='train')
         
-        storage = torch.cat(all_gather(batch['dataset_id']), dim=0) if self.world_size > 1 else batch['dataset_id']
-        if (storage[0] == storage).all():
-            self.log('train/same_storage', 1, sync_dist=True, add_dataloader_idx=False) # todo: remove
-        else:
-            self.log('train/same_storage', 0, sync_dist=True, add_dataloader_idx=False)
-            if self.debug and batch_idx < 3:
-                print('storage: ', storage)
 
-
-        if 'donor_id' in batch:
-            donor = torch.cat(all_gather(batch['donor_id']), dim=0) if self.world_size > 1 else batch['donor_id']
-            if (donor[0] == donor).all():
-                self.log('train/same_donor', 1, sync_dist=True, add_dataloader_idx=False) # todo: remove
-            else:
-                self.log('train/same_donor', 0, sync_dist=True, add_dataloader_idx=False)
-        
+        for batch_key in ['dataset'] + self.batch_keys_to_monitor:
+            if batch_key in batch:
+                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
+                sample_stats[f'same_{batch_key}'] = (value[0] == value).all()
+                
         if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
 
+        self.sample_stats['train'].append(sample_stats)
+        
         return loss
+
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log("val/loss", loss, sync_dist=True)
+            self.log("val/loss", loss, sync_dist=True, add_dataloader_idx=False)
             return loss
-        val_name = self.val_loader_names[dataloader_idx]
-        loss, loss_mlm, loss_cont, acc_cont, top5_acc_cont, loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch, label_acc, same_batch_score, same_batch_score_top_5, context_sizes = self._step(batch, batch_idx, stage='val')
-        self.context_sizes['val'][val_name].append(context_sizes)
-        prefix = prefix=f'val/{val_name}' if val_name != 'same' else 'val'
-        self.log(f"{prefix}/label_acc", label_acc, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/same_batch_score", same_batch_score, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/same_batch_score_top_5", same_batch_score_top_5, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/acc_cont_{self.contrastive_loss}", acc_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/loss_mlm", loss_mlm, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/loss_cont", loss_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{prefix}/loss", loss, sync_dist=True, add_dataloader_idx=False)
         
-        storage = torch.cat(all_gather(batch['dataset_id']), dim=0) if self.world_size > 1 else batch['dataset_id']
-        if (storage[0] == storage).all():
-            self.log(f'{prefix}/same_storage', 1, sync_dist=True, add_dataloader_idx=False) # todo: remove
-        else:
-            self.log(f'{prefix}/same_storage', 0, sync_dist=True, add_dataloader_idx=False)
-
-            
-        if 'donor_id' in batch:
-            donor = torch.cat(all_gather(batch['donor_id']), dim=0) if self.world_size > 1 else batch['donor_id']
-            if (donor[0] == donor).all():
-                self.log(f'{prefix}/same_donor', 1, sync_dist=True, add_dataloader_idx=False) # todo: remove
-            else:
-                self.log(f'{prefix}/same_donor', 0, sync_dist=True, add_dataloader_idx=False)
+        val_name = self.val_loader_names[dataloader_idx]
+        prefix = prefix=f'val/{val_name}' if val_name != 'same' else 'val'
+        loss, sample_stats = self._step(batch, batch_idx, stage='val', log_prefix=prefix)
+        
+        
+        for batch_key in ['dataset'] + self.batch_keys_to_monitor:
+            if batch_key in batch:
+                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
+                sample_stats[f'same_{batch_key}'] = (value[0] == value).all()
         
         if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
+        
+        self.sample_stats['val'][val_name].append(sample_stats)
+
 
     def predict_step(self, batch, batch_idx):
         context_size = batch['tokens'].shape[1]
@@ -660,31 +612,40 @@ class ContrastiveModel(BaseTransformerModel):
                 'context_sizes': (int(context_size), nonzero_cnt[random.randint(0, len(nonzero_cnt)-1)].item())
                 }
 
+
     def on_train_epoch_end(self):
         if self.global_rank == 0:
             max_size = 1000
-            columns = ["panel_name", "panel_size_1", "panel_size_2", "context_size_1", "context_size_2", "nonzero_size_1", "nonzero_size_2", 
-                        "min_1", "min_2", "max_1", "max_2", "panel_intersect", "token_intersect"]
             try:
-                table = wandb.Table(columns=columns, data=self.context_sizes['train'][:max_size])
+                df = pd.DataFrame(self.sample_stats['train'])
+                if len(df) > max_size:
+                    indices = np.random.choice(len(df), max_size, replace=False)
+                    df = df.iloc[indices]
+
+                table = wandb.Table(dataframe=df)
                 self.logger.experiment.log({"train/sample_stats": table})
             except:
                 pass
-        self.context_sizes['train'] = []
+        self.sample_stats['train'] = []
+    
     
     def on_validation_epoch_end(self):     
         for val_name in self.val_loader_names:
             prefix = prefix=f'val/{val_name}' if val_name != 'same' else 'val'
             if self.global_rank == 0:
                 max_size = 1000
-                columns = ["panel_name", "panel_size_1", "panel_size_2", "context_size_1", "context_size_2", "nonzero_size_1", "nonzero_size_2", 
-                            "min_1", "min_2", "max_1", "max_2", "panel_intersect", "token_intersect"]
                 try:
-                    table = wandb.Table(columns=columns, data=self.context_sizes['val'][val_name][:max_size])
+                    df = pd.DataFrame(self.sample_stats['val'][val_name])
+                    if len(df) > max_size:
+                        indices = np.random.choice(len(df), max_size, replace=False)
+                        df = df.iloc[indices]
+
+                    table = wandb.Table(dataframe=df)
                     self.logger.experiment.log({f"{prefix}/sample_stats": table})
                 except:
                     pass
-            self.context_sizes['val'][val_name] = []
+            self.sample_stats['val'][val_name] = []
+
 
     def _validate_panels(self, panel_1, panel_2):
         panel_1 = torch.cat(all_gather(panel_1), dim=0) if self.world_size > 1 else panel_1
@@ -693,6 +654,44 @@ class ContrastiveModel(BaseTransformerModel):
         assert (panel_2[:, :5] == panel_2[0, :5]).all()
         assert (panel_2 == self.PAD_TOKEN_ID).sum() == 0
         # assert np.intersect1d(panel_1[0].cpu(), panel_2[0].cpu()).size == 0
+
+
+    def _get_sample_stats(self, batch):
+        panel_size_1 = batch['panel_1'].shape[1]
+        panel_size_2 = batch['panel_2'].shape[1]
+        context_size_1 = len(batch['tokens_1'][0])
+        context_size_2 = len(batch['tokens_2'][0])
+        nonzero_cnt_1 = (batch['tokens_1'][0] != self.PAD_TOKEN_ID).sum().item()
+        nonzero_cnt_2 = (batch['tokens_2'][0] != self.PAD_TOKEN_ID).sum().item()
+        try:
+            values_min_1, values_min_2 = batch['values_1'][0].min().item(), batch['values_2'][0].min().item()
+            values_max_1, values_max_2 = batch['values_1'][0].max().item(), batch['values_2'][0].max().item()
+        except:
+            values_min_1, values_min_2 = 0, 0
+            values_max_1, values_max_2 = 0, 0
+        
+        panel_intersect = len(np.intersect1d(batch['panel_1'][0].cpu().numpy(), batch['panel_2'][0].cpu().numpy()))
+        token_intersect = len(np.intersect1d(batch['tokens_1'][0].cpu().numpy(), batch['tokens_2'][0].cpu().numpy()))
+        
+        
+        sample_stats = {
+            'panel_name_1': batch['panel_name_1'],
+            'panel_name_2': batch['panel_name_2'],
+            'panel_size_1': int(panel_size_1),
+            'panel_size_2': int(panel_size_2),
+            'context_size_1': int(context_size_1),
+            'context_size_2': int(context_size_2),
+            'nonzero_size_1': nonzero_cnt_1,
+            'nonzero_size_2': nonzero_cnt_2,
+            'values_min_1': values_min_1,
+            'values_min_2': values_min_2,
+            'values_max_1': values_max_1,
+            'values_max_2': values_max_2,
+            'panel_intersect': panel_intersect,
+            'token_intersect': token_intersect,
+        }
+        
+        return sample_stats
 
 
     def add_cls_token(self, batch):
@@ -720,6 +719,7 @@ class ContrastiveModel(BaseTransformerModel):
             batch['values'] = [torch.cat([cls_token_val, v], dim=0) for v in values]
         return batch
 
+
     # balanced neg/pos sampling + binary cross entropy
     def _contrastive_binary_loss(self, logits):
         batch_size = len(logits)
@@ -737,10 +737,12 @@ class ContrastiveModel(BaseTransformerModel):
         acc_cont = self.binarcy_accuracy(cont_pred, cont_target)
         return loss_cont, acc_cont
 
+
     def _clip_loss(self, logits):
         loss_1, acc_cont_1, top5_acc_cont_1  = self._contrastive_multiclass_loss(logits)
         loss_2, acc_cont_2, top5_acc_cont_2 = self._contrastive_multiclass_loss(logits.t())
         return (loss_1 + loss_2) / 2.0, (acc_cont_1 + acc_cont_2) / 2.0, (top5_acc_cont_1 + top5_acc_cont_2) / 2.0
+
 
     def _contrastive_multiclass_loss(self, logits):
         cont_target = torch.arange(len(logits), device=self.device)
@@ -764,15 +766,17 @@ class ContrastiveModel(BaseTransformerModel):
         label_acc = (torch.mode(neighbor_labels, dim=1)[0] == labels_1).float().mean()
         return label_acc
 
-    def _same_batch_score(self, logits, k=1):
+
+    def _views_mixing_score(self, logits, k=1):
         logits_diag = logits - torch.eye(len(logits), device=self.device) * self.logit_scale.exp() * 2
         labels_1 = torch.cat([torch.zeros(len(logits)//2, device=self.device), torch.ones(len(logits)//2, device=self.device)], dim=0)
         labels_2 = torch.cat([torch.ones(len(logits)//2, device=self.device), torch.zeros(len(logits)//2, device=self.device)], dim=0)
 
         neighbors = logits_diag.topk(k, dim=1)[1]
         neighbor_labels = labels_2[neighbors]
-        same_batch_score = (neighbor_labels == labels_1.unsqueeze(1)).float().mean()
-        return same_batch_score
+        mixsing_score = (neighbor_labels != labels_1.unsqueeze(1)).float().mean()
+        return mixsing_score
+    
     
     def _knn_r2(self, logits, labels_1, labels_2, k=5, ignore_self=False):
         if ignore_self:
@@ -784,6 +788,7 @@ class ContrastiveModel(BaseTransformerModel):
         # rmse = torch.sqrt(((preds - labels_1.float())**2).mean())
         r2 = r2_score(preds, labels_1.float())
         return r2
+
 
 # Cosine Scheduler for training
 class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
@@ -803,6 +808,7 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
         if epoch <= self.warmup:
             lr_factor *= epoch * 1.0 / self.warmup
         return lr_factor
+    
     
 class WarmupScheduler(optim.lr_scheduler._LRScheduler):
 

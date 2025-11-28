@@ -1,5 +1,7 @@
 name: DataModule
-columns: ["cell_type", "donor_id"] # Optional: If provided, will be used for more loggings. Pass [] if not available.
+columns: ["cell_type", "donor_id"] # include all obs keys to retrieve from dataloader
+label_keys_to_monitor: ["cell_type"]
+batch_keys_to_monitor: ["donor_id"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
 model_speed_sanity_check: False

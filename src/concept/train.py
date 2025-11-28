@@ -93,6 +93,8 @@ def train(cfg: DictConfig):
         'vocab_size': len(gene_mapping),
         'world_size': trainer.world_size, 
         'val_loader_names': val_loader_names, 
+        'label_keys_to_monitor': cfg.datamodule.label_keys_to_monitor,
+        'batch_keys_to_monitor': cfg.datamodule.batch_keys_to_monitor,
         'precomp_embs_key': cfg.datamodule.precomp_embs_key,
     }
     model = ContrastiveModel(**model_args)
@@ -106,8 +108,7 @@ def train(cfg: DictConfig):
         ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
         model = ContrastiveModel.load_from_checkpoint(ckpt_path, **model_args, strict=False)
     
-    trainer.fit(model=model, 
-                datamodule = datamodule)
+    trainer.fit(model=model, datamodule = datamodule)
 
 
 if __name__ == "__main__":

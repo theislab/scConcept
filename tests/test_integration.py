@@ -157,8 +157,9 @@ def test_training_step(mock_config, device):
         'tokens_2': torch.randint(2, 100, (batch_size, seq_len)).to(device),
         'values_2': torch.randn(batch_size, seq_len).to(device),
         'panel_2': panel.to(device),
-        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
-        'panel_name': 'test_panel'
+        'dataset': torch.randint(0, 2, (batch_size,)).to(device),
+        'panel_name_1': 'test_panel_1',
+        'panel_name_2': 'test_panel_2'
     }
 
     # Test training step
@@ -205,8 +206,9 @@ def test_validation_step(mock_config, device):
         'tokens_2': torch.randint(2, 100, (batch_size, seq_len)).to(device),
         'values_2': torch.randn(batch_size, seq_len).to(device),
         'panel_2': panel.to(device),
-        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
-        'panel_name': 'test_panel'
+        'dataset': torch.randint(0, 2, (batch_size,)).to(device),
+        'panel_name_1': 'test_panel_1',
+        'panel_name_2': 'test_panel_2'
     }
     
     # Test validation step and check model.log calls
@@ -242,7 +244,7 @@ def test_predict_step(mock_config, device):
     batch = {
         'tokens': torch.randint(2, 100, (batch_size, seq_len)).to(device),
         'values': torch.randn(batch_size, seq_len).to(device),
-        'dataset_id': torch.randint(0, 2, (batch_size,)).to(device),
+        'dataset': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name': 'test_panel'
     }
     

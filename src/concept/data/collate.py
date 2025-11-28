@@ -154,7 +154,7 @@ class Collate(BaseCollate):
             n_tokens = len(batch_permute[0]['tokens'])
             panel_indices = np.arange(n_tokens)
 
-            panel_name = 'random'
+            panel_name_1, panel_name_2 = 'random', 'random'
             panel_overlap = self.rng.uniform() <= float(self.panel_overlap)
             
             if self.panel_selection == 'random' or (self.panel_selection == 'mixed' and self.rng.uniform() <= self.panel_selection_mixed_prob) or n_tokens < 10_000:
@@ -163,7 +163,7 @@ class Collate(BaseCollate):
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
                 # print(f'Panel_1 random size: {len(panel_idx_1)}')
             else:
-                panel, panel_name = self._get_predesigned_panel(batch_permute)
+                panel, panel_name_1 = self._get_predesigned_panel(batch_permute)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]['tokens'], panel))[0]
                 panel_size_1 = len(panel_idx_1)
                 # print(f'Panel_1 {self.panel_names[i]} predefined size: {len(panel_idx_1)}')
@@ -213,7 +213,8 @@ class Collate(BaseCollate):
                     'values_2': default_collate(values_2),
                     'panel_1' : default_collate(panel_1),
                     'panel_2' : default_collate(panel_2),
-                    'panel_name': panel_name,
+                    'panel_name_1': panel_name_1,
+                    'panel_name_2': panel_name_2,
                     **{key: default_collate([item[key] for item in batch]) for key in batch[0].keys() if key not in ['tokens', 'values']}
             }
 
