@@ -9,7 +9,7 @@ from lightning.pytorch.utilities import rank_zero_only
 
 from lamin_dataloader import GeneIdTokenizer
 from concept.data import AnnDataModule
-from concept import ContrastiveModel
+from concept import ContrastiveModel, scConcept
 import wandb
 from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize
@@ -22,6 +22,9 @@ def train(cfg: DictConfig):
     Args:
         cfg: Configuration dictionary.
     """
+    # Validate configuration constraints
+    scConcept.validate_config(cfg)
+    
     if 'val' in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
     else:

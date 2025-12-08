@@ -211,6 +211,15 @@ class scConcept:
         return cfg
 
     @staticmethod
+    def validate_config(cfg: DictConfig):
+        """Validate configuration constraints."""
+        if cfg.model.pe_max_len < cfg.datamodule.dataset.train.max_tokens:
+            raise ValueError(
+                f"Configuration validation failed: model.pe_max_len ({cfg.model.pe_max_len}) must be greater than "
+                f"datamodule.dataset.train.max_tokens ({cfg.datamodule.dataset.train.max_tokens})"
+            )
+
+    @staticmethod
     def apply_compatibility_changes(cfg: DictConfig):
         """Apply compatibility changes for older checkpoints. Returns updated cfg."""
         if 'projection_dim' not in cfg.model:
