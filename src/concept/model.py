@@ -183,53 +183,6 @@ class BaseTransformerModel(L.LightningModule):
         return F.mse_loss(pred.float(), target.float())
 
 
-class StandardModel(BaseTransformerModel):
-    def __init__(
-        self,
-        vocab_size: int,
-        dim_model: int,
-        num_head: int,
-        dim_hid: int,
-        nlayers: int,
-        pad_token_id: int,
-        cls_token_id: int,
-        masking_rate: float = 0.3,
-        lr: float = 1e-3,
-        weight_decay: float = 0.0,
-        dropout: float = 0.2,
-    ):
-        super().__init__(dim_model,
-                         num_head,
-                         dim_hid,
-                         nlayers,
-                         pad_token_id,
-                         cls_token_id,
-                         masking_rate,
-                         lr,
-                         weight_decay,
-                         dropout)
-        self.vocab_size = vocab_size
-
-        self.gene_token_encoder = GeneEncoder(
-            self.vocab_size, self.dim_model, padding_idx=None
-        )
-
-        self.value_encoder = ContinuousValueEncoder(
-            self.dim_model, dropout=0.0)
-
-    def _step(self, batch):
-        input_tokens, input_values = batch['tokens'], batch['values']
-        input_values_masked, masked_positions = self.mask_values(input_values, self.masking_rate)
-        pred = self(input_tokens, input_values_masked)
-        
-        loss = self._mlm_loss(pred, input_values, masked_positions)
-        return loss
-
-    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
-        return self.gene_token_encoder(tokens)
-
-    def _encode_values(self, values: Tensor) -> Tensor:
-        return self.value_encoder(values)
 
 
 class GeneEncoder(nn.Module):
