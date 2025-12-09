@@ -76,7 +76,6 @@ class BaseTransformerModel(L.LightningModule):
         batch_size = tokens.size(0)
         tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask)
         tokens = tokens.squeeze(-1)
-        seqlens = list(seqlens)
         
         # seqlens = [len(t) for t in tokens]
         # cu_seqlens = torch.cumsum(torch.tensor([0] + seqlens, device=self.device, dtype=torch.int32), dim=0, dtype=torch.int32)
@@ -86,7 +85,12 @@ class BaseTransformerModel(L.LightningModule):
         gene_embs = self._encode_gene_tokens(tokens) # (total_len, dim_model)
         
         if self.input_encoding == 'rank_encoding':
-            total_embs = self.positional_encoder(gene_embs, seqlens=seqlens)
+            # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
+            # Faster implementation:
+            pe = self.positional_encoder.pe[:, :max_seqlen, :]
+            pe = pe.repeat(batch_size, 1, 1)
+            pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask)
+            total_embs = gene_embs + pe
         elif self.input_encoding == 'value_encoding':
             values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask)
             values = values.squeeze(-1)
@@ -95,10 +99,10 @@ class BaseTransformerModel(L.LightningModule):
             # total_embs = torch.cat([gene_embs, value_embs], dim=-1)
 
         embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
-        cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
         embs_padded = pad_input(embs_jagged, indices, batch_size, max_seqlen)
         cell_embs = embs_padded[:, 0, :]
-        assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
+        # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
+        # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
     
         
         # output = output.split(seqlens, dim=0)
@@ -134,12 +138,12 @@ class BaseTransformerModel(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss = self._step(batch)
-        self.log("train/loss", loss, sync_dist=True)
+        self.log("train/loss", loss, sync_dist=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss = self._step(batch)
-        self.log("val/loss", loss, sync_dist=True)
+        self.log("val/loss", loss, sync_dist=False)
 
     def configure_optimizers(self):
         
@@ -362,8 +366,8 @@ class ContrastiveModel(BaseTransformerModel):
         self.vocab_size = vocab_size
         self.world_size = world_size
         self.val_loader_names = val_loader_names
-        self.label_keys_to_monitor = label_keys_to_monitor
-        self.batch_keys_to_monitor = batch_keys_to_monitor
+        self.label_keys_to_monitor = list(label_keys_to_monitor)
+        self.batch_keys_to_monitor = list(batch_keys_to_monitor)
         assert self.contrastive_loss in ['binary', 'multiclass']
 
         self.gene_token_encoder = GeneEncoder(self.vocab_size, self.dim_model, padding_idx=None)
@@ -377,6 +381,7 @@ class ContrastiveModel(BaseTransformerModel):
             
         self.sample_stats = {'train': [], 'val': defaultdict(list)}
         self.logit_masks = {}
+        self.log_metrics = partial(self.log, sync_dist=False, add_dataloader_idx=False, on_epoch=True)
         
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         return self.gene_token_encoder(tokens)
@@ -386,15 +391,12 @@ class ContrastiveModel(BaseTransformerModel):
 
     def _step(self, batch, batch_idx, stage='train', log_prefix='train'):
         assert stage in ['train', 'val'], f"Invalid stage: {stage}"
-        
-        sample_stats = self._get_sample_stats(batch)
-                
+                        
         batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1'], 'panel_name': batch['panel_name_1']}
         batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2'], 'panel_name': batch['panel_name_2']}
 
         
         if self.debug and batch_idx < 5 and stage == 'train':
-            print(sample_stats)
             print('batch_1 values:', batch_1['values'][0])
             print('batch_2 values:', batch_2['values'][0])
         
@@ -416,19 +418,16 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             batch_1['values_masked'] = batch_1['values']
             batch_2['values_masked'] = batch_2['values']
-            
-        
-        padding_mask_1 = (batch_1['tokens'] == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(batch_1['tokens'], dtype=torch.bool, device=self.device)
-        padding_mask_2 = (batch_2['tokens'] == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(batch_2['tokens'], dtype=torch.bool, device=self.device)
 
-        pred_1, _, cell_embs_1 = self(batch_1['tokens'], batch_1['values_masked'], src_key_padding_mask=padding_mask_1)
-        pred_2, _, cell_embs_2 = self(batch_2['tokens'], batch_2['values_masked'], src_key_padding_mask=padding_mask_2)
+        # Forward both views for maximizing GPU utilization instead of calling forward twice!
+        pred_1, pred_2, cell_embs_1, cell_embs_2 = self.forward_pair(batch_1['tokens'], batch_1['values_masked'], batch_2['tokens'], batch_2['values_masked'])
 
-        loss_mlm = torch.tensor(0.0, device=self.device)
+
+
+        loss_mlm = 0.0
         if self.mlm_loss_weight > 0:
             loss_mlm = self._mlm_loss(pred_1, batch_1['values'], batch_1['masked_positions']) + self._mlm_loss(
                 pred_2, batch_2['values'], batch_2['masked_positions'])
-        self.log(f"{log_prefix}/loss_mlm", loss_mlm, sync_dist=True, add_dataloader_idx=False)
         
         # Gather embeddings from GPUs and concatenate them
         if self.world_size > 1:
@@ -466,17 +465,20 @@ class ContrastiveModel(BaseTransformerModel):
             loss_cont, acc_cont, top5_acc_cont = self._clip_loss(logits)
             loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_multiclass_loss(logits_both_batch)
         
-        self.log(f"{log_prefix}/loss_cont", loss_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
-        self.log(f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, sync_dist=True, add_dataloader_idx=False)
-        
+
         if self.global_step < self.loss_switch_step:
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont
         else:
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
-        self.log(f"{log_prefix}/loss", loss, sync_dist=True, add_dataloader_idx=False)
+        
+        if stage == 'val' or (stage == 'train' and batch_idx % 100 == 0):
+            self.log_metrics(f"{log_prefix}/loss", loss)
+            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont)
+            self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm)
+            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont)
+            self.log_metrics(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont)
+            self.log_metrics(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch)
+            self.log_metrics(f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch)
         
         
         ######################################################################
@@ -490,7 +492,7 @@ class ContrastiveModel(BaseTransformerModel):
                     labels_1 = torch.cat(all_gather(labels_1), dim=0)
                     labels_2 = torch.cat(all_gather(labels_2), dim=0)
                 label_acc = 0.5 * (self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1))
-                self.log(f"{log_prefix}/knn_acc_{label_key}", label_acc, sync_dist=True, add_dataloader_idx=False)
+                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc)
 
 
         if stage == 'train' and batch_idx % 100 == 0:
@@ -498,13 +500,13 @@ class ContrastiveModel(BaseTransformerModel):
             if self.world_size > 1:
                 global_rank = torch.cat(all_gather(global_rank), dim=0)
             global_rank_acc = 0.5 * (self._knn_accuracy(logits, global_rank, global_rank) + self._knn_accuracy(logits.t(), global_rank, global_rank))
-            self.log(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, sync_dist=True, add_dataloader_idx=False)
+            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc)
         
         if stage != 'train':
             views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
             views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
-            self.log(f"{log_prefix}/views_mixing_score", views_mixing_score, sync_dist=True, add_dataloader_idx=False)
-            self.log(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, sync_dist=True, add_dataloader_idx=False)
+            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score)
+            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5)
         
         
         if self.debug and batch_idx % 100 == 0:
@@ -517,10 +519,10 @@ class ContrastiveModel(BaseTransformerModel):
             length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
             length_logit_corr = torch.tensor([torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))])
             length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-            self.log(f"{log_prefix}/length_logit_corr", length_logit_corr, sync_dist=True, add_dataloader_idx=False)
+            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr)
         
             length_r2 = 0.5 * (self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2) + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1))
-            self.log(f"{log_prefix}/length_r2", length_r2, sync_dist=True, add_dataloader_idx=False)
+            self.log_metrics(f"{log_prefix}/length_r2", length_r2)
         
         
         if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == 'train' and batch_idx % 1000 == 0:
@@ -540,27 +542,25 @@ class ContrastiveModel(BaseTransformerModel):
                 print(f'match in batch_1, {idx} values: ', batch_1['values'][idx])
         ######################################################################
         
-        return loss, sample_stats
+        return loss
     
 
     def training_step(self, batch, batch_idx):
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log("train/loss", loss, sync_dist=True)
+            self.log_metrics("train/loss", loss)
             return loss
         
-        loss, sample_stats = self._step(batch, batch_idx, stage='train', log_prefix='train')
+        if batch_idx % 100 == 0:
+            sample_stats = self._get_sample_stats(batch)
+            self.sample_stats['train'].append(sample_stats)
         
-
-        for batch_key in ['dataset'] + self.batch_keys_to_monitor:
-            if batch_key in batch:
-                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
-                sample_stats[f'same_{batch_key}'] = (value[0] == value).all()
+        loss = self._step(batch, batch_idx, stage='train', log_prefix='train')
+        
                 
         if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
-
-        self.sample_stats['train'].append(sample_stats)
+            
         
         return loss
 
@@ -568,23 +568,22 @@ class ContrastiveModel(BaseTransformerModel):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log("val/loss", loss, sync_dist=True, add_dataloader_idx=False)
+            self.log_metrics("val/loss", loss)
             return loss
         
         val_name = self.val_loader_names[dataloader_idx]
         prefix = prefix=f'val/{val_name}' if val_name != 'same' else 'val'
-        loss, sample_stats = self._step(batch, batch_idx, stage='val', log_prefix=prefix)
         
+        if batch_idx % 10 == 0:
+            sample_stats = self._get_sample_stats(batch)
+            self.sample_stats['val'][val_name].append(sample_stats)
+            
+        loss = self._step(batch, batch_idx, stage='val', log_prefix=prefix)
         
-        for batch_key in ['dataset'] + self.batch_keys_to_monitor:
-            if batch_key in batch:
-                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
-                sample_stats[f'same_{batch_key}'] = (value[0] == value).all()
         
         if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
         
-        self.sample_stats['val'][val_name].append(sample_stats)
 
 
     def predict_step(self, batch, batch_idx):
@@ -612,12 +611,24 @@ class ContrastiveModel(BaseTransformerModel):
                 'context_sizes': (int(context_size), nonzero_cnt[random.randint(0, len(nonzero_cnt)-1)].item())
                 }
 
-
+    def _convert_stats_tensors_to_scalars(self, stats_list):
+        converted_stats = []
+        for stats in stats_list:
+            converted = {}
+            for key, value in stats.items():
+                if isinstance(value, torch.Tensor):
+                    converted[key] = value.cpu().item()
+                else:
+                    converted[key] = value
+            converted_stats.append(converted)
+        return converted_stats
+    
     def on_train_epoch_end(self):
         if self.global_rank == 0:
             max_size = 1000
             try:
-                df = pd.DataFrame(self.sample_stats['train'])
+                stats_train = self._convert_stats_tensors_to_scalars(self.sample_stats['train'])
+                df = pd.DataFrame(stats_train)
                 if len(df) > max_size:
                     indices = np.random.choice(len(df), max_size, replace=False)
                     df = df.iloc[indices]
@@ -635,7 +646,8 @@ class ContrastiveModel(BaseTransformerModel):
             if self.global_rank == 0:
                 max_size = 1000
                 try:
-                    df = pd.DataFrame(self.sample_stats['val'][val_name])
+                    stats_val = self._convert_stats_tensors_to_scalars(self.sample_stats['val'][val_name])
+                    df = pd.DataFrame(stats_val)
                     if len(df) > max_size:
                         indices = np.random.choice(len(df), max_size, replace=False)
                         df = df.iloc[indices]
@@ -655,23 +667,23 @@ class ContrastiveModel(BaseTransformerModel):
         assert (panel_2 == self.PAD_TOKEN_ID).sum() == 0
         # assert np.intersect1d(panel_1[0].cpu(), panel_2[0].cpu()).size == 0
 
-
+    @torch.no_grad()
     def _get_sample_stats(self, batch):
         panel_size_1 = batch['panel_1'].shape[1]
         panel_size_2 = batch['panel_2'].shape[1]
         context_size_1 = len(batch['tokens_1'][0])
         context_size_2 = len(batch['tokens_2'][0])
-        nonzero_cnt_1 = (batch['tokens_1'][0] != self.PAD_TOKEN_ID).sum().item()
-        nonzero_cnt_2 = (batch['tokens_2'][0] != self.PAD_TOKEN_ID).sum().item()
+        nonzero_cnt_1 = (batch['tokens_1'][0] != self.PAD_TOKEN_ID).sum().detach()
+        nonzero_cnt_2 = (batch['tokens_2'][0] != self.PAD_TOKEN_ID).sum().detach()
         try:
-            values_min_1, values_min_2 = batch['values_1'][0].min().item(), batch['values_2'][0].min().item()
-            values_max_1, values_max_2 = batch['values_1'][0].max().item(), batch['values_2'][0].max().item()
+            values_min_1, values_min_2 = batch['values_1'][0].min().detach(), batch['values_2'][0].min().detach()
+            values_max_1, values_max_2 = batch['values_1'][0].max().detach(), batch['values_2'][0].max().detach()
         except:
             values_min_1, values_min_2 = 0, 0
             values_max_1, values_max_2 = 0, 0
         
-        panel_intersect = len(np.intersect1d(batch['panel_1'][0].cpu().numpy(), batch['panel_2'][0].cpu().numpy()))
-        token_intersect = len(np.intersect1d(batch['tokens_1'][0].cpu().numpy(), batch['tokens_2'][0].cpu().numpy()))
+        panel_intersect = torch.isin(torch.unique(batch["panel_1"][0]), torch.unique(batch["panel_2"][0])).sum()
+        token_intersect = torch.isin(torch.unique(batch["tokens_1"][0]), torch.unique(batch["tokens_2"][0])).sum()
         
         
         sample_stats = {
@@ -690,6 +702,12 @@ class ContrastiveModel(BaseTransformerModel):
             'panel_intersect': panel_intersect,
             'token_intersect': token_intersect,
         }
+        
+        for batch_key in ['dataset'] + self.batch_keys_to_monitor:
+            if batch_key in batch:
+                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
+                sample_stats[f'same_{batch_key}'] = (value[0] == value).all().detach()
+
         
         return sample_stats
 
@@ -720,6 +738,36 @@ class ContrastiveModel(BaseTransformerModel):
         return batch
 
 
+    def pad_tensor(self, tensor, target_length, pad_value):
+        pad_size = target_length - tensor.shape[1]
+        if pad_size > 0:
+            return F.pad(tensor, (0, pad_size), value=pad_value)
+        return tensor
+    
+    def forward_pair(self, tokens_1, values_1, tokens_2, values_2):
+        # This function is used to forward both views for efficiency instead of calling forward twice
+        # Pad the batches to the same sequence length before concatenation
+        max_len = max(tokens_1.shape[1], tokens_2.shape[1])
+
+        padded_tokens_1 = self.pad_tensor(tokens_1, max_len, self.PAD_TOKEN_ID)
+        padded_tokens_2 = self.pad_tensor(tokens_2, max_len, self.PAD_TOKEN_ID)
+        padded_values_1 = self.pad_tensor(values_1, max_len, 0)
+        padded_values_2 = self.pad_tensor(values_2, max_len, 0)
+
+        combined_tokens = torch.cat([padded_tokens_1, padded_tokens_2], dim=0)
+        combined_values = torch.cat([padded_values_1, padded_values_2], dim=0)
+        combined_padding_mask = (combined_tokens == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(combined_tokens, dtype=torch.bool, device=self.device)
+
+        pred, _, cell_embs = self(combined_tokens, combined_values, src_key_padding_mask=combined_padding_mask)
+        cell_embs_1, cell_embs_2 = torch.chunk(cell_embs, 2, dim=0)
+        if pred is not None:
+            pred_1, pred_2 = torch.chunk(pred, 2, dim=0)
+        else:
+            pred_1, pred_2 = None, None
+            
+        return pred_1, pred_2, cell_embs_1, cell_embs_2
+    
+    
     # balanced neg/pos sampling + binary cross entropy
     def _contrastive_binary_loss(self, logits):
         batch_size = len(logits)
