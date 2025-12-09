@@ -14,6 +14,9 @@ initialize:
   resume: False
   run_id: null
   checkpoint: null
+
+profiler:
+  enabled: False # Use profiler only for debugging
   
 PATH:
   PROJECT_PATH: ???

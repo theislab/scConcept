@@ -52,7 +52,7 @@ def _mock_encode(self, tokens, values, src_key_padding_mask=None):
     return embs_padded, cell_embs
 
 
-def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False):
+def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False, on_epoch=False):
     """Mock the log method to avoid trainer reference errors."""
     pass
 
@@ -164,7 +164,7 @@ def test_training_step(mock_config, device):
 
     # Test training step
     model.train()
-    with patch.object(model, "log") as mock_log:
+    with patch.object(model, "log_metrics") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             loss = model.training_step(batch, batch_idx=0)
         
@@ -213,7 +213,7 @@ def test_validation_step(mock_config, device):
     
     # Test validation step and check model.log calls
     model.eval()
-    with torch.no_grad(), patch.object(model, "log") as mock_log:
+    with torch.no_grad(), patch.object(model, "log_metrics") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             model.validation_step(batch, batch_idx=0, dataloader_idx=0)
 

@@ -46,6 +46,8 @@ dependencies = [
 optional-dependencies.dev = [
   "pre-commit",
   "twine>=4.0.2",
+  "torch-tb-profiler>=0.4.3",
+  "jupyterlab>=4.5.0",
 ]
 optional-dependencies.doc = [
   "docutils>=0.8,!=0.18.*,!=0.19.*",

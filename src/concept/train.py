@@ -4,14 +4,15 @@ import lightning as L
 import pandas as pd
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities import rank_zero_only
+from omegaconf import DictConfig, OmegaConf
 
+from concept.utils import get_profiler
 from lamin_dataloader import GeneIdTokenizer
 from concept.data import AnnDataModule
 from concept import ContrastiveModel, scConcept
 import wandb
-from lightning.pytorch.strategies import DDPStrategy
 from hydra import compose, initialize
 
 
@@ -64,6 +65,8 @@ def train(cfg: DictConfig):
         if cfg.wandb.enabled:
             logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
+    profiler = get_profiler(CHECKPOINT_PATH) if cfg.profiler.enabled else None
+
     trainer_kwargs = {
         'max_steps': cfg.model.training.max_steps,
         'accelerator': cfg.model.training.accelerator,
@@ -73,6 +76,8 @@ def train(cfg: DictConfig):
         'val_check_interval': cfg.model.training.val_check_interval,
         'check_val_every_n_epoch': cfg.model.training.check_val_every_n_epoch,
         'limit_train_batches': cfg.model.training.limit_train_batches,
+        'accumulate_grad_batches': cfg.model.training.accumulate_grad_batches,
+        'profiler': profiler,
         'callbacks': [
             LearningRateMonitor(logging_interval='step'),
             ModelCheckpoint(dirpath=CHECKPOINT_PATH, filename='min_train_loss', monitor='train/loss', mode='min', every_n_epochs=1, save_top_k=1),
@@ -82,10 +87,9 @@ def train(cfg: DictConfig):
         ],
     }
     trainer = L.Trainer(**trainer_kwargs, 
-                        strategy=DDPStrategy(find_unused_parameters=True),
+                        strategy=DDPStrategy(),
                         precision='bf16-mixed', 
                         use_distributed_sampler=False,
-                        accumulate_grad_batches=cfg.model.training.accumulate_grad_batches,
                         )
 
 
