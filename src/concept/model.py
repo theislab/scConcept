@@ -54,6 +54,7 @@ class BaseTransformerModel(L.LightningModule):
         self.warmup = config['training']['warmup']
         self.max_steps = config['training']['max_steps']
         self.min_lr = config['training']['min_lr']
+        self.log_every_n_steps = config['training']['log_every_n_steps']
         self.values_only_sanity_check = config['values_only_sanity_check']
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
@@ -334,7 +335,11 @@ class ContrastiveModel(BaseTransformerModel):
             
         self.sample_stats = {'train': [], 'val': defaultdict(list)}
         self.logit_masks = {}
-        self.log_metrics = partial(self.log, sync_dist=False, add_dataloader_idx=False, on_epoch=True)
+
+    
+    def log_metrics(self, metric_name, value, **kwargs):
+        self.log(metric_name, value, on_step=True, on_epoch=False, sync_dist=False, add_dataloader_idx=False, **kwargs)
+        self.log(metric_name + '_epoch', value, on_step=False, on_epoch=True, sync_dist=False, add_dataloader_idx=False, **kwargs)
         
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         return self.gene_token_encoder(tokens)
@@ -424,10 +429,11 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
         
-        if stage == 'val' or (stage == 'train' and batch_idx % 100 == 0):
+        if stage == 'val' or (stage == 'train' and batch_idx % self.log_every_n_steps == 0):
             self.log_metrics(f"{log_prefix}/loss", loss)
             self.log_metrics(f"{log_prefix}/loss_cont", loss_cont)
-            self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm)
+            if loss_mlm > 0:
+                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm)
             self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont)
             self.log_metrics(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont)
             self.log_metrics(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch)
@@ -448,7 +454,7 @@ class ContrastiveModel(BaseTransformerModel):
                 self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc)
 
 
-        if stage == 'train' and batch_idx % 100 == 0:
+        if stage == 'train' and batch_idx % self.log_every_n_steps == 0:
             global_rank = torch.tensor([self.global_rank]*len(batch_1['tokens']), device=self.device)
             if self.world_size > 1:
                 global_rank = torch.cat(all_gather(global_rank), dim=0)
@@ -462,7 +468,7 @@ class ContrastiveModel(BaseTransformerModel):
             self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5)
         
         
-        if self.debug and batch_idx % 100 == 0:
+        if self.debug and batch_idx % self.log_every_n_steps == 0:
             nonzero_cnt_1 = (batch_1['tokens'] != self.PAD_TOKEN_ID).sum(dim=1)
             nonzero_cnt_2 = (batch_2['tokens'] != self.PAD_TOKEN_ID).sum(dim=1)
             if self.world_size > 1:
@@ -504,14 +510,14 @@ class ContrastiveModel(BaseTransformerModel):
             self.log_metrics("train/loss", loss)
             return loss
         
-        if batch_idx % 100 == 0:
+        if batch_idx % self.log_every_n_steps == 0:
             sample_stats = self._get_sample_stats(batch)
             self.sample_stats['train'].append(sample_stats)
         
         loss = self._step(batch, batch_idx, stage='train', log_prefix='train')
         
                 
-        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
+        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % self.log_every_n_steps == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
             
         
@@ -534,7 +540,7 @@ class ContrastiveModel(BaseTransformerModel):
         loss = self._step(batch, batch_idx, stage='val', log_prefix=prefix)
         
         
-        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % 100 == 0:
+        if self.debug and 'panel_1' in batch and 'panel_2' in batch and batch_idx % self.log_every_n_steps == 0:
             self._validate_panels(batch['panel_1'], batch['panel_2'])
         
 
@@ -635,8 +641,12 @@ class ContrastiveModel(BaseTransformerModel):
             values_min_1, values_min_2 = 0, 0
             values_max_1, values_max_2 = 0, 0
         
-        panel_intersect = torch.isin(torch.unique(batch["panel_1"][0]), torch.unique(batch["panel_2"][0])).sum()
-        token_intersect = torch.isin(torch.unique(batch["tokens_1"][0]), torch.unique(batch["tokens_2"][0])).sum()
+        
+        # panel_intersect = torch.isin(torch.unique(batch["panel_1"][0]), torch.unique(batch["panel_2"][0])).sum().detach()
+        # token_intersect = torch.isin(torch.unique(batch["tokens_1"][0]), torch.unique(batch["tokens_2"][0])).sum().detach()
+        # For some reason torch.isin is slow!
+        panel_intersect = np.intersect1d(batch["panel_1"][0].cpu().numpy(), batch["panel_2"][0].cpu().numpy()).size
+        token_intersect = np.intersect1d(batch["tokens_1"][0].cpu().numpy(), batch["tokens_2"][0].cpu().numpy()).size
         
         
         sample_stats = {

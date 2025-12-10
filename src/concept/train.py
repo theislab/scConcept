@@ -73,6 +73,7 @@ def train(cfg: DictConfig):
         'devices': cfg.model.training.devices,
         'num_nodes': int(os.environ['SLURM_JOB_NUM_NODES']) if 'SLURM_JOB_NUM_NODES' in os.environ else cfg.model.training.num_nodes,
         'logger': logger if cfg.wandb.enabled else None,
+        'log_every_n_steps': cfg.model.training.log_every_n_steps,
         'val_check_interval': cfg.model.training.val_check_interval,
         'check_val_every_n_epoch': cfg.model.training.check_val_every_n_epoch,
         'limit_train_batches': cfg.model.training.limit_train_batches,
