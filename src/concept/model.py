@@ -54,7 +54,7 @@ class BaseTransformerModel(L.LightningModule):
         self.warmup = config['training']['warmup']
         self.max_steps = config['training']['max_steps']
         self.min_lr = config['training']['min_lr']
-        self.log_every_n_steps = config['training']['log_every_n_steps']
+        self.log_every_n_steps = config['training'].get('log_every_n_steps', 100)
         self.values_only_sanity_check = config['values_only_sanity_check']
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
