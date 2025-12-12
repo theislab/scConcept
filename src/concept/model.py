@@ -59,7 +59,7 @@ class BaseTransformerModel(L.LightningModule):
         self.data_loading_speed_sanity_check = config['data_loading_speed_sanity_check']
 
         encoder_layers = FlashTransformerEncoderLayer(
-            self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True
+            self.dim_model, self.num_head, self.dim_hid, self.dropout, batch_first=True, use_flash_attn=self.flash_attention
         )
         self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
         # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
@@ -74,48 +74,45 @@ class BaseTransformerModel(L.LightningModule):
         src_key_padding_mask: Tensor,
     ) -> Tensor:
 
-        batch_size = tokens.size(0)
-        tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask)
-        tokens = tokens.squeeze(-1)
-        
-        # seqlens = [len(t) for t in tokens]
-        # cu_seqlens = torch.cumsum(torch.tensor([0] + seqlens, device=self.device, dtype=torch.int32), dim=0, dtype=torch.int32)
-        # max_seqlen = max([len(t) for t in tokens])
-        # tokens = torch.cat(tokens, dim=0)
-        
-        gene_embs = self._encode_gene_tokens(tokens) # (total_len, dim_model)
-        
-        if self.input_encoding == 'rank_encoding':
-            # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
-            # Faster implementation:
-            pe = self.positional_encoder.pe[:, :max_seqlen, :]
-            pe = pe.repeat(batch_size, 1, 1)
-            pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask)
-            total_embs = gene_embs + pe
-        elif self.input_encoding == 'value_encoding':
-            values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask)
-            values = values.squeeze(-1)
-            value_embs = self._encode_values(values)
-            total_embs = gene_embs + value_embs
-            # total_embs = torch.cat([gene_embs, value_embs], dim=-1)
+        if self.flash_attention:
+            batch_size = tokens.size(0)
+            tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask)
+            tokens = tokens.squeeze(-1)
+            
+            
+            gene_embs = self._encode_gene_tokens(tokens)
+            
+            if self.input_encoding == 'rank_encoding':
+                # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
+                # Faster implementation:
+                pe = self.positional_encoder.pe[:, :max_seqlen, :]
+                pe = pe.repeat(batch_size, 1, 1)
+                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask)
+                total_embs = gene_embs + pe
+            elif self.input_encoding == 'value_encoding':
+                values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask)
+                values = values.squeeze(-1)
+                value_embs = self._encode_values(values)
+                total_embs = gene_embs + value_embs
 
-        embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
-        embs_padded = pad_input(embs_jagged, indices, batch_size, max_seqlen)
-        cell_embs = embs_padded[:, 0, :]
-        # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
-        # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
-    
-        
-        # output = output.split(seqlens, dim=0)
-        # assert [len(o) for o in output] == seqlens
-        ############################## 3D ###############
-        # gene_embs = self._encode_gene_tokens(tokens) # (batch, seq_len, dim_model)
-        # total_embs = self.positional_encoder(gene_embs)
-        # output = self.transformer_encoder(
-        #     total_embs, key_padding_mask=src_key_padding_mask
-        #     # total_embs, 
-        # )
-        #############################################
+            embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
+            embs_padded = pad_input(embs_jagged, indices, batch_size, max_seqlen)
+            cell_embs = embs_padded[:, 0, :]
+            # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
+            # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
+        else:
+            
+            gene_embs = self._encode_gene_tokens(tokens)
+            if self.input_encoding == 'rank_encoding':
+                total_embs = self.positional_encoder(gene_embs)
+            else:
+                value_embs = self._encode_values(values)
+                total_embs = gene_embs + value_embs
+            
+            embs_padded = self.transformer_encoder(total_embs, key_padding_mask=src_key_padding_mask)
+            cell_embs = embs_padded[:, 0, :]
+            
+            
         return embs_padded, cell_embs
 
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:

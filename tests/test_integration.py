@@ -52,7 +52,7 @@ def _mock_encode(self, tokens, values, src_key_padding_mask=None):
     return embs_padded, cell_embs
 
 
-def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False, on_epoch=False):
+def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False, on_step=False, on_epoch=False):
     """Mock the log method to avoid trainer reference errors."""
     pass
 
@@ -128,8 +128,12 @@ def test_model_initialization(mock_config, device):
     assert model.device.type == device.type
 
 
-def test_training_step(mock_config, device):
+@pytest.mark.parametrize("flash_attention", [False, True])
+def test_training_step(mock_config, device, flash_attention):
     """Test that the model can perform a training step"""
+    # Update mock_config with parameterized flash_attention value
+    mock_config['flash_attention'] = flash_attention
+    
     model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
@@ -178,8 +182,12 @@ def test_training_step(mock_config, device):
         assert loss.device.type == device.type
 
 
-def test_validation_step(mock_config, device):
+@pytest.mark.parametrize("flash_attention", [False, True])
+def test_validation_step(mock_config, device, flash_attention):
     """Test that the model can perform a validation step and calls model.log appropriately"""
+    # Update mock_config with parameterized flash_attention value
+    mock_config['flash_attention'] = flash_attention
+    
     model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
@@ -222,8 +230,12 @@ def test_validation_step(mock_config, device):
         assert any(call == 'val/test_val/loss_cont' for call in call_args_list)
         
 
-def test_predict_step(mock_config, device):
+@pytest.mark.parametrize("flash_attention", [False, True])
+def test_predict_step(mock_config, device, flash_attention):
     """Test that the model can perform a predict step"""
+    # Update mock_config with parameterized flash_attention value
+    mock_config['flash_attention'] = flash_attention
+    
     model = ContrastiveModel(
         config=mock_config,
         pad_token_id=0,
@@ -730,19 +742,14 @@ def test_train_integration(train_config):
     mock_logger.experiment.id = 'test_run_id'
     mock_logger.experiment.config = MagicMock()
     
-    # For single device, use "auto" strategy instead of DDPStrategy
-    # Patch DDPStrategy to return "auto" string which PyTorch Lightning accepts for single device
-    def mock_ddp_strategy(*args, **kwargs):
-        return "auto"  # Use auto strategy for single device
     
     # Mock rank_zero_only to always return 0 (single process)
     with patch('concept.train.rank_zero_only.rank', 0):
         with patch('concept.train.WandbLogger', return_value=mock_logger):
-            with patch('concept.train.DDPStrategy', side_effect=mock_ddp_strategy):
-                # Also patch os.environ to avoid SLURM issues
-                with patch.dict('os.environ', {}, clear=False):
-                    # Run training
-                    train(train_config)
+            # Also patch os.environ to avoid SLURM issues
+            with patch.dict('os.environ', {}, clear=False):
+                # Run training
+                train(train_config)
     
     
     print(f"\n✓ train.py integration test passed:")
