@@ -17,8 +17,12 @@ in particular, the [API documentation][]. -->
 
 You need to have Python 3.10 or newer installed on your system.
 If you don't have Python installed, we recommend installing [uv][].
+scConcept also uses [Flash Attention][] which requires CUDA.
 
-scConcept also uses [Flash Attention][] which requires CUDA
+### Create virtual env from scratch:
+`cd` to the root of project directory and the run [`./scripts/setup_uv.sh`](scripts/setup_uv.sh) which installs uv if not available and creates the whole virtual environment in one go!
+
+### Install on an already existing environment:
 
 <!-- There are several alternative options to install scConcept: -->
 

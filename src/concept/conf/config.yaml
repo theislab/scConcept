@@ -14,6 +14,7 @@ initialize:
   resume: False
   run_id: null
   checkpoint: null
+  create_new_run: False
 
 profiler:
   enabled: False # Use profiler only for debugging
@@ -24,6 +25,7 @@ PATH:
   CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
   DATASET_PATH: ${PATH.PROJECT_DATA_PATH}/cxg_raw_2023-12-15
   ADATA_PATH: ${PATH.DATASET_PATH}/h5ads
+  LOCAL_DIR: null # If not None, copy files to this directory for faster training
   PANELS_PATH: ${PATH.PROJECT_PATH}/panels/human
   SPLIT: ${split}
   gene_mapping_path: ${PATH.DATASET_PATH}/pc_gene_token_mapping.pkl

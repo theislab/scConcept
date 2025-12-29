@@ -52,7 +52,7 @@ def _mock_encode(self, tokens, values, src_key_padding_mask=None):
     return embs_padded, cell_embs
 
 
-def _mock_log(self, name, value, sync_dist=False, add_dataloader_idx=False, on_step=False, on_epoch=False):
+def _mock_log(self, *args, **kwargs):
     """Mock the log method to avoid trainer reference errors."""
     pass
 
@@ -163,7 +163,9 @@ def test_training_step(mock_config, device, flash_attention):
         'panel_2': panel.to(device),
         'dataset': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name_1': 'test_panel_1',
-        'panel_name_2': 'test_panel_2'
+        'panel_name_2': 'test_panel_2',
+        'seq_length_1': [seq_len] * batch_size,
+        'seq_length_2': [seq_len] * batch_size,
     }
 
     # Test training step
@@ -216,7 +218,9 @@ def test_validation_step(mock_config, device, flash_attention):
         'panel_2': panel.to(device),
         'dataset': torch.randint(0, 2, (batch_size,)).to(device),
         'panel_name_1': 'test_panel_1',
-        'panel_name_2': 'test_panel_2'
+        'panel_name_2': 'test_panel_2',
+        'seq_length_1': [seq_len] * batch_size,
+        'seq_length_2': [seq_len] * batch_size,
     }
     
     # Test validation step and check model.log calls
@@ -231,7 +235,8 @@ def test_validation_step(mock_config, device, flash_attention):
         
 
 @pytest.mark.parametrize("flash_attention", [False, True])
-def test_predict_step(mock_config, device, flash_attention):
+@pytest.mark.parametrize("seq_lengths_available", [True, False])
+def test_predict_step(mock_config, device, flash_attention, seq_lengths_available):
     """Test that the model can perform a predict step"""
     # Update mock_config with parameterized flash_attention value
     mock_config['flash_attention'] = flash_attention
@@ -257,7 +262,8 @@ def test_predict_step(mock_config, device, flash_attention):
         'tokens': torch.randint(2, 100, (batch_size, seq_len)).to(device),
         'values': torch.randn(batch_size, seq_len).to(device),
         'dataset': torch.randint(0, 2, (batch_size,)).to(device),
-        'panel_name': 'test_panel'
+        'panel_name': 'test_panel',
+        'seq_lengths': [seq_len] * batch_size if seq_lengths_available else None,
     }
     
     # Test predict step
@@ -385,7 +391,7 @@ def test_predict_step_with_lamin_dataloader(
 
 @pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
 @pytest.mark.parametrize("use_direct_paths", [False, True])
-def test_scConcept_integration(adata, use_direct_paths, tmp_path):
+def test_api_integration(adata, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
     
     Tests both loading methods:

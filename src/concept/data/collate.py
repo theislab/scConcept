@@ -14,10 +14,10 @@ import re
 class Collate(BaseCollate):
     def __init__(self, 
                  tokenizer, 
-                 panels_path,
                  max_tokens, 
                  min_tokens=0, 
-                 split_input=True, 
+                 panels_path=None,
+                 split_input=False, 
                  variable_size=False, 
                  gene_sampling_strategy='top-nonzero',
                  panel_selection='random', 
@@ -57,7 +57,7 @@ class Collate(BaseCollate):
         self._rng = None
     
     # This is crucial when running multiple GPUs. 
-    # It ensures that the random number generator is the same for each worker.
+    # It ensures that the random number generator is the same for each worker across GPU processes.
     @property
     def rng(self):
         if self._rng is None:
@@ -95,17 +95,17 @@ class Collate(BaseCollate):
         return max(min(randint, high), low)
     
     
-    def adapt_batch_size(self, batch,  batch_1, batch_2):
-        max_length_1 = max(len(item['tokens']) for item in batch_1)
-        max_length_2 = max(len(item['tokens']) for item in batch_2)
+    # def adapt_batch_size(self, batch,  batch_1, batch_2):
+    #     max_length_1 = max(len(item['tokens']) for item in batch_1)
+    #     max_length_2 = max(len(item['tokens']) for item in batch_2)
         
-        if max_length_1 > 1000 or max_length_2 > 1000:
-            new_batch_size = max(1, len(batch_1) // 4)
-            batch = batch[:new_batch_size]
-            batch_1 = batch_1[:new_batch_size]
-            batch_2 = batch_2[:new_batch_size]
+    #     if max_length_1 > 1000 or max_length_2 > 1000:
+    #         new_batch_size = max(1, len(batch_1) // 4)
+    #         batch = batch[:new_batch_size]
+    #         batch_1 = batch_1[:new_batch_size]
+    #         batch_2 = batch_2[:new_batch_size]
         
-        return batch, batch_1, batch_2
+    #     return batch, batch_1, batch_2
 
     # def _custom_panel_selection(self, batch):
     #     tokens = batch[0]['tokens']
@@ -195,6 +195,8 @@ class Collate(BaseCollate):
             max_lenght_2 = max([len(item['tokens']) for item in batch_2])
             max_lenght_2 = min(max_lenght_2, self.max_tokens - 1) # todo
             
+            seq_length_1 = [min(len(item['tokens']), max_lenght_1) for item in batch_1]
+            seq_length_2 = [min(len(item['tokens']), max_lenght_2) for item in batch_2]
             
             batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
             batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
@@ -215,6 +217,8 @@ class Collate(BaseCollate):
                     'panel_2' : default_collate(panel_2),
                     'panel_name_1': panel_name_1,
                     'panel_name_2': panel_name_2,
+                    'seq_length_1': seq_length_1,
+                    'seq_length_2': seq_length_2,
                     **{key: default_collate([item[key] for item in batch]) for key in batch[0].keys() if key not in ['tokens', 'values']}
             }
 

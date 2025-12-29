@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime
 import lightning as L
 import pandas as pd
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
@@ -8,12 +9,13 @@ from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
 
-from concept.utils import get_profiler
+from concept.utils import get_profiler, copy_files, get_start_epoch
 from lamin_dataloader import GeneIdTokenizer
 from concept.data import AnnDataModule
 from concept import ContrastiveModel, scConcept
 import wandb
 from hydra import compose, initialize
+from datetime import timedelta
 
 
 def train(cfg: DictConfig):
@@ -26,6 +28,14 @@ def train(cfg: DictConfig):
     # Validate configuration constraints
     scConcept.validate_config(cfg)
     
+    # Copy files to faster local directory
+    data_path = cfg.PATH.ADATA_PATH
+    if cfg.PATH.LOCAL_DIR is not None and rank_zero_only.rank == 0:
+        copy_files(data_path, cfg.PATH.LOCAL_DIR, 
+                   list(cfg.PATH.SPLIT.get('train', [])) + list(cfg.PATH.SPLIT.get('val', [])), 
+                   compare_files=False)
+        data_path = cfg.PATH.LOCAL_DIR
+        
     if 'val' in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
     else:
@@ -36,7 +46,7 @@ def train(cfg: DictConfig):
     split = {}
     for key, filenames in cfg.PATH.SPLIT.items():
         if filenames is not None:
-            split[key] = [os.path.join(cfg.PATH.ADATA_PATH, file) for file in filenames]
+            split[key] = [os.path.join(data_path, file) for file in filenames]
     
     datamodule_args = {    
         'split': split,
@@ -50,20 +60,27 @@ def train(cfg: DictConfig):
         'dataset_kwargs': {**OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)}, 
         'dataloader_kwargs': {**OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)},
         'val_loader_names': val_loader_names,
-        'tokenizer': GeneIdTokenizer(gene_mapping)
+        'tokenizer': GeneIdTokenizer(gene_mapping),
     }
     datamodule = AnnDataModule(**datamodule_args)
 
+    RESUME_LOGGER = cfg.initialize.resume and not cfg.initialize.create_new_run
     if cfg.wandb.enabled:
         if cfg.wandb.entity is None or cfg.wandb.project is None or cfg.wandb.run_name is None:
             raise ValueError("wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True")
-        logger = WandbLogger(name=cfg.wandb.run_name, entity=cfg.wandb.entity, project=cfg.wandb.project, save_dir=cfg.PATH.PROJECT_PATH, log_model=False)
-    
-    CHECKPOINT_PATH = "dummy"
-    if rank_zero_only.rank == 0:
-        CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, logger.experiment.id if cfg.wandb.enabled else 'dummy')
-        if cfg.wandb.enabled:
+        kwargs = {}
+        if RESUME_LOGGER:
+            kwargs = {'id': cfg.initialize.run_id, 'resume': "allow"}
+        logger = WandbLogger(name=cfg.wandb.run_name, entity=cfg.wandb.entity, project=cfg.wandb.project, save_dir=cfg.PATH.PROJECT_PATH, log_model=False, **kwargs)
+        if rank_zero_only.rank == 0 and not RESUME_LOGGER:
             logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
+
+    
+    run_id = 'dummy'
+    if rank_zero_only.rank == 0:
+        run_id = logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+
+    CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
 
     profiler = get_profiler(CHECKPOINT_PATH) if cfg.profiler.enabled else None
 
@@ -81,14 +98,13 @@ def train(cfg: DictConfig):
         'profiler': profiler,
         'callbacks': [
             LearningRateMonitor(logging_interval='step'),
-            ModelCheckpoint(dirpath=CHECKPOINT_PATH, filename='min_train_loss', monitor='train/loss', mode='min', every_n_epochs=1, save_top_k=1),
-            ModelCheckpoint(dirpath=CHECKPOINT_PATH, filename='min_val_loss', monitor='val/loss', mode='min', every_n_epochs=1, save_top_k=1),
             ModelCheckpoint(dirpath=os.path.join(CHECKPOINT_PATH, 'epochs'), filename='{epoch}', every_n_epochs=1, save_on_train_epoch_end=True, save_top_k=-1, save_last='link'),
-            ModelCheckpoint(dirpath=os.path.join(CHECKPOINT_PATH, 'steps'), filename='{step}', every_n_train_steps=10000, monitor='train/loss', save_top_k=-1), # save a checkpoint every 10K steps
+            ModelCheckpoint(dirpath=os.path.join(CHECKPOINT_PATH, 'steps'), filename='{step}', every_n_train_steps=100_000 if cfg.model.training.max_steps > 100_000 else 10_000, save_top_k=-1, save_last='link'),
+            ModelCheckpoint(dirpath=os.path.join(CHECKPOINT_PATH, 'latest'), filename='{step}', train_time_interval=timedelta(hours=1), save_top_k=1, save_last='link'),
         ],
     }
     trainer = L.Trainer(**trainer_kwargs, 
-                        strategy=DDPStrategy(find_unused_parameters=True),
+                        strategy=DDPStrategy(),
                         precision='bf16-mixed', 
                         use_distributed_sampler=False,
                         )
@@ -105,30 +121,33 @@ def train(cfg: DictConfig):
         'batch_keys_to_monitor': cfg.datamodule.batch_keys_to_monitor,
         'precomp_embs_key': cfg.datamodule.precomp_embs_key,
     }
-    model = ContrastiveModel(**model_args)
+    
+    
+    ckpt_path = None
 
-    if not cfg.initialize.resume and cfg.model.training.validate_before_training:
-        trainer.validate(model=model, 
-                        datamodule=datamodule,
-                        )
-    
     if cfg.initialize.resume:
-        ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
-        model = ContrastiveModel.load_from_checkpoint(ckpt_path, **model_args, strict=False)
-    
-    trainer.fit(model=model, datamodule = datamodule)
+        checkpoint_file = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
+        if cfg.initialize.create_new_run:
+            model = ContrastiveModel.load_from_checkpoint(checkpoint_file, **model_args, strict=False)
+        else:
+            model = ContrastiveModel(**model_args)
+            ckpt_path = checkpoint_file
+    else:
+        model = ContrastiveModel(**model_args)
+        if cfg.model.training.validate_before_training: 
+            trainer.validate(model=model, datamodule=datamodule)
+
+
+    trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":
     bash_cfg = OmegaConf.from_cli()
-    resume = bash_cfg.pop("initialize.resume", False)
-    if resume:
-        run_id = bash_cfg.pop("initialize.run_id")
-        checkpoint = bash_cfg.pop("initialize.checkpoint")
-        
+    
+    if 'initialize' in bash_cfg and bash_cfg.initialize.resume:
         wandb.login()
         api = wandb.Api()
-        run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{run_id}')
+        run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}')
         print(f"Resuming training for {run.id} ...")
         cfg = DictConfig(run.config)
 
@@ -136,11 +155,8 @@ if __name__ == "__main__":
         print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
                 
         # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
+        cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval)
         cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
-        
-        cfg.initialize.resume = True
-        cfg.initialize.run_id = run_id
-        cfg.initialize.checkpoint = checkpoint
     else:
         print(f"Starting new training ...")
         print('overrides:', sys.argv[1:])

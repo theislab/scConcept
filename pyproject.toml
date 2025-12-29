@@ -30,7 +30,7 @@ dependencies = [
   "pandas",
   "torch==2.6.0",
   "torchvision",
-  "lightning",
+  "lightning<=2.5.1",
   "scanpy>=1.10.0",
   "hydra-core",
   "wandb==0.20",
@@ -41,6 +41,7 @@ dependencies = [
   "einops",
   "ninja",
   "huggingface-hub>=1.0.1",
+  "torchdata>=0.11.0",
 ]
 optional-dependencies.dev = [
   "pre-commit",

@@ -3,6 +3,7 @@ import pandas as pd
 from typing import Optional, List
 import wandb
 import lightning as L
+from lightning.pytorch.utilities import grad_norm
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn, optim
@@ -72,11 +73,15 @@ class BaseTransformerModel(L.LightningModule):
         tokens: Tensor,
         values: Tensor,
         src_key_padding_mask: Tensor,
+        seq_lengths: List[int] = None,
     ) -> Tensor:
 
         if self.flash_attention:
+            assert seq_lengths is not None, "seq_lengths must be provided for flash attention"
             batch_size = tokens.size(0)
-            tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask)
+            max_length = tokens.size(1)
+            
+            tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(tokens.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths)
             tokens = tokens.squeeze(-1)
             
             
@@ -85,18 +90,18 @@ class BaseTransformerModel(L.LightningModule):
             if self.input_encoding == 'rank_encoding':
                 # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
                 # Faster implementation:
-                pe = self.positional_encoder.pe[:, :max_seqlen, :]
+                pe = self.positional_encoder.pe[:, :max_length, :]
                 pe = pe.repeat(batch_size, 1, 1)
-                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask)
+                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask, seq_lengths=seq_lengths)
                 total_embs = gene_embs + pe
             elif self.input_encoding == 'value_encoding':
-                values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask)
+                values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths)
                 values = values.squeeze(-1)
                 value_embs = self._encode_values(values)
                 total_embs = gene_embs + value_embs
 
-            embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
-            embs_padded = pad_input(embs_jagged, indices, batch_size, max_seqlen)
+            embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_length)
+            embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
             cell_embs = embs_padded[:, 0, :]
             # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
@@ -123,9 +128,9 @@ class BaseTransformerModel(L.LightningModule):
         raise NotImplementedError(
             "Subclasses must implement _encode_values method.")
 
-    def forward(self, input_tokens, input_values, src_key_padding_mask: Tensor = None):
+    def forward(self, input_tokens, input_values, src_key_padding_mask: Tensor = None, seq_lengths: List[int] = None):
         
-        embs_padded, cell_embs = self._encode(input_tokens, input_values, src_key_padding_mask=src_key_padding_mask)
+        embs_padded, cell_embs = self._encode(input_tokens, input_values, src_key_padding_mask=src_key_padding_mask, seq_lengths=seq_lengths)
         pred = self.expression_decoder(embs_padded) if self.decoder_head else None
         
         return pred, embs_padded, cell_embs
@@ -322,9 +327,11 @@ class ContrastiveModel(BaseTransformerModel):
         assert self.contrastive_loss in ['binary', 'multiclass']
 
         self.gene_token_encoder = GeneEncoder(self.vocab_size, self.dim_model, padding_idx=None)
-        self.value_encoder = ContinuousValueEncoder(self.dim_model, dropout=0.0)
-        self.positional_encoder = PositionalEncoding(self.dim_model, max_len=self.pe_max_len)
-
+        if self.input_encoding == 'value_encoding':
+            self.value_encoder = ContinuousValueEncoder(self.dim_model, dropout=0.0)
+        elif self.input_encoding == 'rank_encoding':
+            self.positional_encoder = PositionalEncoding(self.dim_model, max_len=self.pe_max_len)
+        
         self.binarcy_accuracy = BinaryAccuracy()
         self.logit_scale = nn.Parameter(torch.tensor(float(self.logit_scale_init_value)), requires_grad=True)
         if self.projection_dim:
@@ -334,9 +341,11 @@ class ContrastiveModel(BaseTransformerModel):
         self.logit_masks = {}
 
     
-    def log_metrics(self, metric_name, value, **kwargs):
-        self.log(metric_name, value, on_step=True, on_epoch=False, sync_dist=False, add_dataloader_idx=False, **kwargs)
-        self.log(metric_name + '_epoch', value, on_step=False, on_epoch=True, sync_dist=False, add_dataloader_idx=False, **kwargs)
+    def log_metrics(self, metric_name, value, stage='train', **kwargs):
+        if stage == 'train':
+            self.log(metric_name, value, on_step=True, on_epoch=False, sync_dist=True, add_dataloader_idx=False, **kwargs)
+        self.log(metric_name + '_epoch', value, on_step=False, on_epoch=True, sync_dist=True, add_dataloader_idx=False, **kwargs)
+        
         
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         return self.gene_token_encoder(tokens)
@@ -347,8 +356,8 @@ class ContrastiveModel(BaseTransformerModel):
     def _step(self, batch, batch_idx, stage='train', log_prefix='train'):
         assert stage in ['train', 'val'], f"Invalid stage: {stage}"
                         
-        batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1'], 'panel_name': batch['panel_name_1']}
-        batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2'], 'panel_name': batch['panel_name_2']}
+        batch_1 = {'tokens': batch['tokens_1'], 'values': batch['values_1'], 'panel': batch['panel_1'], 'panel_name': batch['panel_name_1'], 'seq_lengths': batch['seq_length_1']}
+        batch_2 = {'tokens': batch['tokens_2'], 'values': batch['values_2'], 'panel': batch['panel_2'], 'panel_name': batch['panel_name_2'], 'seq_lengths': batch['seq_length_2']}
 
         
         if self.debug and batch_idx < 5 and stage == 'train':
@@ -375,7 +384,7 @@ class ContrastiveModel(BaseTransformerModel):
             batch_2['values_masked'] = batch_2['values']
 
         # Forward both views for maximizing GPU utilization instead of calling forward twice!
-        pred_1, pred_2, cell_embs_1, cell_embs_2 = self.forward_pair(batch_1['tokens'], batch_1['values_masked'], batch_2['tokens'], batch_2['values_masked'])
+        pred_1, pred_2, cell_embs_1, cell_embs_2 = self.forward_pair(batch_1['tokens'], batch_1['values_masked'], batch_2['tokens'], batch_2['values_masked'], batch_1['seq_lengths'], batch_2['seq_lengths'])
 
 
 
@@ -427,14 +436,14 @@ class ContrastiveModel(BaseTransformerModel):
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
         
         if stage == 'val' or (stage == 'train' and batch_idx % self.log_every_n_steps == 0):
-            self.log_metrics(f"{log_prefix}/loss", loss)
-            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont)
+            self.log_metrics(f"{log_prefix}/loss", loss, stage=stage)
+            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, stage=stage)
             if loss_mlm > 0:
-                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm)
-            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont)
-            self.log_metrics(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont)
-            self.log_metrics(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch)
-            self.log_metrics(f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch)
+                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, stage=stage)
+            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, stage=stage)
+            self.log_metrics(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, stage=stage)
+            self.log_metrics(f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, stage=stage)
+            self.log_metrics(f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, stage=stage)
         
         
         ######################################################################
@@ -448,7 +457,7 @@ class ContrastiveModel(BaseTransformerModel):
                     labels_1 = torch.cat(all_gather(labels_1), dim=0)
                     labels_2 = torch.cat(all_gather(labels_2), dim=0)
                 label_acc = 0.5 * (self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1))
-                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc)
+                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, stage=stage)
 
 
         if stage == 'train' and batch_idx % self.log_every_n_steps == 0:
@@ -456,13 +465,13 @@ class ContrastiveModel(BaseTransformerModel):
             if self.world_size > 1:
                 global_rank = torch.cat(all_gather(global_rank), dim=0)
             global_rank_acc = 0.5 * (self._knn_accuracy(logits, global_rank, global_rank) + self._knn_accuracy(logits.t(), global_rank, global_rank))
-            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc)
+            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, stage=stage)
         
         if stage != 'train':
             views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
             views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
-            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score)
-            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5)
+            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, stage=stage)
+            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, stage=stage)
         
         
         if self.debug and batch_idx % self.log_every_n_steps == 0:
@@ -475,10 +484,10 @@ class ContrastiveModel(BaseTransformerModel):
             length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
             length_logit_corr = torch.tensor([torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))])
             length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr)
+            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, stage=stage)
         
             length_r2 = 0.5 * (self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2) + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1))
-            self.log_metrics(f"{log_prefix}/length_r2", length_r2)
+            self.log_metrics(f"{log_prefix}/length_r2", length_r2, stage=stage)
         
         
         if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == 'train' and batch_idx % 1000 == 0:
@@ -504,7 +513,7 @@ class ContrastiveModel(BaseTransformerModel):
     def training_step(self, batch, batch_idx):
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("train/loss", loss)
+            self.log_metrics("train/loss", loss, stage='train')
             return loss
         
         if batch_idx % self.log_every_n_steps == 0:
@@ -524,7 +533,7 @@ class ContrastiveModel(BaseTransformerModel):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("val/loss", loss)
+            self.log_metrics("val/loss", loss, stage='val')
             return loss
         
         val_name = self.val_loader_names[dataloader_idx]
@@ -553,7 +562,10 @@ class ContrastiveModel(BaseTransformerModel):
             print('batch values:', batch['values'][0])
         
         padding_mask = (batch['tokens'] == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(batch['tokens'], dtype=torch.bool, device=self.device)
-        pred, embs, cell_embs = self(batch['tokens'], batch['values'], src_key_padding_mask=padding_mask)
+        if 'seq_lengths' not in batch or batch['seq_lengths'] is None:
+            batch['seq_lengths'] = (~padding_mask).sum(dim=1).tolist()
+
+        pred, embs, cell_embs = self(batch['tokens'], batch['values'], src_key_padding_mask=padding_mask, seq_lengths=batch['seq_lengths'])
         
         embs_mean = [embs[i, ~padding_mask[i]].mean(dim=0) for i in range(len(embs))]
         embs_mean = torch.stack(embs_mean, dim=0)
@@ -613,6 +625,17 @@ class ContrastiveModel(BaseTransformerModel):
                 except:
                     pass
             self.sample_stats['val'][val_name] = []
+
+    def on_before_optimizer_step(self, optimizer):
+        
+        if self.trainer.global_step % self.log_every_n_steps == 0:
+            norms = {}
+            for n, layer in enumerate(self.transformer_encoder.layers):
+                for name, p in layer.named_parameters():
+                    if p.grad is not None:
+                        norms[f"grad_norm/layer_{n}_{name}"] = p.grad.data.norm(2)
+                    norms[f"param_norm/layer_{n}_{name}"] = p.data.norm(2)
+            self.log_dict(norms, on_step=True, on_epoch=False, sync_dist=True)
 
 
     def _validate_panels(self, panel_1, panel_2):
@@ -689,12 +712,17 @@ class ContrastiveModel(BaseTransformerModel):
                     dtype=batch['values'].dtype,
                     device=batch['values'].device,
                 ), batch['values']], dim=1)
+            
+            if 'seq_lengths' in batch and batch['seq_lengths'] is not None:
+                batch['seq_lengths'] = [l+1 for l in batch['seq_lengths']]
         else:
             tokens, values = batch['tokens'], batch['values']
             cls_token_id = torch.tensor([self.CLS_TOKEN_ID], device=tokens[0].device, dtype=tokens[0].dtype)
             cls_token_val = torch.tensor([self.CLS_VALUE], device=values[0].device, dtype=values[0].dtype)
             batch['tokens'] = [torch.cat([cls_token_id, t], dim=0) for t in tokens]
             batch['values'] = [torch.cat([cls_token_val, v], dim=0) for v in values]
+            if 'seq_lengths' in batch and batch['seq_lengths'] is not None:
+                batch['seq_lengths'] = [l+1 for l in batch['seq_lengths']]
         return batch
 
 
@@ -704,7 +732,7 @@ class ContrastiveModel(BaseTransformerModel):
             return F.pad(tensor, (0, pad_size), value=pad_value)
         return tensor
     
-    def forward_pair(self, tokens_1, values_1, tokens_2, values_2):
+    def forward_pair(self, tokens_1, values_1, tokens_2, values_2, seq_lengths_1, seq_lengths_2):
         # This function is used to forward both views for efficiency instead of calling forward twice
         # Pad the batches to the same sequence length before concatenation
         max_len = max(tokens_1.shape[1], tokens_2.shape[1])
@@ -716,9 +744,10 @@ class ContrastiveModel(BaseTransformerModel):
 
         combined_tokens = torch.cat([padded_tokens_1, padded_tokens_2], dim=0)
         combined_values = torch.cat([padded_values_1, padded_values_2], dim=0)
+        combined_seq_lengths = seq_lengths_1 + seq_lengths_2
         combined_padding_mask = (combined_tokens == self.PAD_TOKEN_ID) if self.mask_padding else torch.zeros_like(combined_tokens, dtype=torch.bool, device=self.device)
 
-        pred, _, cell_embs = self(combined_tokens, combined_values, src_key_padding_mask=combined_padding_mask)
+        pred, _, cell_embs = self(combined_tokens, combined_values, src_key_padding_mask=combined_padding_mask, seq_lengths=combined_seq_lengths)
         cell_embs_1, cell_embs_2 = torch.chunk(cell_embs, 2, dim=0)
         if pred is not None:
             pred_1, pred_2 = torch.chunk(pred, 2, dim=0)

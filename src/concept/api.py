@@ -186,7 +186,7 @@ class scConcept:
             'cls_token_id': gene_mapping['<cls>'],
             'vocab_size': len(gene_mapping),
         }
-        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args)
+        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=False)
         
         # Get device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

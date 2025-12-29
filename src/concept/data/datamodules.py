@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 import lightning as L
@@ -10,9 +10,10 @@ from lamin_dataloader import TokenizedDataset, Tokenizer
 from .collate import Collate
 from .samplers import WithinGroupSampler
 from lamin_dataloader import InMemoryCollection
-from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
+from .samplers import DistributedSamplerWrapper
 import multiprocessing
 from anndata import AnnData
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 class AnnDataModule(L.LightningDataModule):
     def __init__(
@@ -27,7 +28,7 @@ class AnnDataModule(L.LightningDataModule):
         model_speed_sanity_check: bool = False,
         dataset_kwargs: Dict = {},
         dataloader_kwargs: Dict = {},
-        val_loader_names = []
+        val_loader_names = [],
     ):
         super().__init__()
         self.tokenizer = tokenizer
@@ -113,6 +114,8 @@ class AnnDataModule(L.LightningDataModule):
             self.test_dataset = TokenizedDataset(**{'collection': collection, **dataset_kwargs_shared, **dataset_kwargs['test']})
 
         self._val_dataloader = None
+        self._train_dataloader = None
+        self._test_dataloader = None
     
     def _get_collate_fn(self, dataset_kwargs, split_input):
         keys_to_pop = [
@@ -158,7 +161,7 @@ class AnnDataModule(L.LightningDataModule):
         # torch_worker_init_fn may not exist for InMemoryCollection
         worker_init_fn = getattr(dataset.collection, 'torch_worker_init_fn', None)
         
-        dataloader = DataLoader(dataset, 
+        dataloader = StatefulDataLoader(dataset, 
                                 sampler=sampler, 
                                 batch_size=batch_size,
                                 drop_last=drop_last,
@@ -171,8 +174,12 @@ class AnnDataModule(L.LightningDataModule):
         return dataloader
         
     def train_dataloader(self):
-        dataloader_kwargs = self.dataloader_kwargs['train']
+        if self._train_dataloader is not None:
+            return self._train_dataloader
+        
+        dataloader_kwargs = self.dataloader_kwargs['train'].copy()
         dataloader = self._get_dataloader(self.train_dataset, dataloader_kwargs, self.train_collate_fn, 'train')
+        self._train_dataloader = dataloader
         return dataloader
 
     def val_dataloader(self):
@@ -182,21 +189,41 @@ class AnnDataModule(L.LightningDataModule):
         self._val_dataloader = []
         for val_name in self.val_loader_names:
             val_dataset, val_collate_fn = self.val_datasets[val_name]
-            dataloader_kwargs = self.dataloader_kwargs['val'][val_name]
+            dataloader_kwargs = self.dataloader_kwargs['val'][val_name].copy()
             dataloader = self._get_dataloader(val_dataset, dataloader_kwargs, val_collate_fn, 'val')
             self._val_dataloader.append(dataloader)
         return self._val_dataloader
         
     def test_dataloader(self):
-        dataloader_kwargs = self.dataloader_kwargs['test']
+        if self._test_dataloader is not None:
+            return self._test_dataloader
+        
+        dataloader_kwargs = self.dataloader_kwargs['test'].copy()
         
         assert dataloader_kwargs['shuffle'] == False, 'shuffle should be false for test dataloader'
         assert dataloader_kwargs['drop_last'] == False, 'drop_last should be false for test dataloader'
         # torch_worker_init_fn may not exist for InMemoryCollection
         worker_init_fn = getattr(self.test_dataset.collection, 'torch_worker_init_fn', None)
+        
         dataloader = DataLoader(self.test_dataset, 
                                 worker_init_fn=worker_init_fn, 
                                 collate_fn=self.test_collate_fn, 
                                 **dataloader_kwargs)
         print(f'Creating test dataloader by {len(dataloader)} batches of size {dataloader_kwargs["batch_size"]} over {len(self.test_dataset)} samples; sum of indices: {sum(self.test_dataset.collection.indices)}')
+        self._test_dataloader = dataloader
         return dataloader
+    
+    def state_dict(self) -> Dict:
+        state = {}
+        
+        # Save train dataloader state
+        if self._train_dataloader is not None:
+            state['train'] = self._train_dataloader.state_dict()
+        
+        return state
+    
+    def load_state_dict(self, state_dict: Dict):
+
+        # Load train dataloader state
+        if 'train' in state_dict and self._train_dataloader is not None:
+            self._train_dataloader.load_state_dict(state_dict['train'])
