@@ -9,7 +9,7 @@ from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
 
-from concept.utils import get_profiler, copy_files, get_start_epoch
+from concept.utils import get_profiler, copy_files, resume_wandb_config
 from lamin_dataloader import GeneIdTokenizer
 from concept.data import AnnDataModule
 from concept import ContrastiveModel, scConcept
@@ -70,7 +70,7 @@ def train(cfg: DictConfig):
             raise ValueError("wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True")
         kwargs = {}
         if RESUME_LOGGER:
-            kwargs = {'id': cfg.initialize.run_id, 'resume': "allow"}
+            kwargs = {'id': cfg.initialize.run_id, 'resume': "allow", 'tags': os.environ.get('WANDB_TAGS', '').split(',')}
         logger = WandbLogger(name=cfg.wandb.run_name, entity=cfg.wandb.entity, project=cfg.wandb.project, save_dir=cfg.PATH.PROJECT_PATH, log_model=False, **kwargs)
         if rank_zero_only.rank == 0 and not RESUME_LOGGER:
             logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
@@ -145,18 +145,7 @@ if __name__ == "__main__":
     bash_cfg = OmegaConf.from_cli()
     
     if 'initialize' in bash_cfg and bash_cfg.initialize.resume:
-        wandb.login()
-        api = wandb.Api()
-        run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}')
-        print(f"Resuming training for {run.id} ...")
-        cfg = DictConfig(run.config)
-
-        cfg = OmegaConf.merge(cfg, bash_cfg) 
-        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
-                
-        # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
-        cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval)
-        cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
+        cfg = resume_wandb_config(bash_cfg)
     else:
         print(f"Starting new training ...")
         print('overrides:', sys.argv[1:])

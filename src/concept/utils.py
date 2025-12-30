@@ -1,5 +1,7 @@
 import os
+from lightning.pytorch.utilities import rank_zero_only
 from typing import List, Optional
+from omegaconf import DictConfig, OmegaConf
 
 def get_start_epoch(cfg) -> int:
 
@@ -51,4 +53,23 @@ def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files
             shutil.copy(src_file, dst_file)
             copy_count += 1
     print(f'{copy_count} files copied successfully!')
+
+def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
+    import wandb
+    wandb.login()
+    api = wandb.Api()
+    run = api.run(f'{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}')
+    print(f"Resuming training for {run.id} ...")
+    cfg = DictConfig(run.config)
+
+    cfg = OmegaConf.merge(cfg, bash_cfg) 
+    if rank_zero_only.rank == 0:
+        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
     
+    if not cfg.initialize.create_new_run:
+        os.environ['WANDB_TAGS'] = ','.join(run.tags) + ',' + os.environ.get('WANDB_TAGS', '')
+            
+    # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
+    cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval)
+    cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)    
+    return cfg
