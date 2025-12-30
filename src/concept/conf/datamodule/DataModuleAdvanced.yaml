@@ -46,6 +46,12 @@ dataset:
       variable_size: False
       panel_size_min: 6400
       panel_size_max: 6400
+    within_unbalanced_B256:
+      max_tokens: 5000
+      panel_selection: random
+      variable_size: False
+      panel_size_min: 15000
+      panel_size_max: 15000
     within_Preselected_B256:
       max_tokens: 800
       variable_size: False
@@ -145,6 +151,14 @@ dataloader:
       drop_last: True
       num_samples: 100000
     within_P6400_B256:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+    within_unbalanced_B256:
       within_group_sampling: "dataset"
       batch_size: 256
       shuffle: True
