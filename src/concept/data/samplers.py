@@ -1,6 +1,10 @@
+import logging
+
 import numpy as np
 from lightning.fabric.utilities.distributed import DistributedSamplerWrapper as LightningDistributedSamplerWrapper
 from torch.utils.data import Sampler
+
+logger = logging.getLogger(__name__)
 
 
 class WithinGroupSampler(Sampler):
@@ -36,7 +40,7 @@ class WithinGroupSampler(Sampler):
         yield from np.hstack(self.batches)
 
     def set_epoch(self, epoch):
-        print(f"\nSetting epoch {epoch}...")
+        logger.info(f"Setting epoch {epoch}...")
         self.current_epoch = epoch
 
     def _validate_batches(self):
@@ -48,7 +52,7 @@ class WithinGroupSampler(Sampler):
         # Create RNG instance based on current epoch to ensure reproducibility
         if self.stage == "train":
             rng = np.random.default_rng(self.current_epoch)
-            print(f"Creating {self.stage} batches for epoch {self.current_epoch}...")
+            logger.info(f"Creating {self.stage} batches for epoch {self.current_epoch}...")
         else:
             rng = np.random.default_rng(42)  # for validation and test
 

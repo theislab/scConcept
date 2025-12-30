@@ -10,12 +10,15 @@ Note: flash_attn and _encode are conditionally mocked:
 - Log method is always mocked to avoid trainer reference errors
 """
 
+import logging
 import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
+
+logger = logging.getLogger(__name__)
 
 # Check if flash-attn is installed
 try:
@@ -25,11 +28,11 @@ try:
 except ImportError:
     FLASH_ATTN_AVAILABLE = False
 
-print(f"\n\nFLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
+logger.info(f"\n\nFLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
 
 # Mock flash_attn and its submodules only if flash-attn is not installed
 if not FLASH_ATTN_AVAILABLE:
-    print("Mocking flash_attn")
+    logger.info("Mocking flash_attn")
     sys.modules["flash_attn"] = MagicMock()
     sys.modules["flash_attn.modules"] = MagicMock()
     sys.modules["flash_attn.modules.mha"] = MagicMock()
@@ -386,7 +389,7 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
 
         # Load using direct paths
         sc_concept = scConcept()
-        print(f"Loading model from {model_path}, {gene_mapping_path}, {config_path}, {panels_dir}")
+        logger.info(f"Loading model from {model_path}, {gene_mapping_path}, {config_path}, {panels_dir}")
         sc_concept.load_config_and_model(
             config=str(config_path),
             model_path=str(model_path),
@@ -682,13 +685,6 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
 
     assert len(test_batches) > 0, "No test batches generated"
 
-    print(f"\n✓ AnnDataModule test passed:")
-    print(f"  - Generated {len(train_batches)} train batches")
-    print(f"  - Generated {len(val_batches)} validation batches")
-    print(f"  - Generated {len(test_batches)} test batches")
-    print(f"  - Train batch shape: {train_batches[0]['tokens_1'].shape}")
-    print(f"  - Val batch shape: {val_batches[0]['tokens_1'].shape}")
-    print(f"  - Test batch shape: {test_batches[0]['tokens'].shape}")
 
 
 def test_train_integration(train_config):
@@ -716,9 +712,6 @@ def test_train_integration(train_config):
         with patch("concept.train.WandbLogger", return_value=mock_logger):
             # Run training
             train(train_config)
-
-    print(f"\n✓ train.py integration test passed:")
-    print(f"  - Training completed successfully")
 
 
 if __name__ == "__main__":

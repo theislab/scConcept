@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import wandb
 from omegaconf import DictConfig
 
 from concept import scConcept
+
+logger = logging.getLogger(__name__)
 
 
 def get_embs(
@@ -39,11 +42,11 @@ def get_embs(
     )
 
     # Load AnnData
-    print(f"Loading AnnData from {adata_path}...")
+    logger.info(f"Loading AnnData from {adata_path}...")
     adata = ad.read_h5ad(adata_path)
 
     # Extract embeddings using the API method
-    print(
+    logger.info(
         f"Extracting embeddings with batch_size={batch_size}, max_tokens={max_tokens}, gene_sampling_strategy={gene_sampling_strategy}"
     )
     result = concept.extract_embeddings(
@@ -80,7 +83,7 @@ if __name__ == "__main__":
     api = wandb.Api()
 
     run = api.run(f"{args.wandb_entity}/{args.wandb_project}/{args.run_id}")
-    print(
+    logger.info(
         f"Getting embeddings from {args.adata_path} for run {run.id} ... with gene sampling strategy {args.gene_sampling_strategy}"
     )
 
@@ -88,14 +91,14 @@ if __name__ == "__main__":
     cfg = DictConfig(run.config)
 
     gpu_info = torch.cuda.get_device_properties(0)
-    print(f"GPU Type: {gpu_info.name}")
+    logger.info(f"GPU Type: {gpu_info.name}")
 
     adata_path_obj = Path(args.adata_path)
 
     output_emb_path = Path(args.output_emb_path)
 
     if (output_emb_path / "cell_embs_cls.npy").exists():
-        print(f"Embeddings already exist in {output_emb_path} ...")
+        logger.info(f"Embeddings already exist in {output_emb_path} ...")
         exit(0)
 
     ckpt_path = os.path.join(cfg.PATH.CHECKPOINT_ROOT, args.run_id, args.checkpoint)
@@ -111,7 +114,7 @@ if __name__ == "__main__":
     )
 
     # Save embeddings
-    print(f"Saving embeddings to {output_emb_path}...")
+    logger.info(f"Saving embeddings to {output_emb_path}...")
     os.makedirs(output_emb_path, exist_ok=True)
     np.save(output_emb_path / "cell_embs_cls.npy", result["cls_cell_emb"])
     np.save(output_emb_path / "cell_embs_mean.npy", result["mean_cell_emb"])
@@ -119,7 +122,7 @@ if __name__ == "__main__":
     if "context_sizes" in result:
         np.save(output_emb_path / "context_sizes.npy", result["context_sizes"])
 
-    print(f"Embeddings saved successfully to {output_emb_path}")
+    logger.info(f"Embeddings saved successfully to {output_emb_path}")
 
 
 # Example usage:

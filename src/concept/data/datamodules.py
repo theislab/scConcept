@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import os
 from typing import Dict, List, Optional
@@ -12,6 +13,8 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from .collate import Collate
 from .samplers import DistributedSamplerWrapper, WithinGroupSampler
+
+logger = logging.getLogger(__name__)
 
 
 class AnnDataModule(L.LightningDataModule):
@@ -190,8 +193,8 @@ class AnnDataModule(L.LightningDataModule):
         assert shuffle == True, "shuffle must be True during training and validation"
 
         if num_samples is not None and num_samples >= len(dataset):
-            print(
-                f"Warning: num_samples ({num_samples}) is greater than or equal to the number of samples in the dataset ({len(dataset)})."
+            logger.warning(
+                f"num_samples ({num_samples}) is greater than or equal to the number of samples in the dataset ({len(dataset)})."
             )
 
         if sampling_key:
@@ -224,7 +227,7 @@ class AnnDataModule(L.LightningDataModule):
             persistent_workers=(num_workers > 0),
             **dataloader_kwargs,
         )
-        print(
+        logger.info(
             f"Creating {stage} dataloader by {len(dataloader)} batches of size {batch_size * num_replicas} taking {len(dataloader) * batch_size * num_replicas} samples from {len(dataset)} total samples; num_replicas={num_replicas}; sum of indices: {sum(dataset.collection.indices)}; num_workers={num_workers}"
         )
         return dataloader
@@ -264,7 +267,7 @@ class AnnDataModule(L.LightningDataModule):
         dataloader = DataLoader(
             self.test_dataset, worker_init_fn=worker_init_fn, collate_fn=self.test_collate_fn, **dataloader_kwargs
         )
-        print(
+        logger.info(
             f"Creating test dataloader by {len(dataloader)} batches of size {dataloader_kwargs['batch_size']} over {len(self.test_dataset)} samples; sum of indices: {sum(self.test_dataset.collection.indices)}"
         )
         self._test_dataloader = dataloader

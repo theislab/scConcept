@@ -1,4 +1,5 @@
 import filecmp
+import logging
 import os
 import shutil
 from datetime import timedelta
@@ -8,6 +9,8 @@ import torch
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
+
+logger = logging.getLogger(__name__)
 
 
 def get_start_epoch(cfg) -> int:
@@ -20,7 +23,7 @@ def get_start_epoch(cfg) -> int:
 
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False, mmap=True)
     start_epoch = int(checkpoint["epoch"]) + next_epoch
-    print(f"Resuming from epoch {start_epoch} (from checkpoint)")
+    logger.info(f"Resuming from epoch {start_epoch} (from checkpoint)")
 
     return start_epoch
 
@@ -46,7 +49,7 @@ def get_profiler(checkpoint_path: str):
 
 
 def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files: bool = False):
-    print(f"Copying files to directory...")
+    logger.info("Copying files to directory...")
     if not os.path.exists(dst_path):
         os.makedirs(dst_path, exist_ok=True)
     copy_count = 0
@@ -56,7 +59,7 @@ def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files
         if not os.path.exists(dst_file) or (compare_files and not filecmp.cmp(src_file, dst_file)):
             shutil.copy(src_file, dst_file)
             copy_count += 1
-    print(f"{copy_count} files copied successfully!")
+    logger.info(f"{copy_count} files copied successfully!")
 
 
 def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
@@ -65,12 +68,12 @@ def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
     wandb.login()
     api = wandb.Api()
     run = api.run(f"{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}")
-    print(f"Resuming training for {run.id} ...")
+    logger.info(f"Resuming training for {run.id} ...")
     cfg = DictConfig(run.config)
 
     cfg = OmegaConf.merge(cfg, bash_cfg)
     if rank_zero_only.rank == 0:
-        print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+        logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     if not cfg.initialize.create_new_run:
         os.environ["WANDB_TAGS"] = ",".join(run.tags) + "," + os.environ.get("WANDB_TAGS", "")

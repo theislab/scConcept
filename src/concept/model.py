@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import random
@@ -20,6 +21,8 @@ from torchmetrics.functional.regression import r2_score
 from .modules.bert_padding import pad_input, unpad_input
 from .modules.flash_attention_layer import FlashTransformerEncoderLayer
 from .modules.transformer import TransformerEncoder
+
+logger = logging.getLogger(__name__)
 
 
 class BaseTransformerModel(L.LightningModule):
@@ -361,8 +364,8 @@ class ContrastiveModel(BaseTransformerModel):
         }
 
         if self.debug and batch_idx < 5 and stage == "train":
-            print("batch_1 values:", batch_1["values"][0])
-            print("batch_2 values:", batch_2["values"][0])
+            logger.debug(f"batch_1 values: {batch_1['values'][0]}")
+            logger.debug(f"batch_2 values: {batch_2['values'][0]}")
 
         if self.values_only_sanity_check:
             batch_1["values"] = batch_1["values"][:, torch.randperm(batch_1["tokens"].size(1))]
@@ -509,20 +512,20 @@ class ContrastiveModel(BaseTransformerModel):
             self.log_metrics(f"{log_prefix}/length_r2", length_r2, stage=stage)
 
         if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == "train" and batch_idx % 1000 == 0:
-            print("Argmax: ", logits_both_batch.argmax(dim=1))
-            print(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
-            print(f'batch_1["values"][0]: {batch_1["values"][0]}')
-            print(f'batch_2["tokens"][0]: {batch_2["tokens"][0]}')
-            print(f'batch_2["values"][0]: {batch_2["values"][0]}')
+            logger.debug(f"Argmax: {logits_both_batch.argmax(dim=1)}")
+            logger.debug(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
+            logger.debug(f'batch_1["values"][0]: {batch_1["values"][0]}')
+            logger.debug(f'batch_2["tokens"][0]: {batch_2["tokens"][0]}')
+            logger.debug(f'batch_2["values"][0]: {batch_2["values"][0]}')
 
             idx = int(logits_both_batch.argmax(dim=1)[0])
             if idx < logit_size // 2:
-                print(f"match in batch_2, {idx} tokens: ", batch_2["tokens"][idx])
-                print(f"match in batch_2, {idx} values: ", batch_2["values"][idx])
+                logger.debug(f"match in batch_2, {idx} tokens: {batch_2['tokens'][idx]}")
+                logger.debug(f"match in batch_2, {idx} values: {batch_2['values'][idx]}")
             else:
                 idx = idx - logit_size // 2
-                print(f"match in batch_1, {idx} tokens: ", batch_1["tokens"][idx])
-                print(f"match in batch_1, {idx} values: ", batch_1["values"][idx])
+                logger.debug(f"match in batch_1, {idx} tokens: {batch_1['tokens'][idx]}")
+                logger.debug(f"match in batch_1, {idx} values: {batch_1['values'][idx]}")
         ######################################################################
 
         return loss
@@ -565,12 +568,12 @@ class ContrastiveModel(BaseTransformerModel):
     def predict_step(self, batch, batch_idx):
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
-        # print(int(context_size), nonzero_cnt[0].item())
+        # logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
 
         batch = self.add_cls_token(batch)
         if self.debug and batch_idx % 20 == 0:
-            print("batch tokens:", batch["tokens"][0])
-            print("batch values:", batch["values"][0])
+            logger.debug(f"batch tokens: {batch['tokens'][0]}")
+            logger.debug(f"batch values: {batch['values'][0]}")
 
         padding_mask = (
             (batch["tokens"] == self.PAD_TOKEN_ID)

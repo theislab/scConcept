@@ -6,8 +6,11 @@ import pandas as pd
 import os
 from pathlib import Path
 from omegaconf import OmegaConf
+import logging
 from hydra import compose, initialize
 from lamin_dataloader import GeneIdTokenizer
+
+logger = logging.getLogger(__name__)
 
 
 def get_device():
@@ -146,6 +149,6 @@ def train_config(adata, tokenizer, device, tmp_path):
 
     # Manually override the split to use our test file
     cfg.PATH.SPLIT = {"train": ["test_data.h5ad"], "val": None, "test": None}
-    print(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
+    logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     return cfg

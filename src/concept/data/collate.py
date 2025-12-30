@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import re
@@ -10,6 +11,8 @@ import pandas as pd
 import torch.distributed as dist
 from lamin_dataloader import BaseCollate
 from torch.utils.data import Dataset, default_collate, default_convert, get_worker_info
+
+logger = logging.getLogger(__name__)
 
 
 class Collate(BaseCollate):
@@ -54,7 +57,7 @@ class Collate(BaseCollate):
                 for panel_name in self.panel_names
             ]
             for i in range(len(self.panels)):
-                print(f"Panel {self.panel_names[i]} size: {len(self.panels[i])} genes")
+                logger.info(f"Panel {self.panel_names[i]} size: {len(self.panels[i])} genes")
         self.panel_size_min = panel_size_min
         self.panel_size_max = panel_size_max
         self.panel_overlap = panel_overlap
@@ -75,7 +78,7 @@ class Collate(BaseCollate):
             if self.split_input:
                 worker_info = get_worker_info()
                 if worker_info:  # In case of multi-process data loading
-                    print(
+                    logger.debug(
                         f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
                     )
                     self._rng = np.random.default_rng(seed=42 + worker_info.id)
@@ -95,7 +98,7 @@ class Collate(BaseCollate):
                         / np.union1d(batch[i]["tokens"], batch[j]["tokens"]).size
                     )
 
-        print(f"Average % of shared features: %{np.median(num_shared_featrues) * 100:.3f}")
+        logger.info(f"Average % of shared features: {np.median(num_shared_featrues) * 100:.3f}")
 
     def log_int_samping(self, low, high):
         if low == high:
@@ -183,19 +186,19 @@ class Collate(BaseCollate):
                     min(self.panel_size_min, n_tokens_available), min(self.panel_size_max, n_tokens_available)
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
-                # print(f'Panel_1 random size: {len(panel_idx_1)}')
+                # logger.info(f'Panel_1 random size: {len(panel_idx_1)}')
             else:
                 panel, panel_name_1 = self._get_predesigned_panel(batch_permute)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]["tokens"], panel))[0]
                 panel_size_1 = len(panel_idx_1)
-                # print(f'Panel_1 {self.panel_names[i]} predefined size: {len(panel_idx_1)}')
+                # logger.info(f'Panel_1 {self.panel_names[i]} predefined size: {len(panel_idx_1)}')
 
             if panel_overlap:
                 panel_size_2 = self.log_int_samping(
                     min(self.panel_size_min, n_tokens), min(self.panel_size_max, n_tokens)
                 )
                 panel_idx_2 = self.rng.choice(panel_indices, panel_size_2, replace=False)
-                # print(f'Panel_2 random size: {len(panel_idx_2)}, shared: {np.intersect1d(panel_idx_1, panel_idx_2).size}')
+                # logger.info(f'Panel_2 random size: {len(panel_idx_2)}, shared: {np.intersect1d(panel_idx_1, panel_idx_2).size}')
             else:
                 panel_size_2 = self.log_int_samping(
                     min(self.panel_size_min, n_tokens - panel_size_1), min(self.panel_size_max, n_tokens - panel_size_1)

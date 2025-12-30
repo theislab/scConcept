@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -14,6 +15,8 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .model import ContrastiveModel
+
+logger = logging.getLogger(__name__)
 
 
 class scConcept:
@@ -54,7 +57,7 @@ class scConcept:
 
         # Download checkpoint if needed
         if not model_path.exists():
-            print(f"Downloading model.ckpt from HuggingFace Hub ({self.repo_id}/{model_name}/model.ckpt)...")
+            logger.info(f"Downloading model.ckpt from HuggingFace Hub ({self.repo_id}/{model_name}/model.ckpt)...")
             downloaded_path = hf_hub_download(
                 repo_id=self.repo_id,
                 filename=f"{model_name}/model.ckpt",
@@ -63,13 +66,13 @@ class scConcept:
             # Move downloaded file to expected location
             if downloaded_path != str(model_path):
                 shutil.copy2(downloaded_path, str(model_path))
-            print(f"Checkpoint saved to {model_path}")
+            logger.info(f"Checkpoint saved to {model_path}")
         else:
-            print(f"Checkpoint already exists at {model_path}")
+            logger.info(f"Checkpoint already exists at {model_path}")
 
         # Download gene mapping if needed
         if not gene_mapping_path.exists():
-            print(
+            logger.info(
                 f"Downloading pc_gene_token_mapping.pkl from HuggingFace Hub ({self.repo_id}/{model_name}/pc_gene_token_mapping.pkl)..."
             )
             downloaded_path = hf_hub_download(
@@ -80,13 +83,13 @@ class scConcept:
             # Move downloaded file to expected location
             if downloaded_path != str(gene_mapping_path):
                 shutil.copy2(downloaded_path, str(gene_mapping_path))
-            print(f"Gene mapping saved to {gene_mapping_path}")
+            logger.info(f"Gene mapping saved to {gene_mapping_path}")
         else:
-            print(f"Gene mapping already exists at {gene_mapping_path}")
+            logger.info(f"Gene mapping already exists at {gene_mapping_path}")
 
         # Download config if needed
         if not config_path.exists():
-            print(f"Downloading config.yaml from HuggingFace Hub ({self.repo_id}/{model_name}/config.yaml)...")
+            logger.info(f"Downloading config.yaml from HuggingFace Hub ({self.repo_id}/{model_name}/config.yaml)...")
             downloaded_path = hf_hub_download(
                 repo_id=self.repo_id,
                 filename=f"{model_name}/config.yaml",
@@ -95,9 +98,9 @@ class scConcept:
             # Move downloaded file to expected location
             if downloaded_path != str(config_path):
                 shutil.copy2(downloaded_path, str(config_path))
-            print(f"Config saved to {config_path}")
+            logger.info(f"Config saved to {config_path}")
         else:
-            print(f"Config already exists at {config_path}")
+            logger.info(f"Config already exists at {config_path}")
 
         # Download panels directory if needed
         panels_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +111,7 @@ class scConcept:
             panel_files = [f for f in repo_files if f.startswith(f"{model_name}/panels/") and f.endswith(".csv")]
 
             if panel_files:
-                print(f"Downloading panels directory from HuggingFace Hub ({self.repo_id}/{model_name}/panels/)...")
+                logger.info(f"Downloading panels directory from HuggingFace Hub ({self.repo_id}/{model_name}/panels/)...")
                 for panel_file in panel_files:
                     panel_filename = os.path.basename(panel_file)
                     panel_path = panels_dir / panel_filename
@@ -124,12 +127,12 @@ class scConcept:
                             shutil.copy2(downloaded_path, str(panel_path))
                     else:
                         pass
-                print(f"Panels directory saved to {panels_dir}")
+                logger.info(f"Panels directory saved to {panels_dir}")
             else:
-                print(f"No panels found in HuggingFace Hub ({self.repo_id}/{model_name}/panels/)")
+                logger.info(f"No panels found in HuggingFace Hub ({self.repo_id}/{model_name}/panels/)")
         except Exception as e:
-            print(f"Warning: Could not download panels directory: {e}")
-            print(f"Panels directory will be created at {panels_dir} but may be empty")
+            logger.warning(f"Could not download panels directory: {e}")
+            logger.warning(f"Panels directory will be created at {panels_dir} but may be empty")
 
         return model_path, gene_mapping_path, config_path, panels_dir
 
@@ -157,7 +160,7 @@ class scConcept:
             model_dir = Path(self.cache_dir) / model_name
             model_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
+            logger.info(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
 
             # Download files if they don't exist
             model_path, gene_mapping_path, config, panels_dir = self._download_files_if_needed(model_name, model_dir)
@@ -192,7 +195,7 @@ class scConcept:
         self.model = self.model.to(self.device)
         self.model.eval()
 
-        print(f"Model loaded successfully on {self.device}")
+        logger.info(f"Model loaded successfully on {self.device}")
 
     @staticmethod
     def load_config(config: str | Path | dict | DictConfig):
@@ -283,8 +286,8 @@ class scConcept:
             gene_sampling_strategy if gene_sampling_strategy is not None else self.cfg.datamodule.gene_sampling_strategy
         )
 
-        print(f"Extracting embeddings from AnnData with shape {adata.shape}")
-        print(
+        logger.info(f"Extracting embeddings from AnnData with shape {adata.shape}")
+        logger.info(
             f"Parameters: max_tokens={max_tokens}, batch_size={batch_size}, gene_sampling_strategy={gene_sampling_strategy}"
         )
 
@@ -306,7 +309,7 @@ class scConcept:
             dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=False, drop_last=False, num_workers=10
         )
 
-        print(f"Processing {len(dataset)} cells...")
+        logger.info(f"Processing {len(dataset)} cells...")
 
         # Collect embeddings
         all_cls_embs = []
@@ -342,8 +345,8 @@ class scConcept:
         if all_context_sizes:
             result["context_sizes"] = all_context_sizes
 
-        print(f"Extracted embeddings with shape: cls={cls_cell_embs.shape}, mean={mean_cell_embs.shape}")
-        print(f"Total cells processed: {len(cls_cell_embs)}")
+        logger.info(f"Extracted embeddings with shape: cls={cls_cell_embs.shape}, mean={mean_cell_embs.shape}")
+        logger.info(f"Total cells processed: {len(cls_cell_embs)}")
 
         return result
 
@@ -362,7 +365,7 @@ class scConcept:
         if self.cfg is None:
             raise ValueError("Configuration not loaded. Set self.cfg or call load_config_and_model() first.")
 
-        print("Starting training...")
+        logger.info("Starting training...")
 
         adaptaion = self.model is not None
 
@@ -459,4 +462,4 @@ class scConcept:
         # Train
         trainer.fit(model=self.model, datamodule=datamodule)
 
-        print("Training completed!")
+        logger.info("Training completed!")

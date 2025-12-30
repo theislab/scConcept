@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from datetime import datetime
@@ -14,6 +15,8 @@ from omegaconf import DictConfig, OmegaConf
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.utils import _get_callbacks, copy_files, get_profiler, resume_wandb_config
+
+logger = logging.getLogger(__name__)
 
 
 def train(cfg: DictConfig):
@@ -155,8 +158,8 @@ if __name__ == "__main__":
     if "initialize" in bash_cfg and bash_cfg.initialize.resume:
         cfg = resume_wandb_config(bash_cfg)
     else:
-        print(f"Starting new training ...")
-        print("overrides:", sys.argv[1:])
+        logger.info("Starting new training ...")
+        logger.info(f"overrides: {sys.argv[1:]}")
         with initialize(version_base=None, config_path="./conf"):
             cfg = compose(config_name="config", overrides=sys.argv[1:])
 
