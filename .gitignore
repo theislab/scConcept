@@ -174,3 +174,5 @@ untracked/
 temp/
 cache/
 checkpoints/
+src/concept/conf/datamodule/DataModuleTest.yaml
+src/concept/conf/split/split_v1_test.yaml
