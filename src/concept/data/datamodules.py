@@ -228,7 +228,15 @@ class AnnDataModule(L.LightningDataModule):
             **dataloader_kwargs,
         )
         logger.info(
-            f"Creating {stage} dataloader by {len(dataloader)} batches of size {batch_size * num_replicas} taking {len(dataloader) * batch_size * num_replicas} samples from {len(dataset)} total samples; num_replicas={num_replicas}; sum of indices: {sum(dataset.collection.indices)}; num_workers={num_workers}"
+            f"Creating '{stage}' dataloader:\n"
+            f"  - Number of batches: {len(dataloader)}\n"
+            f"  - Batch size per replica: {batch_size}\n"
+            f"  - Number of replicas: {num_replicas}\n"
+            f"  - Effective batch size: {batch_size * num_replicas}\n"
+            f"  - Number of samples to take: {len(dataloader) * batch_size * num_replicas}\n"
+            f"  - Total samples in dataset: {len(dataset)}\n"
+            f"  - Sum of indices: {sum(dataset.collection.indices)}\n"
+            f"  - Number of workers: {num_workers}"
         )
         return dataloader
 
@@ -268,7 +276,11 @@ class AnnDataModule(L.LightningDataModule):
             self.test_dataset, worker_init_fn=worker_init_fn, collate_fn=self.test_collate_fn, **dataloader_kwargs
         )
         logger.info(
-            f"Creating test dataloader by {len(dataloader)} batches of size {dataloader_kwargs['batch_size']} over {len(self.test_dataset)} samples; sum of indices: {sum(self.test_dataset.collection.indices)}"
+            f"Creating test dataloader:\n"
+            f"  - Number of batches: {len(dataloader)}\n"
+            f"  - Batch size: {dataloader_kwargs['batch_size']}\n"
+            f"  - Number of samples: {len(self.test_dataset)}\n"
+            f"  - Sum of indices: {sum(self.test_dataset.collection.indices)}"
         )
         self._test_dataloader = dataloader
         return dataloader

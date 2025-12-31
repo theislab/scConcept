@@ -12,7 +12,10 @@ from omegaconf import DictConfig
 from concept import scConcept
 
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(levelname)s: %(message)s",
+)
 
 def get_embs(
     cfg: DictConfig,

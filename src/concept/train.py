@@ -151,8 +151,12 @@ def train(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+        format="%(levelname)s: %(message)s",
+    )
     L.seed_everything(42)
-    
+
     bash_cfg = OmegaConf.from_cli()
 
     if "initialize" in bash_cfg and bash_cfg.initialize.resume:

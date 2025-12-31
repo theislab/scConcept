@@ -40,7 +40,6 @@ class WithinGroupSampler(Sampler):
         yield from np.hstack(self.batches)
 
     def set_epoch(self, epoch):
-        logger.info(f"Setting epoch {epoch}...")
         self.current_epoch = epoch
 
     def _validate_batches(self):
