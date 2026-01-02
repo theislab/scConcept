@@ -9,7 +9,6 @@ precomp_embs_key: null
 dataset:
   train:
     max_tokens: 1000
-    variable_size: False
     panel_overlap: False
     panel_selection: mixed
     panel_selection_mixed_prob: 0.25
@@ -20,8 +19,6 @@ dataset:
     feature_max_drop_rate: null
   val:
     same:
-      max_tokens: ${datamodule.dataset.train.max_tokens}
-      variable_size: ${datamodule.dataset.train.variable_size}
       panel_overlap: ${datamodule.dataset.train.panel_overlap}
       panel_selection: ${datamodule.dataset.train.panel_selection}
       panel_selection_mixed_prob: ${datamodule.dataset.train.panel_selection_mixed_prob}
@@ -29,21 +26,15 @@ dataset:
       panel_size_min: ${datamodule.dataset.train.panel_size_min}
       panel_size_max: ${datamodule.dataset.train.panel_size_max}
     within_P200_B256:
-      max_tokens: 200
-      variable_size: False
       panel_selection: random
       panel_size_min: 200
       panel_size_max: 200
     within_P800_B256:
-      max_tokens: 800
-      variable_size: False
       panel_selection: random
       panel_size_min: 800
       panel_size_max: 800
     within_P6400_B256:
-      max_tokens: 6400
       panel_selection: random
-      variable_size: False
       panel_size_min: 6400
       panel_size_max: 6400
 

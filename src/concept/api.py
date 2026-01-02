@@ -111,7 +111,9 @@ class scConcept:
             panel_files = [f for f in repo_files if f.startswith(f"{model_name}/panels/") and f.endswith(".csv")]
 
             if panel_files:
-                logger.info(f"Downloading panels directory from HuggingFace Hub ({self.repo_id}/{model_name}/panels/)...")
+                logger.info(
+                    f"Downloading panels directory from HuggingFace Hub ({self.repo_id}/{model_name}/panels/)..."
+                )
                 for panel_file in panel_files:
                     panel_filename = os.path.basename(panel_file)
                     panel_path = panels_dir / panel_filename
@@ -215,7 +217,8 @@ class scConcept:
     @staticmethod
     def validate_config(cfg: DictConfig):
         """Validate configuration constraints."""
-        if cfg.model.pe_max_len < cfg.datamodule.dataset.train.max_tokens:
+
+        if "train" in cfg.datamodule.dataset and cfg.model.pe_max_len < cfg.datamodule.dataset.train.max_tokens:
             raise ValueError(
                 f"Configuration validation failed: model.pe_max_len ({cfg.model.pe_max_len}) must be greater than "
                 f"datamodule.dataset.train.max_tokens ({cfg.datamodule.dataset.train.max_tokens})"

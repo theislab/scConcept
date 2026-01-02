@@ -105,7 +105,7 @@ def _get_callbacks(checkpoint_path: str, max_steps: int):
         ModelCheckpoint(
             dirpath=os.path.join(checkpoint_path, "latest"),
             filename="{step}",
-            every_n_train_steps=10_000,
+            every_n_train_steps=20_000,
             save_top_k=1,
             save_last="link",
         ),

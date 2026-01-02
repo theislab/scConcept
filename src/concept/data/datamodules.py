@@ -39,6 +39,7 @@ class AnnDataModule(L.LightningDataModule):
         self.model_speed_sanity_check = model_speed_sanity_check
         self.val_loader_names = val_loader_names
         self.dataloader_kwargs = dataloader_kwargs
+        self.default_max_tokens = dataset_kwargs["train"]["max_tokens"]
 
         dataset_kwargs_shared = {
             "obs_keys": columns,
@@ -84,6 +85,15 @@ class AnnDataModule(L.LightningDataModule):
         if "val" in split and split["val"] is not None and "val" in dataset_kwargs:
             self.val_datasets = {}
             for val_name, val_kwargs in dataset_kwargs["val"].items():
+                if "max_tokens" not in val_kwargs:
+                    val_kwargs["max_tokens"] = self.default_max_tokens
+                    logger.info(f"Setting max_tokens for {val_name} to {self.default_max_tokens}")
+                elif val_kwargs["max_tokens"] > self.default_max_tokens:
+                    logger.warning(
+                        f"max_tokens for {val_name}={val_kwargs['max_tokens']} dataloader "
+                        f"is greater than the train time max_tokens={self.default_max_tokens}!"
+                    )
+
                 within_group_sampling = dataloader_kwargs["val"][val_name]["within_group_sampling"]
                 keys_to_cache = [within_group_sampling] if within_group_sampling else []
                 val_collate_fn = self._get_collate_fn(val_kwargs, split_input=True)
