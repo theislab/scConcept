@@ -79,7 +79,7 @@ def train(cfg: DictConfig):
                 "resume": "allow",
                 "tags": os.environ.get("WANDB_TAGS", "").split(","),
             }
-        logger = WandbLogger(
+        wandb_logger = WandbLogger(
             name=cfg.wandb.run_name,
             entity=cfg.wandb.entity,
             project=cfg.wandb.project,
@@ -88,11 +88,11 @@ def train(cfg: DictConfig):
             **kwargs,
         )
         if rank_zero_only.rank == 0 and not RESUME_LOGGER:
-            logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
+            wandb_logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     run_id = "dummy"
     if rank_zero_only.rank == 0:
-        run_id = logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        run_id = wandb_logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
 
@@ -105,7 +105,7 @@ def train(cfg: DictConfig):
         "num_nodes": int(os.environ["SLURM_JOB_NUM_NODES"])
         if "SLURM_JOB_NUM_NODES" in os.environ
         else cfg.model.training.num_nodes,
-        "logger": logger if cfg.wandb.enabled else None,
+        "logger": wandb_logger if cfg.wandb.enabled else None,
         "log_every_n_steps": cfg.model.training.log_every_n_steps,
         "val_check_interval": cfg.model.training.val_check_interval,
         "check_val_every_n_epoch": cfg.model.training.check_val_every_n_epoch,
