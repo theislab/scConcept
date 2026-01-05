@@ -40,7 +40,6 @@ dependencies = [
   "tqdm",
   "einops",
   "ninja",
-  "lamindb==1.6.2",
   "huggingface-hub>=1.0.1",
 ]
 optional-dependencies.dev = [
