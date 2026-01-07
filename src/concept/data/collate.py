@@ -262,10 +262,10 @@ class Collate(BaseCollate):
                 and self.max_total_seq_length is not None
                 and self.max_total_seq_length < float("inf")
             ):
-                new_batch_size = self.adapt_batch_size(seq_length_1, seq_length_2)
-                batch, batch_1, batch_2 = batch[:new_batch_size], batch_1[:new_batch_size], batch_2[:new_batch_size]
-                panel_1, panel_2 = panel_1[:new_batch_size], panel_2[:new_batch_size]
-                seq_length_1, seq_length_2 = seq_length_1[:new_batch_size], seq_length_2[:new_batch_size]
+                batch_size = self.adapt_batch_size(seq_length_1, seq_length_2)
+                batch, batch_1, batch_2 = batch[:batch_size], batch_1[:batch_size], batch_2[:batch_size]
+                panel_1, panel_2 = panel_1[:batch_size], panel_2[:batch_size]
+                seq_length_1, seq_length_2 = seq_length_1[:batch_size], seq_length_2[:batch_size]
 
             if self.stage == "train" and self.qc_threshold is not None:
                 qc_indices = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
