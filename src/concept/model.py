@@ -348,6 +348,7 @@ class ContrastiveModel(BaseTransformerModel):
     def _step(self, batch, batch_idx, stage="train", log_prefix="train"):
         assert stage in ["train", "val"], f"Invalid stage: {stage}"
 
+        batch_size = len(batch["tokens_1"])
         batch_1 = {
             "tokens": batch["tokens_1"],
             "values": batch["values_1"],
@@ -447,17 +448,27 @@ class ContrastiveModel(BaseTransformerModel):
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
 
         if stage == "val" or (stage == "train" and batch_idx % self.log_every_n_steps == 0):
-            self.log_metrics(f"{log_prefix}/loss", loss, stage=stage)
-            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, stage=stage)
+            self.log_metrics(f"{log_prefix}/loss", loss, stage=stage, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, stage=stage, batch_size=batch_size)
             if loss_mlm > 0:
-                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, stage=stage)
-            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, stage=stage)
-            self.log_metrics(f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, stage=stage)
+                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, stage=stage, batch_size=batch_size)
             self.log_metrics(
-                f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}", acc_cont_both_batch, stage=stage
+                f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, stage=stage, batch_size=batch_size
             )
             self.log_metrics(
-                f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}", top5_acc_cont_both_batch, stage=stage
+                f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, stage=stage, batch_size=batch_size
+            )
+            self.log_metrics(
+                f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}",
+                acc_cont_both_batch,
+                stage=stage,
+                batch_size=batch_size,
+            )
+            self.log_metrics(
+                f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}",
+                top5_acc_cont_both_batch,
+                stage=stage,
+                batch_size=batch_size,
             )
 
         ######################################################################
@@ -473,7 +484,7 @@ class ContrastiveModel(BaseTransformerModel):
                 label_acc = 0.5 * (
                     self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1)
                 )
-                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, stage=stage)
+                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, stage=stage, batch_size=batch_size)
 
         if stage == "train" and batch_idx % self.log_every_n_steps == 0:
             global_rank = torch.tensor([self.global_rank] * len(batch_1["tokens"]), device=self.device)
@@ -483,13 +494,15 @@ class ContrastiveModel(BaseTransformerModel):
                 self._knn_accuracy(logits, global_rank, global_rank)
                 + self._knn_accuracy(logits.t(), global_rank, global_rank)
             )
-            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, stage=stage)
+            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, stage=stage, batch_size=batch_size)
 
         if stage != "train":
             views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
             views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
-            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, stage=stage)
-            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, stage=stage)
+            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, stage=stage, batch_size=batch_size)
+            self.log_metrics(
+                f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, stage=stage, batch_size=batch_size
+            )
 
         if self.debug and batch_idx % self.log_every_n_steps == 0:
             nonzero_cnt_1 = (batch_1["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
@@ -503,13 +516,13 @@ class ContrastiveModel(BaseTransformerModel):
                 [torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))]
             )
             length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, stage=stage)
+            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, stage=stage, batch_size=batch_size)
 
             length_r2 = 0.5 * (
                 self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2)
                 + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1)
             )
-            self.log_metrics(f"{log_prefix}/length_r2", length_r2, stage=stage)
+            self.log_metrics(f"{log_prefix}/length_r2", length_r2, stage=stage, batch_size=batch_size)
 
         if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == "train" and batch_idx % 1000 == 0:
             logger.debug(f"Argmax: {logits_both_batch.argmax(dim=1)}")
@@ -700,6 +713,10 @@ class ContrastiveModel(BaseTransformerModel):
             "values_max_2": values_max_2,
             "panel_intersect": panel_intersect,
             "token_intersect": token_intersect,
+            "seq_length_sum_1": sum(batch["seq_length_1"]),  # Already on cpu
+            "seq_length_sum_2": sum(batch["seq_length_2"]),  # Already on cpu
+            "seq_length_sum_all": sum(batch["seq_length_1"]) + sum(batch["seq_length_2"]),  # Already on cpu
+            "batch_size": len(batch["tokens_1"]),
         }
 
         for batch_key in ["dataset"] + self.batch_keys_to_monitor:

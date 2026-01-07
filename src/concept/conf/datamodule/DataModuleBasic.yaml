@@ -17,6 +17,8 @@ dataset:
     panel_size_max: 60000
     panel_max_drop_rate: 0.5
     feature_max_drop_rate: null
+    qc_threshold: null
+    max_total_seq_length: null
   val:
     same:
       panel_overlap: ${datamodule.dataset.train.panel_overlap}

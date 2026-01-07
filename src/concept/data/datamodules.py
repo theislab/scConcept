@@ -51,7 +51,7 @@ class AnnDataModule(L.LightningDataModule):
         if "train" in split and split["train"] is not None and "train" in dataset_kwargs:
             within_group_sampling = dataloader_kwargs["train"]["within_group_sampling"]
             keys_to_cache = [within_group_sampling] if within_group_sampling else []
-            self.train_collate_fn = self._get_collate_fn(dataset_kwargs["train"], split_input=True)
+            self.train_collate_fn = self._get_collate_fn(dataset_kwargs["train"], stage="train", split_input=True)
 
             if isinstance(split["train"][0], AnnData):
                 assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
@@ -96,7 +96,7 @@ class AnnDataModule(L.LightningDataModule):
 
                 within_group_sampling = dataloader_kwargs["val"][val_name]["within_group_sampling"]
                 keys_to_cache = [within_group_sampling] if within_group_sampling else []
-                val_collate_fn = self._get_collate_fn(val_kwargs, split_input=True)
+                val_collate_fn = self._get_collate_fn(val_kwargs, stage="val", split_input=True)
 
                 if isinstance(split["val"][0], AnnData):
                     assert within_group_sampling == "dataset", (
@@ -130,7 +130,7 @@ class AnnDataModule(L.LightningDataModule):
                 self.val_datasets[val_name] = (dataset, val_collate_fn)
         if "test" in split and split["test"] is not None and "test" in dataset_kwargs:
             keys_to_cache = None
-            self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], split_input=False)
+            self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], stage="test", split_input=False)
 
             if isinstance(split["test"][0], AnnData):
                 # Use InMemoryCollection for AnnData objects
@@ -164,7 +164,7 @@ class AnnDataModule(L.LightningDataModule):
         self._train_dataloader = None
         self._test_dataloader = None
 
-    def _get_collate_fn(self, dataset_kwargs, split_input):
+    def _get_collate_fn(self, dataset_kwargs, stage, split_input):
         keys_to_pop = [
             "max_tokens",
             "min_tokens",
@@ -177,6 +177,8 @@ class AnnDataModule(L.LightningDataModule):
             "panel_overlap",
             "panel_max_drop_rate",
             "feature_max_drop_rate",
+            "qc_threshold",
+            "max_total_seq_length",
         ]
 
         collate_kwargs = {
@@ -185,6 +187,7 @@ class AnnDataModule(L.LightningDataModule):
             "split_input": split_input,
             "gene_sampling_strategy": self.gene_sampling_strategy,
             "model_speed_sanity_check": self.model_speed_sanity_check,
+            "stage": stage,
             **{key: dataset_kwargs.pop(key) for key in keys_to_pop if key in dataset_kwargs},
         }
         return Collate(**collate_kwargs)

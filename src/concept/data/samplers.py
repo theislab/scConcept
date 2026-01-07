@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 from lightning.fabric.utilities.distributed import DistributedSamplerWrapper as LightningDistributedSamplerWrapper
@@ -29,6 +30,7 @@ class WithinGroupSampler(Sampler):
         self.stage = stage
         self.current_epoch = start_epoch
         assert stage in ["train", "val", "test"], 'stage must be one of "train", "val", "test"'
+        self.seed = int(os.environ.get("PL_GLOBAL_SEED", 42))
         self._create_batches()
 
     def __len__(self):
@@ -50,10 +52,9 @@ class WithinGroupSampler(Sampler):
     def _create_batches(self):
         # Create RNG instance based on current epoch to ensure reproducibility
         if self.stage == "train":
-            rng = np.random.default_rng(self.current_epoch)
-            logger.info(f"Creating {self.stage} batches for epoch {self.current_epoch}...")
+            rng = np.random.default_rng(self.seed * 10_000 + self.current_epoch)
         else:
-            rng = np.random.default_rng(42)  # for validation and test
+            rng = np.random.default_rng(self.seed)  # for validation and test
 
         self.batches = []
         count = 0

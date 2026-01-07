@@ -20,6 +20,7 @@ class Collate(BaseCollate):
         self,
         tokenizer,
         max_tokens,
+        stage="train",
         min_tokens=0,
         panels_path=None,
         split_input=False,
@@ -33,6 +34,8 @@ class Collate(BaseCollate):
         panel_overlap=False,
         panel_max_drop_rate=None,
         feature_max_drop_rate=None,
+        qc_threshold=None,
+        max_total_seq_length=float("inf"),
         model_speed_sanity_check=False,
     ):
         super().__init__(
@@ -42,6 +45,10 @@ class Collate(BaseCollate):
         )
 
         self.tokenizer = tokenizer
+        self.stage = stage
+        assert self.stage in ["train", "val", "test"], (
+            f"Invalid stage: {self.stage}, must be one of 'train', 'val', 'test'"
+        )
         self.split_input = split_input
         self.panel_selection = panel_selection
         self.panel_selection_mixed_prob = panel_selection_mixed_prob
@@ -56,8 +63,9 @@ class Collate(BaseCollate):
                 self.tokenizer.encode(pd.read_csv(self.panels_dir / panel_name)["Ensembl_ID"].values)
                 for panel_name in self.panel_names
             ]
-            for i in range(len(self.panels)):
-                logger.info(f"Panel {self.panel_names[i]} size: {len(self.panels[i])} genes")
+            if stage == "train":
+                for i in range(len(self.panels)):
+                    logger.info(f"Panel {self.panel_names[i]} size: {len(self.panels[i])} genes")
         self.panel_size_min = panel_size_min
         self.panel_size_max = panel_size_max
         self.panel_overlap = panel_overlap
@@ -67,6 +75,8 @@ class Collate(BaseCollate):
             'gene_sampling_strategy must be one of "random", "top", "random-nonzero", "top-nonzero"'
         )
         self.feature_max_drop_rate = feature_max_drop_rate
+        self.qc_threshold = qc_threshold
+        self.max_total_seq_length = max_total_seq_length
         self.device_num = dist.get_rank() if dist.is_initialized() else 0
         self._rng = None
 
@@ -75,17 +85,18 @@ class Collate(BaseCollate):
     @property
     def rng(self):
         if self._rng is None:
+            seed = int(os.environ.get("PL_GLOBAL_SEED", 42))
             if self.split_input:
                 worker_info = get_worker_info()
                 if worker_info:  # In case of multi-process data loading
                     logger.debug(
                         f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
                     )
-                    self._rng = np.random.default_rng(seed=42 + worker_info.id)
+                    self._rng = np.random.default_rng(seed=seed + worker_info.id)
                 else:
-                    self._rng = np.random.default_rng(42)
+                    self._rng = np.random.default_rng(seed)
             else:
-                self._rng = np.random.default_rng(42)
+                self._rng = np.random.default_rng(seed)
         return self._rng
 
     def shared_feature_stats(self, batch):
@@ -112,17 +123,28 @@ class Collate(BaseCollate):
         randint = int(self.rng.uniform(low, high))
         return max(min(randint, high), low)
 
-    # def adapt_batch_size(self, batch,  batch_1, batch_2):
-    #     max_length_1 = max(len(item['tokens']) for item in batch_1)
-    #     max_length_2 = max(len(item['tokens']) for item in batch_2)
+    def adapt_batch_size(self, seq_length_1, seq_length_2):
+        seq_length = np.array(seq_length_1) + np.array(seq_length_2)
+        seq_length_cumsum = np.cumsum(seq_length)
 
-    #     if max_length_1 > 1000 or max_length_2 > 1000:
-    #         new_batch_size = max(1, len(batch_1) // 4)
-    #         batch = batch[:new_batch_size]
-    #         batch_1 = batch_1[:new_batch_size]
-    #         batch_2 = batch_2[:new_batch_size]
+        new_batch_size = len(seq_length_1)
+        if seq_length_cumsum[-1] > self.max_total_seq_length:
+            new_batch_size = np.searchsorted(seq_length_cumsum, self.max_total_seq_length)
+            return new_batch_size
 
-    #     return batch, batch_1, batch_2
+        return new_batch_size
+
+    def qc_mask(self, seq_length_1, seq_length_2, panel_1, panel_2, min_samples_required=5):
+        seq_length_1, seq_length_2 = np.array(seq_length_1), np.array(seq_length_2)
+        panel_size_1 = np.array([len(p) for p in panel_1])
+        panel_size_2 = np.array([len(p) for p in panel_2])
+        mask_1 = seq_length_1 > panel_size_1 * self.qc_threshold
+        mask_2 = seq_length_2 > panel_size_2 * self.qc_threshold
+        mask = mask_1 & mask_2
+        if mask.sum() < min_samples_required:
+            logger.warning(f"Less than {min_samples_required} cells passed QC threshold! Including all cells.")
+            return np.arange(len(mask))
+        return list(np.where(mask)[0])
 
     # def _custom_panel_selection(self, batch):
     #     tokens = batch[0]['tokens']
@@ -235,7 +257,26 @@ class Collate(BaseCollate):
             batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
             batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
 
-            # batch, batch_1, batch_2 = self.adapt_batch_size(batch, batch_1, batch_2)
+            if (
+                self.stage == "train"
+                and self.max_total_seq_length is not None
+                and self.max_total_seq_length < float("inf")
+            ):
+                new_batch_size = self.adapt_batch_size(seq_length_1, seq_length_2)
+                batch, batch_1, batch_2 = batch[:new_batch_size], batch_1[:new_batch_size], batch_2[:new_batch_size]
+                panel_1, panel_2 = panel_1[:new_batch_size], panel_2[:new_batch_size]
+                seq_length_1, seq_length_2 = seq_length_1[:new_batch_size], seq_length_2[:new_batch_size]
+
+            if self.stage == "train" and self.qc_threshold is not None:
+                qc_indices = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
+                batch = [batch[i] for i in qc_indices]
+                batch_1 = [batch_1[i] for i in qc_indices]
+                batch_2 = [batch_2[i] for i in qc_indices]
+                panel_1 = [panel_1[i] for i in qc_indices]
+                panel_2 = [panel_2[i] for i in qc_indices]
+                seq_length_1 = [seq_length_1[i] for i in qc_indices]
+                seq_length_2 = [seq_length_2[i] for i in qc_indices]
+
             # self.shared_feature_stats(batch_1)
 
             tokens_1 = [item["tokens"].astype(np.int64) for item in batch_1]
