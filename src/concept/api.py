@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .model import ContrastiveModel
+from .utils import merge_lists
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,12 @@ class scConcept:
             self.cfg = self.load_config(config)
 
         # Load gene mapping
-        gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
+        if str(gene_mapping_path).endswith(".pkl"):
+            gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
+        elif str(gene_mapping_path).endswith(".csv"):
+            gene_mapping = pd.read_csv(gene_mapping_path, index_col="gene_id")["token"].to_dict()
+        else:
+            raise ValueError(f"Invalid gene mapping path: {gene_mapping_path}")
 
         # Create tokenizer
         self.tokenizer = GeneIdTokenizer(gene_mapping)
@@ -255,6 +261,12 @@ class scConcept:
             cfg.model.pe_max_len = 5000
         if "loss_switch_step" not in cfg.model:
             cfg.model.loss_switch_step = 2000
+        if "PATH" in cfg and "GENE_MAPPING_PATH" not in cfg.PATH and "gene_mapping_path" in cfg.PATH:
+            cfg.PATH.GENE_MAPPING_PATH = cfg.PATH.gene_mapping_path
+        if "freeze_pretrained_vocabulary" not in cfg.model.training:
+            cfg.model.training.freeze_pretrained_vocabulary = None
+        if "use_specie_embs_freq" not in cfg.model.training:
+            cfg.model.training.use_specie_embs_freq = None
         return cfg
 
     def extract_embeddings(
@@ -382,6 +394,9 @@ class scConcept:
                 self.cfg.datamodule.dataloader.train = {}
             self.cfg.datamodule.dataloader.train.batch_size = batch_size
 
+        dataset_kwargs = {**OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True)}
+        dataloader_kwargs = {**OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)}
+
         # Create split dictionary (only train, no validation)
         if adata_list is not None:
             # Handle single AnnData object or list of AnnData objects
@@ -397,35 +412,30 @@ class scConcept:
             else:
                 raise ValueError("adata_list must be an AnnData object or a list of AnnData objects")
             # Use provided AnnData objects
-            split = {"train": adata_list}
+            dataset_kwargs["train"]["split"] = adata_list
         else:
             # Load from file paths
             dataset_path = self.cfg.PATH.ADATA_PATH
-            split = {}
-            for key, filenames in self.cfg.PATH.SPLIT.items():
-                if filenames is not None and key == "train":
-                    split[key] = [os.path.join(dataset_path, file) for file in filenames]
+            if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+                dataset_kwargs["train"]["split"] = merge_lists(dataset_path, dataset_kwargs["train"]["split"])
 
         if adaptaion:
             assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."
         else:
             # Load gene mapping
-            gene_mapping = pd.read_pickle(self.cfg.PATH.gene_mapping_path).to_dict()
+            gene_mapping = pd.read_pickle(self.cfg.PATH.GENE_MAPPING_PATH).to_dict()
             self.tokenizer = GeneIdTokenizer(gene_mapping)
 
         # Create datamodule
         datamodule_args = {
-            "split": split,
             "panels_path": panels_dir,
             "tokenizer": self.tokenizer,
             "columns": [],
             "precomp_embs_key": self.cfg.datamodule.precomp_embs_key,
             "normalization": self.cfg.datamodule.normalization,
             "gene_sampling_strategy": self.cfg.datamodule.gene_sampling_strategy,
-            "dataset_kwargs": OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True),
-            "dataloader_kwargs": OmegaConf.to_container(
-                self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True
-            ),
+            "dataset_kwargs": dataset_kwargs,
+            "dataloader_kwargs": dataloader_kwargs,
             "val_loader_names": [],
         }
         datamodule = AnnDataModule(**datamodule_args)

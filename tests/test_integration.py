@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader
 from concept import ContrastiveModel
 
 
-def _mock_encode(self, tokens, values, src_key_padding_mask=None):
+def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths = None):
     """
     Mock the _encode function to avoid complex transformer computations.
     Returns mock embeddings and cell embeddings with correct shapes.
@@ -105,6 +105,8 @@ def mock_config():
             "weight_decay": 0.0,
             "optimizer_class": "AdamW",
             "scheduler": "warmup",
+            "freeze_pretrained_vocabulary": None,
+            "use_specie_embs_freq": None,
             "warmup": 100,
             "max_steps": 1000,
             "min_lr": 0.0,
@@ -129,17 +131,36 @@ def test_model_initialization(mock_config, device):
 
 
 @pytest.mark.parametrize("flash_attention", [False, True])
-def test_training_step(mock_config, device, flash_attention):
+@pytest.mark.parametrize("use_pretrained_vocabulary", [False, True])
+def test_training_step(mock_config, device, flash_attention, use_pretrained_vocabulary):
     """Test that the model can perform a training step"""
     # Update mock_config with parameterized flash_attention value
     mock_config["flash_attention"] = flash_attention
+    mock_config["training"]["scheduler"] = None
+
+    if use_pretrained_vocabulary:
+        fixed_idx = 2
+        # Create a pretrained vocabulary with a known value and keep reference for later
+        with torch.no_grad():
+            pretrained_vocabulary = {fixed_idx: torch.ones(100, requires_grad=False)}
+        mock_config["training"]["freeze_pretrained_vocabulary"] = True
+        mock_config["training"]["use_specie_embs_freq"] = 1.0
+    else:
+        pretrained_vocabulary = None
 
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=["val_test"]
+        config=mock_config,
+        pad_token_id=0,
+        cls_token_id=1,
+        vocab_size=100,
+        world_size=1,
+        val_loader_names=["val_test"],
+        pretrained_vocabulary=pretrained_vocabulary,
     )
 
     # Move model to device
     model = model.to(device)
+    optimizer = ContrastiveModel.configure_optimizers(model)
 
     # Create mock batch data
     batch_size = 8
@@ -165,6 +186,12 @@ def test_training_step(mock_config, device, flash_attention):
 
     # Test training step
     model.train()
+    # Keep a copy of pretrained embedding tensor before backward if it is used
+    if use_pretrained_vocabulary:
+        pretrained_embed_before = model.gene_token_encoder.embedding.weight.clone()
+        # Capture a deepcopy of all model parameters before training step
+    params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
+
     with patch.object(model, "log_metrics") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             loss = model.training_step(batch, batch_idx=0)
@@ -177,6 +204,27 @@ def test_training_step(mock_config, device, flash_attention):
         assert loss.requires_grad
         assert not torch.isnan(loss)
         assert loss.device.type == device.type
+
+        # Run backward on the loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # Assert all trainable (requires_grad) parameters have been updated
+        params_after = {name: param for name, param in model.named_parameters()}
+        for name, before in params_before.items():
+            param = params_after[name]
+            if param.requires_grad:
+                # Some params might be floating point, others ints, only check for float types
+                if before.dtype.is_floating_point:
+                    # Check that at least one element has changed
+                    assert not torch.equal(before, param), f"Parameter {name} was not updated!"
+
+        if use_pretrained_vocabulary:
+            assert torch.equal(pretrained_embed_before[fixed_idx], model.gene_token_encoder.embedding.weight[fixed_idx])
+            assert not torch.equal(
+                pretrained_embed_before[fixed_idx + 1], model.gene_token_encoder.embedding.weight[fixed_idx + 1]
+            )
 
 
 @pytest.mark.parametrize("flash_attention", [False, True])
@@ -503,6 +551,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
 
     dataset_kwargs = {
         "train": {
+            "split": [adata],
             "max_tokens": 20,
             "variable_size": False,
             "panel_selection": "mixed",
@@ -515,6 +564,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         },
         "val": {
             "val_1": {
+                "split": [adata],
                 "max_tokens": 20,
                 "variable_size": False,
                 "panel_selection": "random",
@@ -525,6 +575,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             }
         },
         "test": {
+            "split": [adata],
             "max_tokens": 20,
         },
     }
@@ -560,7 +611,6 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
 
     # Initialize AnnDataModule
     datamodule = AnnDataModule(
-        split=split,
         panels_path=str(panels_dir),
         tokenizer=tokenizer,
         columns=columns,
@@ -684,7 +734,6 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             break
 
     assert len(test_batches) > 0, "No test batches generated"
-
 
 
 def test_train_integration(train_config):

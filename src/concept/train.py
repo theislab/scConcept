@@ -14,7 +14,14 @@ from omegaconf import DictConfig, OmegaConf
 
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
-from concept.utils import _get_callbacks, copy_files, get_profiler, resume_wandb_config
+from concept.utils import (
+    _get_callbacks,
+    copy_files,
+    get_profiler,
+    resume_wandb_config,
+    load_pretrained_vocabulary,
+    merge_lists,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,31 +36,48 @@ def train(cfg: DictConfig):
     # Validate configuration constraints
     scConcept.validate_config(cfg)
 
+    val_loader_names = []
+    if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
+        val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
+
+
+    gene_mapping = pd.read_csv(cfg.PATH.GENE_MAPPING_PATH, index_col="gene_id")["token"].to_dict()
+    tokenizer = GeneIdTokenizer(gene_mapping)
+
+    pretrained_vocabulary = None
+    if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
+        pretrained_vocabulary = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
+
+    dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
+    dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
+
+    merged_split = set()
+    if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+        dataset_kwargs["train"]["split"] = merge_lists(dataset_kwargs["train"]["split"])
+        merged_split.update(dataset_kwargs["train"]["split"])
+    if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
+        for val_name, val_kwargs in dataset_kwargs["val"].items():
+            dataset_kwargs["val"][val_name]["split"] = merge_lists(val_kwargs["split"])
+            merged_split.update(dataset_kwargs["val"][val_name]["split"])
+
     # Copy files to faster local directory
     data_path = cfg.PATH.ADATA_PATH
     if cfg.PATH.LOCAL_DIR is not None and rank_zero_only.rank == 0:
         copy_files(
             data_path,
             cfg.PATH.LOCAL_DIR,
-            list(cfg.PATH.SPLIT.get("train", [])) + list(cfg.PATH.SPLIT.get("val", [])),
+            list(merged_split),
             compare_files=False,
         )
         data_path = cfg.PATH.LOCAL_DIR
 
-    if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
-        val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
-    else:
-        val_loader_names = []
-
-    gene_mapping = pd.read_pickle(cfg.PATH.gene_mapping_path).to_dict()
-
-    split = {}
-    for key, filenames in cfg.PATH.SPLIT.items():
-        if filenames is not None:
-            split[key] = [os.path.join(data_path, file) for file in filenames]
+    if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+        dataset_kwargs["train"]["split"] = [os.path.join(data_path, file) for file in dataset_kwargs["train"]["split"]]
+    if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
+        for val_name, val_kwargs in dataset_kwargs["val"].items():
+            dataset_kwargs["val"][val_name]["split"] = [os.path.join(data_path, file) for file in val_kwargs["split"]]
 
     datamodule_args = {
-        "split": split,
         "panels_path": cfg.PATH.PANELS_PATH,
         "columns": cfg.datamodule.columns,
         "precomp_embs_key": cfg.datamodule.precomp_embs_key,
@@ -61,10 +85,10 @@ def train(cfg: DictConfig):
         "gene_sampling_strategy": cfg.datamodule.gene_sampling_strategy,
         "model_speed_sanity_check": cfg.datamodule.model_speed_sanity_check,
         # make sure to pass a copy to avoid being modified before uploading to wandb:
-        "dataset_kwargs": {**OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)},
-        "dataloader_kwargs": {**OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)},
+        "dataset_kwargs": dataset_kwargs,
+        "dataloader_kwargs": dataloader_kwargs,
         "val_loader_names": val_loader_names,
-        "tokenizer": GeneIdTokenizer(gene_mapping),
+        "tokenizer": tokenizer,
     }
     datamodule = AnnDataModule(**datamodule_args)
 
@@ -126,6 +150,7 @@ def train(cfg: DictConfig):
         "pad_token_id": gene_mapping["<pad>"],
         "cls_token_id": gene_mapping["<cls>"],
         "vocab_size": len(gene_mapping),
+        "pretrained_vocabulary": pretrained_vocabulary,
         "world_size": trainer.world_size,
         "val_loader_names": val_loader_names,
         "label_keys_to_monitor": cfg.datamodule.label_keys_to_monitor,

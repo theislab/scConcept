@@ -1,7 +1,6 @@
 defaults:
   - model: ContrastiveModel
   - datamodule: DataModuleBasic
-  - split: split_v1_large
   - _self_
 
 wandb:
@@ -26,9 +25,9 @@ PATH:
   DATASET_PATH: ${PATH.PROJECT_DATA_PATH}/cxg_raw_2023-12-15
   ADATA_PATH: ${PATH.DATASET_PATH}/h5ads
   LOCAL_DIR: null # If not None, copy files to this directory for faster training
-  PANELS_PATH: ${PATH.PROJECT_PATH}/panels/human
-  SPLIT: ${split}
-  gene_mapping_path: ${PATH.DATASET_PATH}/pc_gene_token_mapping.pkl
+  PANELS_PATH: ${PATH.PROJECT_PATH}/panels/hsapiens
+  GENE_MAPPING_PATH: ${PATH.DATASET_PATH}/pc_gene_token_mapping.csv
+  PRETRAINED_VOCABULARY: null
 
 
 

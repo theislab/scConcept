@@ -92,7 +92,7 @@ class BaseTransformerModel(L.LightningModule):
             )
             tokens = tokens.squeeze(-1)
 
-            gene_embs = self._encode_gene_tokens(tokens)
+            gene_embs = self._encode_gene_tokens(tokens, stage="train")
 
             if self.input_encoding == "rank_encoding":
                 # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
@@ -113,7 +113,7 @@ class BaseTransformerModel(L.LightningModule):
             # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
-            gene_embs = self._encode_gene_tokens(tokens)
+            gene_embs = self._encode_gene_tokens(tokens, stage="train")
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
@@ -125,7 +125,7 @@ class BaseTransformerModel(L.LightningModule):
 
         return embs_padded, cell_embs
 
-    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
+    def _encode_gene_tokens(self, tokens: Tensor, stage: Optional[str] = "train") -> Tensor:
         raise NotImplementedError("Subclasses must implement _encode_gene_tokens method.")
 
     def _encode_values(self, values: Tensor) -> Tensor:
@@ -151,19 +151,22 @@ class BaseTransformerModel(L.LightningModule):
         loss = self._step(batch)
         self.log("val/loss", loss, sync_dist=False)
 
+    def _get_scheduler(self, optimizer):
+        if self.scheduler == "warmup":
+            lr_scheduler = WarmupScheduler(optimizer, warmup=self.warmup)
+        elif self.scheduler == "warmup_cosine":
+            lr_scheduler = CosineWarmupScheduler(
+                optimizer, warmup=self.warmup, max_steps=self.max_steps, min_lr=self.min_lr
+            )
+        return lr_scheduler
+
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)  # default Adam
         if self.optimizer_class == "AdamW":
             optimizer = optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         if self.scheduler:
-            if self.scheduler == "warmup":
-                lr_scheduler = WarmupScheduler(optimizer, warmup=self.warmup)
-            elif self.scheduler == "warmup_cosine":
-                lr_scheduler = CosineWarmupScheduler(
-                    optimizer, warmup=self.warmup, max_steps=self.max_steps, min_lr=self.min_lr
-                )
-
+            lr_scheduler = self._get_scheduler(optimizer)
             return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
         else:
             return optimizer
@@ -192,13 +195,75 @@ class GeneEncoder(nn.Module):
         n_genes: int,
         emb_dim: int,
         padding_idx: Optional[int] = None,
+        pretrained_vocabulary: Optional[dict] = None,
+        freeze_pretrained_vocabulary: bool = None,
+        use_specie_embs_freq: float = None,
     ):
         super().__init__()
-        self.embedding = nn.Embedding(n_genes, emb_dim, padding_idx=padding_idx)
+        self.emb_dim = emb_dim
+        self.freeze_pretrained_vocabulary = freeze_pretrained_vocabulary
+        self.pretrained_vocabulary_available = pretrained_vocabulary is not None
+        self.use_specie_embs_freq = use_specie_embs_freq
+
+        # If a pretrained vocabulary is provided, build custom embedding weights
+        if self.pretrained_vocabulary_available:
+            assert len(pretrained_vocabulary) <= n_genes, (
+                f"Pretrained vocabulary must have at most the same length as the number of genes: {len(pretrained_vocabulary)} <= {n_genes}"
+            )
+            assert freeze_pretrained_vocabulary is not None, (
+                "freeze_pretrained_vocabulary must be provided if pretrained_vocabulary is provided"
+            )
+            assert use_specie_embs_freq is not None, (
+                "use_specie_embs_freq must be provided if pretrained_vocabulary is provided"
+            )
+            assert 0.0 <= use_specie_embs_freq <= 1.0, "use_specie_embs_freq must be between 0.0 and 1.0"
+
+            pretrained_dim = next(iter(pretrained_vocabulary.values())).shape[0]
+            logger.info(f"Using pretrained embeddings for {len(pretrained_vocabulary)} genes of size {pretrained_dim}")
+
+            self.embedding = nn.Embedding(n_genes, pretrained_dim, padding_idx=padding_idx)
+
+            freeze_mask = torch.ones_like(self.embedding.weight)
+            with torch.no_grad():
+                for idx in range(n_genes):
+                    if idx in pretrained_vocabulary:
+                        self.embedding.weight[idx].copy_(pretrained_vocabulary[idx])
+                        freeze_mask[idx].fill_(0)
+
+            self.register_buffer("freeze_mask", freeze_mask)  ## todo: put inside if self.freeze_pretrained_vocabulary
+            if self.freeze_pretrained_vocabulary:
+                self.embedding.weight.register_hook(lambda grad: grad * self.freeze_mask)
+
+            if pretrained_dim != emb_dim:
+                self.adapt_linear = nn.Linear(pretrained_dim, emb_dim, bias=True)
+            else:
+                self.adapt_linear = None
+            self.specie_specific_embs = nn.Embedding(
+                n_genes, emb_dim, padding_idx=padding_idx, _weight=torch.zeros(n_genes, emb_dim, dtype=torch.float)
+            )
+        else:
+            self.embedding = nn.Embedding(n_genes, emb_dim, padding_idx=padding_idx)
+            self.adapt_linear = None
+
         self.enc_norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, global_step: Optional[int] = None, force_use_specie_embs: Optional[bool] = False) -> Tensor:
+        if self.pretrained_vocabulary_available:
+            specie_specific_embs = self.specie_specific_embs(x)
+
         x = self.embedding(x)
+        if self.pretrained_vocabulary_available:
+            if self.adapt_linear is not None:
+                x = self.adapt_linear(x)
+            # Deterministically add specie_specific_embs based on use_specie_embs_freq
+            if not force_use_specie_embs:
+                add_specie_embs = int((global_step + 1) * self.use_specie_embs_freq) > int(
+                    global_step * self.use_specie_embs_freq
+                )
+            else:
+                add_specie_embs = True
+            x = x + specie_specific_embs * int(add_specie_embs)
+
         x = self.enc_norm(x)
         return x
 
@@ -292,6 +357,7 @@ class ContrastiveModel(BaseTransformerModel):
         pad_token_id: int,
         cls_token_id: int,
         vocab_size: int,
+        pretrained_vocabulary: Optional[dict] = None,
         precomp_embs_key: str = None,
         world_size: int = 1,
         val_loader_names=[],
@@ -319,7 +385,14 @@ class ContrastiveModel(BaseTransformerModel):
         self.batch_keys_to_monitor = list(batch_keys_to_monitor)
         assert self.contrastive_loss in ["binary", "multiclass"]
 
-        self.gene_token_encoder = GeneEncoder(self.vocab_size, self.dim_model, padding_idx=None)
+        self.gene_token_encoder = GeneEncoder(
+            self.vocab_size,
+            self.dim_model,
+            padding_idx=pad_token_id,
+            pretrained_vocabulary=pretrained_vocabulary,
+            freeze_pretrained_vocabulary=config["training"]["freeze_pretrained_vocabulary"],
+            use_specie_embs_freq=config["training"]["use_specie_embs_freq"],
+        )
         if self.input_encoding == "value_encoding":
             self.value_encoder = ContinuousValueEncoder(self.dim_model, dropout=0.0)
         elif self.input_encoding == "rank_encoding":
@@ -339,11 +412,43 @@ class ContrastiveModel(BaseTransformerModel):
             self.log(metric_name, value, on_step=True, on_epoch=False, **kwargs)
         self.log(metric_name + "_epoch", value, on_step=False, on_epoch=True, **kwargs)
 
-    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
-        return self.gene_token_encoder(tokens)
+    def _encode_gene_tokens(self, tokens: Tensor, stage: Optional[str] = "train") -> Tensor:
+        return self.gene_token_encoder(tokens, self.global_step, force_use_specie_embs=stage == "val")
 
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
+
+    def configure_optimizers(self):
+        # Separate parameters into those with and without weight decay
+        # Frozen embeddings should not have weight decay applied
+        if self.gene_token_encoder.pretrained_vocabulary_available:
+            params_with_decay = []
+            params_without_decay = []
+
+            for name, param in self.named_parameters():
+                if not param.requires_grad:
+                    continue
+                if hasattr(self, "gene_token_encoder") and param is self.gene_token_encoder.embedding.weight:
+                    params_without_decay.append(param)
+                else:
+                    params_with_decay.append(param)
+
+            param_groups = [
+                {"params": params_with_decay, "weight_decay": self.weight_decay},
+                {"params": params_without_decay, "weight_decay": 0.0},
+            ]
+        else:
+            param_groups = [{"params": self.parameters(), "weight_decay": self.weight_decay}]
+
+        optimizer = optim.Adam(param_groups, lr=self.lr)  # default Adam
+        if self.optimizer_class == "AdamW":
+            optimizer = optim.AdamW(param_groups, lr=self.lr)
+
+        if self.scheduler:
+            lr_scheduler = self._get_scheduler(optimizer)
+            return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
+        else:
+            return optimizer
 
     def _step(self, batch, batch_idx, stage="train", log_prefix="train"):
         assert stage in ["train", "val"], f"Invalid stage: {stage}"

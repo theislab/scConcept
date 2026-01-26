@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 class AnnDataModule(L.LightningDataModule):
     def __init__(
         self,
-        split: Dict,
         panels_path: str,
         tokenizer: Tokenizer,
         columns: List[str],
@@ -48,16 +47,17 @@ class AnnDataModule(L.LightningDataModule):
             "normalization": normalization,
         }
 
-        if "train" in split and split["train"] is not None and "train" in dataset_kwargs:
+        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+            train_split = dataset_kwargs["train"].pop("split")
             within_group_sampling = dataloader_kwargs["train"]["within_group_sampling"]
             keys_to_cache = [within_group_sampling] if within_group_sampling else []
             self.train_collate_fn = self._get_collate_fn(dataset_kwargs["train"], stage="train", split_input=True)
 
-            if isinstance(split["train"][0], AnnData):
+            if isinstance(train_split[0], AnnData):
                 assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
-                    adata_list=split["train"],
+                    adata_list=train_split,
                     obs_keys=columns,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
@@ -69,7 +69,7 @@ class AnnDataModule(L.LightningDataModule):
 
                 join = None if within_group_sampling else "outer"
                 collection = LaminDiskCollection(
-                    split["train"],
+                    train_split,
                     layers_keys="X",
                     obs_keys=columns,
                     keys_to_cache=keys_to_cache,
@@ -82,9 +82,10 @@ class AnnDataModule(L.LightningDataModule):
             self.train_dataset = TokenizedDataset(
                 **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"]}
             )
-        if "val" in split and split["val"] is not None and "val" in dataset_kwargs:
+        if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
             self.val_datasets = {}
             for val_name, val_kwargs in dataset_kwargs["val"].items():
+                val_split = val_kwargs.pop("split")
                 if "max_tokens" not in val_kwargs:
                     val_kwargs["max_tokens"] = self.default_max_tokens
                     logger.info(f"Setting max_tokens for {val_name} to {self.default_max_tokens}")
@@ -98,13 +99,13 @@ class AnnDataModule(L.LightningDataModule):
                 keys_to_cache = [within_group_sampling] if within_group_sampling else []
                 val_collate_fn = self._get_collate_fn(val_kwargs, stage="val", split_input=True)
 
-                if isinstance(split["val"][0], AnnData):
+                if isinstance(val_split[0], AnnData):
                     assert within_group_sampling == "dataset", (
                         "within_group_sampling must be dataset for AnnData objects"
                     )
                     # Use InMemoryCollection for AnnData objects
                     collection = InMemoryCollection(
-                        adata_list=split["val"],
+                        adata_list=val_split,
                         obs_keys=columns,
                         layers_keys=["X"],
                         obsm_keys=precomp_embs_key,
@@ -116,7 +117,7 @@ class AnnDataModule(L.LightningDataModule):
 
                     join = None if within_group_sampling else "outer"
                     collection = LaminDiskCollection(
-                        split["val"],
+                        val_split,
                         layers_keys="X",
                         obs_keys=columns,
                         keys_to_cache=keys_to_cache,
@@ -128,15 +129,16 @@ class AnnDataModule(L.LightningDataModule):
 
                 dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
                 self.val_datasets[val_name] = (dataset, val_collate_fn)
-        if "test" in split and split["test"] is not None and "test" in dataset_kwargs:
+        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None:
+            test_split = dataset_kwargs["test"].pop("split")
             keys_to_cache = None
             self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], stage="test", split_input=False)
 
-            if isinstance(split["test"][0], AnnData):
+            if isinstance(test_split[0], AnnData):
                 # Use InMemoryCollection for AnnData objects
                 assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
                 collection = InMemoryCollection(
-                    adata_list=split["test"],
+                    adata_list=test_split,
                     obs_keys=columns,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
@@ -147,7 +149,7 @@ class AnnDataModule(L.LightningDataModule):
                 from lamin_dataloader.lamin_disk_collection import LaminDiskCollection
 
                 collection = LaminDiskCollection(
-                    split["test"],
+                    test_split,
                     layers_keys="X",
                     obs_keys=columns,
                     keys_to_cache=keys_to_cache,

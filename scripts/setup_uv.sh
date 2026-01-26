@@ -46,7 +46,7 @@ check_cuda() {
 # Install flash-attn only if CUDA is available
 if check_cuda; then
     echo "⚡ Installing flash-attn (CUDA detected)..."
-    uv pip install flash-attn==2.7.* --no-build-isolation
+    MAX_JOBS=10 uv pip install flash-attn>=2.7 --no-build-isolation
 else
     echo "⏭️  Skipping flash-attn installation (CUDA not available)"
 fi

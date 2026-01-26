@@ -6,12 +6,37 @@ from datetime import timedelta
 from typing import List
 
 import torch
+from lamin_dataloader import GeneIdTokenizer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
+def merge_lists(split):
+    """Flatten a list of lists into a single list. Returns the original data if not a list of lists."""
+    if isinstance(split, list) and len(split) > 0 and isinstance(split[0], list):
+        split = [item for sublist in split for item in sublist]
+
+    return split
+
+def load_pretrained_vocabulary(pretrained_vocabulary_path: str, tokenizer: GeneIdTokenizer) -> list:
+    import pandas as pd
+
+    df = pd.read_csv(pretrained_vocabulary_path, index_col=0)
+    pretrained_dict = {str(idx): row.values for idx, row in df.iterrows()}
+
+    pretrained_vocabulary = {}
+    gene_names = tokenizer.decode(list(range(len(tokenizer.gene_mapping))))
+    not_found_embeddings = []
+    for idx, gene_name in enumerate(gene_names):
+        if gene_name in pretrained_dict:
+            pretrained_vocabulary[idx] = torch.FloatTensor(pretrained_dict[gene_name])
+        else:
+            not_found_embeddings.append(gene_name)
+    if len(not_found_embeddings) > 0:
+        logger.warning(f"Pretrained embeddings not found for {len(not_found_embeddings)} genes")
+    return pretrained_vocabulary
 
 def get_start_epoch(cfg) -> int:
     if not cfg.initialize.resume:
