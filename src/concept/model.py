@@ -804,6 +804,8 @@ class ContrastiveModel(BaseTransformerModel):
         token_intersect = np.intersect1d(batch["tokens_1"][0].cpu().numpy(), batch["tokens_2"][0].cpu().numpy()).size
 
         sample_stats = {
+            "organism": batch["organism"],
+            "tissue": batch["tissue"],
             "panel_name_1": batch["panel_name_1"],
             "panel_name_2": batch["panel_name_2"],
             "panel_size_1": int(panel_size_1),

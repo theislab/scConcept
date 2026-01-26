@@ -53,19 +53,7 @@ class Collate(BaseCollate):
         self.panel_selection = panel_selection
         self.panel_selection_mixed_prob = panel_selection_mixed_prob
         if self.panel_selection != "random":
-            self.panels_dir = Path(panels_path)
-            self.panel_names = [
-                panel_name
-                for panel_name in os.listdir(self.panels_dir)
-                if re.search(panel_filter_regex, panel_name) and panel_name.endswith(".csv")
-            ]
-            self.panels = [
-                self.tokenizer.encode(pd.read_csv(self.panels_dir / panel_name)["Ensembl_ID"].values)
-                for panel_name in self.panel_names
-            ]
-            if stage == "train":
-                for i in range(len(self.panels)):
-                    logger.info(f"Panel {self.panel_names[i]} size: {len(self.panels[i])} genes")
+            self.load_panels(panels_path, panel_filter_regex, stage)
         self.panel_size_min = panel_size_min
         self.panel_size_max = panel_size_max
         self.panel_overlap = panel_overlap
@@ -98,6 +86,35 @@ class Collate(BaseCollate):
             else:
                 self._rng = np.random.default_rng(seed)
         return self._rng
+
+    def load_panels(self, panels_path, panel_filter_regex, stage="train"):
+        panels_path = Path(panels_path)
+        # Load panels from organisms-specific subdirectories
+        self.panels_dict = {}
+        self.panel_names_dict = {}
+
+        # Load panels from each organisms subdirectory
+        subdirs = [d for d in panels_path.iterdir() if d.is_dir()]
+
+        for organism_dir in subdirs:
+            organism_name = organism_dir.name
+            panel_files = [
+                panel_file
+                for panel_file in os.listdir(organism_dir)
+                if re.search(panel_filter_regex, panel_file) and panel_file.endswith(".csv")
+            ]
+
+            if panel_files:
+                panels = [
+                    self.tokenizer.encode(pd.read_csv(organism_dir / panel_file)["Ensembl_ID"].values)
+                    for panel_file in panel_files
+                ]
+                self.panels_dict[organism_name] = panels
+                self.panel_names_dict[organism_name] = panel_files
+
+                if stage == "train":
+                    for i, panel_file in enumerate(panel_files):
+                        logger.info(f"Organism {organism_name}, Panel {panel_file} size: {len(panels[i])} genes")
 
     def shared_feature_stats(self, batch):
         num_shared_featrues = []
@@ -167,16 +184,20 @@ class Collate(BaseCollate):
     #         # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
     #         return available_panels, panel_probs
 
-    def _get_predesigned_panel(self, batch):
-        i = self.rng.integers(0, len(self.panels))
+    def _get_predesigned_panel(self, batch, organism, tissue):
+        # Randomly select a panel from that organism
+        panels = self.panels_dict[organism]
+        panel_names = self.panel_names_dict[organism]
+        i = self.rng.integers(0, len(panels))
+
         # available_panels, panel_probs = self._custom_panel_selection(batch)
         # i = self.rng.choice(available_panels, p=panel_probs)
-        panel = self.panels[i]
+        panel = panels[i]
         if self.panel_max_drop_rate is not None and self.panel_max_drop_rate > 0:
             panel_max_drop_rate = self.rng.uniform(0, self.panel_max_drop_rate)
             drop_mask = self.rng.uniform(size=len(panel)) > panel_max_drop_rate
             panel = panel[drop_mask]
-        return panel, self.panel_names[i]
+        return panel, f"{organism}/{panel_names[i]}"
 
     def __call__(self, batch):
         n_tokens = len(batch[0]["tokens"])
@@ -192,8 +213,12 @@ class Collate(BaseCollate):
         ]
 
         if self.split_input:
+            organism, tissue = batch[0].get("_organism"), batch[0].get("_tissue")
+            assert organism is not None, "_organism is None"
+
             n_tokens = len(batch_permute[0]["tokens"])
             panel_indices = np.arange(n_tokens)
+            is_targetted_assay = n_tokens < 10_000
 
             panel_name_1, panel_name_2 = "random", "random"
             panel_overlap = self.rng.uniform() <= float(self.panel_overlap)
@@ -201,26 +226,24 @@ class Collate(BaseCollate):
             if (
                 self.panel_selection == "random"
                 or (self.panel_selection == "mixed" and self.rng.uniform() <= self.panel_selection_mixed_prob)
-                or n_tokens < 10_000
+                or is_targetted_assay
+                or organism not in self.panels_dict
             ):
                 n_tokens_available = n_tokens if panel_overlap else max((n_tokens - self.panel_size_min), 0)
                 panel_size_1 = self.log_int_samping(
                     min(self.panel_size_min, n_tokens_available), min(self.panel_size_max, n_tokens_available)
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
-                # logger.info(f'Panel_1 random size: {len(panel_idx_1)}')
             else:
-                panel, panel_name_1 = self._get_predesigned_panel(batch_permute)
+                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, organism, tissue)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]["tokens"], panel))[0]
                 panel_size_1 = len(panel_idx_1)
-                # logger.info(f'Panel_1 {self.panel_names[i]} predefined size: {len(panel_idx_1)}')
 
             if panel_overlap:
                 panel_size_2 = self.log_int_samping(
                     min(self.panel_size_min, n_tokens), min(self.panel_size_max, n_tokens)
                 )
                 panel_idx_2 = self.rng.choice(panel_indices, panel_size_2, replace=False)
-                # logger.info(f'Panel_2 random size: {len(panel_idx_2)}, shared: {np.intersect1d(panel_idx_1, panel_idx_2).size}')
             else:
                 panel_size_2 = self.log_int_samping(
                     min(self.panel_size_min, n_tokens - panel_size_1), min(self.panel_size_max, n_tokens - panel_size_1)
@@ -295,6 +318,8 @@ class Collate(BaseCollate):
                 "panel_name_2": panel_name_2,
                 "seq_length_1": seq_length_1,
                 "seq_length_2": seq_length_2,
+                "organism": organism,
+                "tissue": tissue,
                 **{
                     key: default_collate([item[key] for item in batch])
                     for key in batch[0].keys()

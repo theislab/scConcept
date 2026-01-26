@@ -21,6 +21,7 @@ from concept.utils import (
     resume_wandb_config,
     load_pretrained_vocabulary,
     merge_lists,
+    check_organism_in_h5ad_files,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,8 @@ def train(cfg: DictConfig):
             data_path,
             cfg.PATH.LOCAL_DIR,
             list(merged_split),
-            compare_files=False,
+            compare_files=True,
+            force_copy=False,
         )
         data_path = cfg.PATH.LOCAL_DIR
 
@@ -76,6 +78,8 @@ def train(cfg: DictConfig):
     if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
         for val_name, val_kwargs in dataset_kwargs["val"].items():
             dataset_kwargs["val"][val_name]["split"] = [os.path.join(data_path, file) for file in val_kwargs["split"]]
+
+    check_organism_in_h5ad_files([os.path.join(data_path, file) for file in merged_split])
 
     datamodule_args = {
         "panels_path": cfg.PATH.PANELS_PATH,

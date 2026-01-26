@@ -1,10 +1,9 @@
 defaults:
-  - split_cellxgene_human: split_cellxgene_human_2023_12_15
-  - split_cellxgene_mouse: split_cellxgene_mouse_2023_12_15
-  # - split_cellxgene_callithrix_jacchus: split_cellxgene_callithrix_jacchus
-  # - split_cellxgene_macaca_mulatta: split_cellxgene_macaca_mulatta
-  # - split_cellxgene_pan_troglodytes: split_cellxgene_pan_troglodytes
-  # - split_scbasecount_human: split_scbasecount_human
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15
+  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15
+  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus
+  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta
+  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes  
   # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
   # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
   # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
@@ -33,8 +32,7 @@ precomp_embs_key: null
 dataset:
   train:
     split: 
-      - ${datamodule.split_cellxgene_human.train}
-      # - ${datamodule.split_cellxgene_mouse.train}
+      - ${datamodule.split_cellxgene_hsapiens.train}
     max_tokens: 1000
     panel_overlap: False
     panel_selection: mixed
@@ -49,8 +47,7 @@ dataset:
   val:
     same:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
-        # - ${datamodule.split_cellxgene_mouse.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_overlap: ${datamodule.dataset.train.panel_overlap}
       panel_selection: ${datamodule.dataset.train.panel_selection}
       panel_selection_mixed_prob: ${datamodule.dataset.train.panel_selection_mixed_prob}
@@ -59,45 +56,45 @@ dataset:
       panel_size_max: ${datamodule.dataset.train.panel_size_max}
     within_P200_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: random
       panel_size_min: 200
       panel_size_max: 200
     within_P800_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: random
       panel_size_min: 800
       panel_size_max: 800
     within_P6400_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
     within_unbalanced_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: random
       panel_size_min: 15000
       panel_size_max: 15000
     within_Preselected_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: ".*"
       panel_size_min: 800
       panel_size_max: 800
     within_P_Xenium_hIO_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: "Xenium_hIO_v1"
       panel_size_min: 800
       panel_size_max: 800
     within_P_Xenium_hIO_vs_all_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: "Xenium_hIO_v1"
       panel_size_min: 100000
@@ -105,14 +102,14 @@ dataset:
       panel_overlap: True
     within_P_SEAAD_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: "Merfish-SEA-AD"
       panel_size_min: 800
       panel_size_max: 800
     within_P_SEAAD_vs_all_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: "Merfish-SEA-AD"
       panel_size_min: 100000
@@ -120,32 +117,32 @@ dataset:
       panel_overlap: True
     within_P_Xenium_Human_Prime_5K_B256:
       split: 
-        - ${datamodule.split_cellxgene_human.val}
+        - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: "Xenium_Human_Prime_5K"
       panel_size_min: 800
       panel_size_max: 800
     within_P6400_B256_mouse:
       split: 
-        - ${datamodule.split_cellxgene_mouse.val}
+        - ${datamodule.split_cellxgene_mmusculus.val}
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
     # across_P800_B256:
     #   split: 
-    #     - ${datamodule.split_cellxgene_human.val}
+    #     - ${datamodule.split_cellxgene_hsapiens.val}
     #   panel_selection: random
     #   panel_size_min: 800
     #   panel_size_max: 800
     # within_donor_P800_B256:
     #   split: 
-    #     - ${datamodule.split_cellxgene_human.val}
+    #     - ${datamodule.split_cellxgene_hsapiens.val}
     #   panel_selection: random
     #   panel_size_min: 800
     #   panel_size_max: 800
     # within_P800_B256_variable:
     #   split: 
-    #     - ${datamodule.split_cellxgene_human.val}
+    #     - ${datamodule.split_cellxgene_hsapiens.val}
     #   panel_selection: random
     #   panel_size_min: 800
     #   panel_size_max: 800

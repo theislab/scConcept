@@ -1,3 +1,4 @@
+import h5py
 import filecmp
 import logging
 import os
@@ -30,12 +31,16 @@ def load_pretrained_vocabulary(pretrained_vocabulary_path: str, tokenizer: GeneI
     gene_names = tokenizer.decode(list(range(len(tokenizer.gene_mapping))))
     not_found_embeddings = []
     for idx, gene_name in enumerate(gene_names):
-        if gene_name in pretrained_dict:
+        if gene_name == tokenizer.CLS_VOCAB or gene_name == tokenizer.PAD_VOCAB:
+            continue
+        elif gene_name in pretrained_dict:
             pretrained_vocabulary[idx] = torch.FloatTensor(pretrained_dict[gene_name])
         else:
             not_found_embeddings.append(gene_name)
     if len(not_found_embeddings) > 0:
         logger.warning(f"Pretrained embeddings not found for {len(not_found_embeddings)} genes")
+    else:
+        logger.info(f"Pretrained embeddings found for all {len(gene_names)} genes")
     return pretrained_vocabulary
 
 def get_start_epoch(cfg) -> int:
@@ -73,7 +78,7 @@ def get_profiler(checkpoint_path: str):
     return pl_profiler
 
 
-def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files: bool = False):
+def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files: bool = False, force_copy: bool = False):
     logger.info("Copying files to directory...")
     if not os.path.exists(dst_path):
         os.makedirs(dst_path, exist_ok=True)
@@ -81,7 +86,7 @@ def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files
     for file in filenames:
         src_file = os.path.join(src_path, file)
         dst_file = os.path.join(dst_path, file)
-        if not os.path.exists(dst_file) or (compare_files and not filecmp.cmp(src_file, dst_file)):
+        if not os.path.exists(dst_file) or (compare_files and not filecmp.cmp(src_file, dst_file, shallow=True)) or force_copy:
             shutil.copy(src_file, dst_file)
             copy_count += 1
     logger.info(f"{copy_count} files copied successfully!")
@@ -136,3 +141,24 @@ def _get_callbacks(checkpoint_path: str, max_steps: int):
         ),
     ]
     return callbacks
+
+
+def check_organism_in_h5ad_files(file_paths: list) -> None:
+    """Check if all h5ad files have '_organism' in their uns attribute.
+
+    Args:
+        file_paths: List of paths to h5ad files to check
+
+    Raises
+    ------
+    ValueError
+        If any file is missing the '_organism' key in uns
+    """
+    for file_path in file_paths:
+        if not os.path.exists(file_path):
+            logger.warning(f"File not found: {file_path}")
+            continue
+
+        with h5py.File(file_path, 'r') as f:
+            if 'uns' not in f or '_organism' not in f['uns']:
+                raise ValueError(f"File {file_path} is missing '_organism' in uns")

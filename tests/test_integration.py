@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader
 from concept import ContrastiveModel
 
 
-def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths = None):
+def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=None):
     """
     Mock the _encode function to avoid complex transformer computations.
     Returns mock embeddings and cell embeddings with correct shapes.
@@ -150,8 +150,8 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
 
     model = ContrastiveModel(
         config=mock_config,
-        pad_token_id=0,
-        cls_token_id=1,
+        cls_token_id=0,
+        pad_token_id=1,
         vocab_size=100,
         world_size=1,
         val_loader_names=["val_test"],
@@ -182,6 +182,8 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
+        "organism": "hsapiens",
+        "tissue": "test_tissue",
     }
 
     # Test training step
@@ -259,6 +261,8 @@ def test_validation_step(mock_config, device, flash_attention):
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
+        "organism": "hsapiens",
+        "tissue": "test_tissue",
     }
 
     # Test validation step and check model.log calls
@@ -498,7 +502,9 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     assert not sc_concept.model.training, "Model should be in eval mode after loading"
 
     # Run training
-    sc_concept.train(adata_list=adata, max_steps=training_max_steps, batch_size=training_batch_size)
+    sc_concept.train(
+        adata_list=adata, organism="hsapiens", max_steps=training_max_steps, batch_size=training_batch_size
+    )
 
     # Verify model is still valid after training
     assert sc_concept.model is not None

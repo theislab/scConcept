@@ -45,6 +45,7 @@ class AnnDataModule(L.LightningDataModule):
             "obsm_key": precomp_embs_key,
             "tokenizer": tokenizer,
             "normalization": normalization,
+            "uns_keys": ["_organism", "_tissue"],
         }
 
         if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
@@ -77,6 +78,7 @@ class AnnDataModule(L.LightningDataModule):
                     encode_labels=True,
                     parallel=True,
                     obsm_keys=precomp_embs_key,
+                    uns_keys=["_organism", "_tissue"],
                 )
 
             self.train_dataset = TokenizedDataset(
@@ -125,6 +127,7 @@ class AnnDataModule(L.LightningDataModule):
                         encode_labels=True,
                         parallel=True,
                         obsm_keys=precomp_embs_key,
+                        uns_keys=["_organism", "_tissue"],
                     )
 
                 dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
@@ -156,6 +159,7 @@ class AnnDataModule(L.LightningDataModule):
                     join=None,
                     encode_labels=True,
                     parallel=True,
+                    uns_keys=["_organism", "_tissue"],
                 )
 
             self.test_dataset = TokenizedDataset(

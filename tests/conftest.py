@@ -61,6 +61,8 @@ def adata():
     adata = ad.AnnData(X=X)
     adata.var_names = real_gene_names
     adata.var["gene_symbols"] = real_gene_names
+    adata.uns["_organism"] = "hsapiens"
+    adata.uns["_tissue"] = "test_tissue"
 
     return adata
 
@@ -83,7 +85,8 @@ def train_config(adata, tokenizer, device, tmp_path):
     adata_dir = tmp_path / "h5ads"
     adata_dir.mkdir()
     panels_dir = tmp_path / "panels"
-    panels_dir.mkdir()
+    organism_panels_dir = panels_dir / "hsapiens"
+    organism_panels_dir.mkdir(parents=True)
     checkpoint_dir = tmp_path / "checkpoints"
     checkpoint_dir.mkdir()
 
@@ -93,12 +96,18 @@ def train_config(adata, tokenizer, device, tmp_path):
 
     # Create gene mapping pickle file
     gene_mapping = tokenizer.gene_mapping
-    gene_mapping_series = pd.Series(gene_mapping)
-    gene_mapping_path = tmp_path / "gene_mapping.pkl"
-    gene_mapping_series.to_pickle(gene_mapping_path)
+    gene_mapping_series = pd.Series(gene_mapping, name="token")
+    gene_mapping_path = tmp_path / "gene_mapping.csv"
+    gene_mapping_series.to_csv(gene_mapping_path, index_label="gene_id")
+
+    pretrained_vocabulary_path = tmp_path / "pretrained_vocabulary.csv"
+    gene_names = list(tokenizer.gene_mapping.keys())[2:]  # skip <pad> and <cls>
+    vectors = [np.random.rand(10) for _ in gene_names]
+    df = pd.DataFrame(vectors, index=gene_names)
+    df.to_csv(pretrained_vocabulary_path)
 
     # Create a simple panel file
-    panel_file = panels_dir / "test_panel.csv"
+    panel_file = organism_panels_dir / "test_panel.csv"
     panel_df = pd.DataFrame({"Ensembl_ID": adata.var_names[:5].tolist()})
     panel_df.to_csv(panel_file, index=False)
 
@@ -116,9 +125,8 @@ def train_config(adata, tokenizer, device, tmp_path):
                 f"PATH.DATASET_PATH={tmp_path}",
                 f"PATH.ADATA_PATH={adata_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
-                f"PATH.gene_mapping_path={gene_mapping_path}",
-                # Override split to use test data
-                "split=split_v1_large",
+                f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
+                f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_path}",
                 # Override datamodule settings
                 "datamodule.columns=[]",
                 "datamodule.normalization=raw",
@@ -141,6 +149,8 @@ def train_config(adata, tokenizer, device, tmp_path):
                 "model.training.warmup=1",
                 "model.training.devices=1",
                 "model.training.num_nodes=1",
+                f"model.training.freeze_pretrained_vocabulary={bool(pretrained_vocabulary_path)}",
+                "model.training.use_specie_embs_freq=0.8",
                 # Disable wandb
                 "wandb.enabled=False",
                 "wandb.run_name=test_name",
@@ -148,7 +158,7 @@ def train_config(adata, tokenizer, device, tmp_path):
         )
 
     # Manually override the split to use our test file
-    cfg.PATH.SPLIT = {"train": ["test_data.h5ad"], "val": None, "test": None}
+    cfg.datamodule.dataset.train.split = ["test_data.h5ad"]
     logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     return cfg
