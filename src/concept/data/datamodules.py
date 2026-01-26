@@ -63,6 +63,7 @@ class AnnDataModule(L.LightningDataModule):
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
                     keys_to_cache=keys_to_cache,
+                    uns_keys=["_organism", "_tissue"],
                 )
             else:
                 # Use LaminDiskCollection for file paths
@@ -112,6 +113,7 @@ class AnnDataModule(L.LightningDataModule):
                         layers_keys=["X"],
                         obsm_keys=precomp_embs_key,
                         keys_to_cache=keys_to_cache,
+                        uns_keys=["_organism", "_tissue"],
                     )
                 else:
                     # Use LaminDiskCollection for file paths
@@ -146,6 +148,7 @@ class AnnDataModule(L.LightningDataModule):
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
                     keys_to_cache=keys_to_cache,
+                    uns_keys=["_organism", "_tissue"],
                 )
             else:
                 # Use LaminDiskCollection for file paths
