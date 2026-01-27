@@ -175,4 +175,6 @@ temp/
 cache/
 checkpoints/
 src/concept/conf/datamodule/DataModuleTest.yaml
-src/concept/conf/split/split_v1_test.yaml
+src/concept/conf/datamodule/split_cellxgene_hsapiens/split_cellxgene_hsapiens_test.yaml
+src/concept/validate.py
+src/concept/conf/datamodule/DataModuleValidation.yaml

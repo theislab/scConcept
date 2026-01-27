@@ -102,8 +102,6 @@ def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
     cfg = DictConfig(run.config)
 
     cfg = OmegaConf.merge(cfg, bash_cfg)
-    if rank_zero_only.rank == 0:
-        logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     if not cfg.initialize.create_new_run:
         os.environ["WANDB_TAGS"] = ",".join(run.tags) + "," + os.environ.get("WANDB_TAGS", "")

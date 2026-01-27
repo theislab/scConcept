@@ -48,7 +48,7 @@ class AnnDataModule(L.LightningDataModule):
             "uns_keys": ["_organism", "_tissue"],
         }
 
-        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]) > 0:
             train_split = dataset_kwargs["train"].pop("split")
             within_group_sampling = dataloader_kwargs["train"]["within_group_sampling"]
             keys_to_cache = [within_group_sampling] if within_group_sampling else []
@@ -85,9 +85,12 @@ class AnnDataModule(L.LightningDataModule):
             self.train_dataset = TokenizedDataset(
                 **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"]}
             )
+
         if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
             self.val_datasets = {}
             for val_name, val_kwargs in dataset_kwargs["val"].items():
+                if len(val_kwargs["split"]) == 0:
+                    continue
                 val_split = val_kwargs.pop("split")
                 if "max_tokens" not in val_kwargs:
                     val_kwargs["max_tokens"] = self.default_max_tokens
@@ -134,7 +137,8 @@ class AnnDataModule(L.LightningDataModule):
 
                 dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
                 self.val_datasets[val_name] = (dataset, val_collate_fn)
-        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None:
+
+        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None and len(dataset_kwargs["test"]["split"]) > 0:
             test_split = dataset_kwargs["test"].pop("split")
             keys_to_cache = None
             self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], stage="test", split_input=False)
