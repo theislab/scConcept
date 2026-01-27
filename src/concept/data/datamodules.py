@@ -181,7 +181,6 @@ class AnnDataModule(L.LightningDataModule):
         keys_to_pop = [
             "max_tokens",
             "min_tokens",
-            "variable_size",
             "panel_selection",
             "panel_selection_mixed_prob",
             "panel_filter_regex",

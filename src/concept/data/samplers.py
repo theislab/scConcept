@@ -83,4 +83,5 @@ class DistributedSamplerWrapper(LightningDistributedSamplerWrapper):
 
     def set_epoch(self, epoch: int) -> None:
         super().set_epoch(epoch)
-        self.dataset._sampler.set_epoch(epoch)
+        if hasattr(self.dataset._sampler, "set_epoch"):
+            self.dataset._sampler.set_epoch(epoch)

@@ -24,7 +24,6 @@ class Collate(BaseCollate):
         min_tokens=0,
         panels_path=None,
         split_input=False,
-        variable_size=False,
         gene_sampling_strategy="top-nonzero",
         panel_selection="random",
         panel_selection_mixed_prob=1.0,

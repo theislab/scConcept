@@ -560,7 +560,6 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         "train": {
             "split": [adata],
             "max_tokens": 20,
-            "variable_size": False,
             "panel_selection": "mixed",
             "panel_selection_mixed_prob": 0.5,
             "panel_filter_regex": ".*",
@@ -573,7 +572,6 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             "val_1": {
                 "split": [adata],
                 "max_tokens": 20,
-                "variable_size": False,
                 "panel_selection": "random",
                 "panel_selection_mixed_prob": 0.5,
                 "panel_filter_regex": ".*",

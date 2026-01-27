@@ -122,7 +122,7 @@ dataset:
       panel_filter_regex: "Xenium_Human_Prime_5K"
       panel_size_min: 800
       panel_size_max: 800
-    within_P6400_B256_mouse:
+    within_P6400_B256_mmusculus:
       split: 
         - ${datamodule.split_cellxgene_mmusculus.val}
       panel_selection: random
@@ -135,12 +135,6 @@ dataset:
     #   panel_size_min: 800
     #   panel_size_max: 800
     # within_donor_P800_B256:
-    #   split: 
-    #     - ${datamodule.split_cellxgene_hsapiens.val}
-    #   panel_selection: random
-    #   panel_size_min: 800
-    #   panel_size_max: 800
-    # within_P800_B256_variable:
     #   split: 
     #     - ${datamodule.split_cellxgene_hsapiens.val}
     #   panel_selection: random
@@ -246,7 +240,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
-    within_P6400_B256_mouse:
+    within_P6400_B256_mmusculus:
       within_group_sampling: "dataset"
       batch_size: 256
       shuffle: True
@@ -264,14 +258,6 @@ dataloader:
     #   num_samples: 100000
     # within_donor_P800_B256:
     #   within_group_sampling: "donor_id"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    # within_P800_B256_variable:
-    #   within_group_sampling: "dataset"
     #   batch_size: 256
     #   shuffle: True
     #   num_workers: 2
