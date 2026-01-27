@@ -142,17 +142,18 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         fixed_idx = 2
         # Create a pretrained vocabulary with a known value and keep reference for later
         with torch.no_grad():
-            pretrained_vocabulary = {fixed_idx: torch.ones(100, requires_grad=False)}
+            pretrained_vocabulary = {fixed_idx: torch.ones(256, requires_grad=False)}
         mock_config["training"]["freeze_pretrained_vocabulary"] = True
         mock_config["training"]["use_specie_embs_freq"] = 1.0
     else:
         pretrained_vocabulary = None
 
+    vocab_size = 20
     model = ContrastiveModel(
         config=mock_config,
         cls_token_id=0,
         pad_token_id=1,
-        vocab_size=100,
+        vocab_size=vocab_size,
         world_size=1,
         val_loader_names=["val_test"],
         pretrained_vocabulary=pretrained_vocabulary,
@@ -166,15 +167,15 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
     batch_size = 8
     seq_len = 20
 
-    panel = torch.randint(2, 100, (1, 10))
+    panel = torch.randint(2, vocab_size, (1, 10))
     panel = panel.repeat(batch_size, 1)
 
     # Create mock batch with paired data
     batch = {
-        "tokens_1": torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        "tokens_1": torch.randint(2, vocab_size, (batch_size, seq_len)).to(device),
         "values_1": torch.randn(batch_size, seq_len).to(device),
         "panel_1": panel.to(device),
-        "tokens_2": torch.randint(2, 100, (batch_size, seq_len)).to(device),
+        "tokens_2": torch.randint(2, vocab_size, (batch_size, seq_len)).to(device),
         "values_2": torch.randn(batch_size, seq_len).to(device),
         "panel_2": panel.to(device),
         "dataset": torch.randint(0, 2, (batch_size,)).to(device),

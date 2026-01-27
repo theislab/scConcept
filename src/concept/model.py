@@ -92,7 +92,7 @@ class BaseTransformerModel(L.LightningModule):
             )
             tokens = tokens.squeeze(-1)
 
-            gene_embs = self._encode_gene_tokens(tokens, stage="train")
+            gene_embs = self._encode_gene_tokens(tokens)
 
             if self.input_encoding == "rank_encoding":
                 # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
@@ -113,7 +113,7 @@ class BaseTransformerModel(L.LightningModule):
             # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
-            gene_embs = self._encode_gene_tokens(tokens, stage="train")
+            gene_embs = self._encode_gene_tokens(tokens)
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
@@ -125,7 +125,7 @@ class BaseTransformerModel(L.LightningModule):
 
         return embs_padded, cell_embs
 
-    def _encode_gene_tokens(self, tokens: Tensor, stage: Optional[str] = "train") -> Tensor:
+    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         raise NotImplementedError("Subclasses must implement _encode_gene_tokens method.")
 
     def _encode_values(self, values: Tensor) -> Tensor:
@@ -197,13 +197,11 @@ class GeneEncoder(nn.Module):
         padding_idx: Optional[int] = None,
         pretrained_vocabulary: Optional[dict] = None,
         freeze_pretrained_vocabulary: bool = None,
-        use_specie_embs_freq: float = None,
     ):
         super().__init__()
         self.emb_dim = emb_dim
         self.freeze_pretrained_vocabulary = freeze_pretrained_vocabulary
-        self.pretrained_vocabulary_available = pretrained_vocabulary is not None
-        self.use_specie_embs_freq = use_specie_embs_freq
+        self.pretrained_vocabulary_available = pretrained_vocabulary is not None        
 
         # If a pretrained vocabulary is provided, build custom embedding weights
         if self.pretrained_vocabulary_available:
@@ -213,10 +211,6 @@ class GeneEncoder(nn.Module):
             assert freeze_pretrained_vocabulary is not None, (
                 "freeze_pretrained_vocabulary must be provided if pretrained_vocabulary is provided"
             )
-            assert use_specie_embs_freq is not None, (
-                "use_specie_embs_freq must be provided if pretrained_vocabulary is provided"
-            )
-            assert 0.0 <= use_specie_embs_freq <= 1.0, "use_specie_embs_freq must be between 0.0 and 1.0"
 
             pretrained_dim = next(iter(pretrained_vocabulary.values())).shape[0]
             logger.info(f"Using pretrained embeddings for {len(pretrained_vocabulary)} genes of size {pretrained_dim}")
@@ -247,7 +241,7 @@ class GeneEncoder(nn.Module):
 
         self.enc_norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x: Tensor, global_step: Optional[int] = None, force_use_specie_embs: Optional[bool] = False) -> Tensor:
+    def forward(self, x: Tensor, add_specie_embs: bool = False) -> Tensor:
         if self.pretrained_vocabulary_available:
             specie_specific_embs = self.specie_specific_embs(x)
 
@@ -255,13 +249,7 @@ class GeneEncoder(nn.Module):
         if self.pretrained_vocabulary_available:
             if self.adapt_linear is not None:
                 x = self.adapt_linear(x)
-            # Deterministically add specie_specific_embs based on use_specie_embs_freq
-            if not force_use_specie_embs:
-                add_specie_embs = int((global_step + 1) * self.use_specie_embs_freq) > int(
-                    global_step * self.use_specie_embs_freq
-                )
-            else:
-                add_specie_embs = True
+
             x = x + specie_specific_embs * int(add_specie_embs)
 
         x = self.enc_norm(x)
@@ -384,14 +372,20 @@ class ContrastiveModel(BaseTransformerModel):
         self.label_keys_to_monitor = list(label_keys_to_monitor)
         self.batch_keys_to_monitor = list(batch_keys_to_monitor)
         assert self.contrastive_loss in ["binary", "multiclass"]
+        self.LOGGING_STEP = False
 
+        self.use_specie_embs_freq = config["training"]["use_specie_embs_freq"]
+        if pretrained_vocabulary is not None:
+            assert self.use_specie_embs_freq is not None, (
+                "use_specie_embs_freq must be provided if pretrained_vocabulary is provided"
+            )
+            assert 0.0 <= self.use_specie_embs_freq <= 1.0, "use_specie_embs_freq must be between 0.0 and 1.0"
         self.gene_token_encoder = GeneEncoder(
             self.vocab_size,
             self.dim_model,
             padding_idx=pad_token_id,
             pretrained_vocabulary=pretrained_vocabulary,
             freeze_pretrained_vocabulary=config["training"]["freeze_pretrained_vocabulary"],
-            use_specie_embs_freq=config["training"]["use_specie_embs_freq"],
         )
         if self.input_encoding == "value_encoding":
             self.value_encoder = ContinuousValueEncoder(self.dim_model, dropout=0.0)
@@ -405,15 +399,28 @@ class ContrastiveModel(BaseTransformerModel):
 
         self.sample_stats = {"train": [], "val": defaultdict(list)}
         self.logit_masks = {}
+        self.stage = None
 
-    def log_metrics(self, metric_name, value, stage="train", **kwargs):
+    def log_metrics(self, metric_name, value, **kwargs):
         kwargs = {"add_dataloader_idx": False, "sync_dist": True, **kwargs}
-        if stage == "train":
+        if self.stage == "train":
             self.log(metric_name, value, on_step=True, on_epoch=False, **kwargs)
         self.log(metric_name + "_epoch", value, on_step=False, on_epoch=True, **kwargs)
 
-    def _encode_gene_tokens(self, tokens: Tensor, stage: Optional[str] = "train") -> Tensor:
-        return self.gene_token_encoder(tokens, self.global_step, force_use_specie_embs=stage == "val")
+    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
+        if self.stage is None:
+            logger.warning("model.stage is not set! setting model.stage to 'predict'")
+            self.stage = "predict"
+
+        # Deterministically add specie_specific_embs based on use_specie_embs_freq
+        if self.stage == "train" and not self.LOGGING_STEP:
+            add_specie_embs = int((self.global_step + 1) * self.use_specie_embs_freq) > int(
+                self.global_step * self.use_specie_embs_freq
+            )
+        else:
+            add_specie_embs = True
+
+        return self.gene_token_encoder(tokens, add_specie_embs=add_specie_embs)
 
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
@@ -450,8 +457,8 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             return optimizer
 
-    def _step(self, batch, batch_idx, stage="train", log_prefix="train"):
-        assert stage in ["train", "val"], f"Invalid stage: {stage}"
+    def _step(self, batch, batch_idx, log_prefix="train"):
+        assert self.stage in ["train", "val"], f"Invalid stage: {self.stage}"
 
         batch_size = len(batch["tokens_1"])
         batch_1 = {
@@ -469,7 +476,7 @@ class ContrastiveModel(BaseTransformerModel):
             "seq_lengths": batch["seq_length_2"],
         }
 
-        if self.debug and batch_idx < 5 and stage == "train":
+        if self.debug and batch_idx < 5 and self.stage == "train":
             logger.debug(f"batch_1 values: {batch_1['values'][0]}")
             logger.debug(f"batch_2 values: {batch_2['values'][0]}")
 
@@ -552,27 +559,23 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
 
-        if stage == "val" or (stage == "train" and batch_idx % self.log_every_n_steps == 0):
-            self.log_metrics(f"{log_prefix}/loss", loss, stage=stage, batch_size=batch_size)
-            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, stage=stage, batch_size=batch_size)
+        if self.stage == "val" or (self.stage == "train" and self.LOGGING_STEP):
+            self.log_metrics(f"{log_prefix}/loss", loss, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, batch_size=batch_size)
             if loss_mlm > 0:
-                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, stage=stage, batch_size=batch_size)
+                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, batch_size=batch_size)
             self.log_metrics(
-                f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, stage=stage, batch_size=batch_size
-            )
-            self.log_metrics(
-                f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, stage=stage, batch_size=batch_size
+                f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, batch_size=batch_size
             )
             self.log_metrics(
                 f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}",
                 acc_cont_both_batch,
-                stage=stage,
                 batch_size=batch_size,
             )
             self.log_metrics(
                 f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}",
                 top5_acc_cont_both_batch,
-                stage=stage,
                 batch_size=batch_size,
             )
 
@@ -581,7 +584,7 @@ class ContrastiveModel(BaseTransformerModel):
         ######################################################################
 
         for label_key in self.label_keys_to_monitor:
-            if stage != "train" and label_key in batch:
+            if self.stage != "train" and label_key in batch:
                 labels_1, labels_2 = batch[label_key], batch[label_key]
                 if self.world_size > 1:
                     labels_1 = torch.cat(all_gather(labels_1), dim=0)
@@ -589,9 +592,9 @@ class ContrastiveModel(BaseTransformerModel):
                 label_acc = 0.5 * (
                     self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1)
                 )
-                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, stage=stage, batch_size=batch_size)
+                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, batch_size=batch_size)
 
-        if stage == "train" and batch_idx % self.log_every_n_steps == 0:
+        if self.stage == "train" and self.LOGGING_STEP:
             global_rank = torch.tensor([self.global_rank] * len(batch_1["tokens"]), device=self.device)
             if self.world_size > 1:
                 global_rank = torch.cat(all_gather(global_rank), dim=0)
@@ -599,17 +602,15 @@ class ContrastiveModel(BaseTransformerModel):
                 self._knn_accuracy(logits, global_rank, global_rank)
                 + self._knn_accuracy(logits.t(), global_rank, global_rank)
             )
-            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, stage=stage, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, batch_size=batch_size)
 
-        if stage != "train":
+        if self.stage != "train":
             views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
             views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
-            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, stage=stage, batch_size=batch_size)
-            self.log_metrics(
-                f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, stage=stage, batch_size=batch_size
-            )
+            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, batch_size=batch_size)
 
-        if self.debug and batch_idx % self.log_every_n_steps == 0:
+        if self.debug and self.LOGGING_STEP:
             nonzero_cnt_1 = (batch_1["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
             nonzero_cnt_2 = (batch_2["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
             if self.world_size > 1:
@@ -621,15 +622,21 @@ class ContrastiveModel(BaseTransformerModel):
                 [torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))]
             )
             length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, stage=stage, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, batch_size=batch_size)
 
             length_r2 = 0.5 * (
                 self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2)
                 + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1)
             )
-            self.log_metrics(f"{log_prefix}/length_r2", length_r2, stage=stage, batch_size=batch_size)
+            self.log_metrics(f"{log_prefix}/length_r2", length_r2, batch_size=batch_size)
 
-        if self.debug and self.world_size == 1 and self.global_rank == 0 and stage == "train" and batch_idx % 1000 == 0:
+        if (
+            self.debug
+            and self.world_size == 1
+            and self.global_rank == 0
+            and self.stage == "train"
+            and batch_idx % 1000 == 0
+        ):
             logger.debug(f"Argmax: {logits_both_batch.argmax(dim=1)}")
             logger.debug(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
             logger.debug(f'batch_1["values"][0]: {batch_1["values"][0]}')
@@ -649,41 +656,49 @@ class ContrastiveModel(BaseTransformerModel):
         return loss
 
     def training_step(self, batch, batch_idx):
+        self.stage = "train"
+        self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
+
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("train/loss", loss, stage="train")
+            self.log_metrics("train/loss", loss)
             return loss
 
-        if batch_idx % self.log_every_n_steps == 0:
+        if self.LOGGING_STEP:
             sample_stats = self._get_sample_stats(batch)
             self.sample_stats["train"].append(sample_stats)
 
-        loss = self._step(batch, batch_idx, stage="train", log_prefix="train")
+        loss = self._step(batch, batch_idx, log_prefix="train")
 
-        if self.debug and "panel_1" in batch and "panel_2" in batch and batch_idx % self.log_every_n_steps == 0:
+        if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
 
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        self.stage = "val"
+        self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
+
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("val/loss", loss, stage="val")
+            self.log_metrics("val/loss", loss)
             return loss
 
         val_name = self.val_loader_names[dataloader_idx]
         prefix = prefix = f"val/{val_name}" if val_name != "same" else "val"
 
-        if batch_idx % 10 == 0:
-            sample_stats = self._get_sample_stats(batch)
-            self.sample_stats["val"][val_name].append(sample_stats)
+        sample_stats = self._get_sample_stats(batch)
+        self.sample_stats["val"][val_name].append(sample_stats)
 
-        loss = self._step(batch, batch_idx, stage="val", log_prefix=prefix)
+        loss = self._step(batch, batch_idx, log_prefix=prefix)
 
-        if self.debug and "panel_1" in batch and "panel_2" in batch and batch_idx % self.log_every_n_steps == 0:
+        if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
 
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, batch_idx, use_specie_embs: bool = True):
+        self.stage = "predict"
+        self.use_specie_embs_freq = int(use_specie_embs)
+
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
         # logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
