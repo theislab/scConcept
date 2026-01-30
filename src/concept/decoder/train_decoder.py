@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from concept.decoder_model import MLPDecoderModel, TransformerDecoderModel
+from .decoder_model import MLPDecoderModel, TransformerDecoderModel
 
 
 class GeneExpressionDataset(Dataset):

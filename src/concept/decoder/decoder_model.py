@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from .modules.td_layer import TransformerDecoderLayer
-from .modules.transformer import TransformerDecoder
+from concept.modules.td_layer import TransformerDecoderLayer
+from concept.modules.transformer import TransformerDecoder
 
 
 class MLPDecoderModel(L.LightningModule):

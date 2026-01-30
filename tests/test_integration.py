@@ -780,7 +780,7 @@ def test_train_decoder_integration(adata, device, tmp_path):
     """
     from pathlib import Path
 
-    from concept.train_decoder import train_decoder
+    from concept.decoder.train_decoder import train_decoder
 
     # Add cell embeddings to adata
     cell_emb_dim = 64
@@ -828,7 +828,7 @@ def test_decoder_model_integration(device):
     - Execute validation step
     - Update parameters during training
     """
-    from concept.decoder_model import TransformerDecoderModel
+    from concept.decoder import TransformerDecoderModel
 
     # Model configuration
     num_genes = 100
