@@ -1,10 +1,16 @@
 import torch
 from torch import Tensor
 from typing import Optional
-from flash_attn.modules.mha import MHA # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
+from flash_attn.modules.mha import (
+    MHA,
+)  # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
 
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class FlashTransformerEncoderLayer(nn.Module):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
@@ -31,6 +37,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         >>> src = torch.rand(32, 10, 512)
         >>> out = encoder_layer(src)
     """
+
     __constants__ = ["batch_first"]
 
     def __init__(
@@ -49,13 +56,10 @@ class FlashTransformerEncoderLayer(nn.Module):
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        # self.self_attn = FlashMHA(
-        #     embed_dim=d_model,
-        #     num_heads=nhead,
-        #     batch_first=batch_first,
-        #     attention_dropout=dropout,
-        #     **factory_kwargs,
-        # )
+
+        if use_flash_attn:
+            logger.info("Using FlashAttention")
+
         self.self_attn = MHA(
             embed_dim=d_model,
             num_heads=nhead,
@@ -160,6 +164,7 @@ class FlashTransformerDecoderLayer(nn.Module):
         >>> memory = torch.rand(32, 20, 512)
         >>> out = decoder_layer(tgt, memory)
     """
+
     __constants__ = ["batch_first"]
 
     def __init__(
@@ -179,6 +184,8 @@ class FlashTransformerDecoderLayer(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
+        if use_flash_attn:
+            logger.info("Using FlashAttention")
         # Self-attention
         self.self_attn = MHA(
             embed_dim=d_model,
@@ -280,20 +287,13 @@ class FlashTransformerDecoderLayer(nn.Module):
             # Self-attention block
             tgt = self.norm1(tgt)
             tgt2 = self.self_attn(
-                tgt,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-                key_padding_mask=tgt_key_padding_mask
+                tgt, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=tgt_key_padding_mask
             )
             tgt = tgt + self.dropout1(tgt2)
 
             # Cross-attention block
             tgt = self.norm2(tgt)
-            tgt2 = self.multihead_attn(
-                tgt,
-                x_kv=memory,
-                key_padding_mask=memory_key_padding_mask
-            )
+            tgt2 = self.multihead_attn(tgt, x_kv=memory, key_padding_mask=memory_key_padding_mask)
             tgt = tgt + self.dropout2(tgt2)
 
             # Feedforward block
@@ -303,20 +303,13 @@ class FlashTransformerDecoderLayer(nn.Module):
         else:
             # Self-attention block
             tgt2 = self.self_attn(
-                tgt,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-                key_padding_mask=tgt_key_padding_mask
+                tgt, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=tgt_key_padding_mask
             )
             tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
 
             # Cross-attention block
-            tgt2 = self.multihead_attn(
-                tgt,
-                x_kv=memory,
-                key_padding_mask=memory_key_padding_mask
-            )
+            tgt2 = self.multihead_attn(tgt, x_kv=memory, key_padding_mask=memory_key_padding_mask)
             tgt = tgt + self.dropout2(tgt2)
             tgt = self.norm2(tgt)
 
@@ -326,4 +319,3 @@ class FlashTransformerDecoderLayer(nn.Module):
             tgt = self.norm3(tgt)
 
         return tgt
-

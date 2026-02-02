@@ -827,10 +827,11 @@ def test_decoder_model_integration(device):
 
     # Test forward pass
     with torch.no_grad():
-        predictions = model(cell_embedding, gene_indices)
-        assert predictions.shape == (batch_size, num_genes_in_batch)
-        assert predictions.device.type == device.type
-        assert not torch.isnan(predictions).any()
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            predictions = model(cell_embedding, gene_indices)
+            assert predictions.shape == (batch_size, num_genes_in_batch)
+            assert predictions.device.type == device.type
+            assert not torch.isnan(predictions).any()
 
     # Test training step
     optimizer = model.configure_optimizers()
@@ -870,7 +871,8 @@ def test_decoder_model_integration(device):
     # Test validation step
     model.eval()
     with torch.no_grad(), patch.object(model, "log", _mock_log):
-        val_loss = model.validation_step(batch, batch_idx=0)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            val_loss = model.validation_step(batch, batch_idx=0)
 
     assert isinstance(val_loss, torch.Tensor)
     assert not torch.isnan(val_loss)
