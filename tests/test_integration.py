@@ -768,55 +768,6 @@ def test_train_integration(train_config):
             train(train_config)
 
 
-def test_train_decoder_integration(adata, device, tmp_path):
-    """Integration test for train_decoder function.
-
-    Tests that train_decoder can:
-    - Load AnnData with cell embeddings and expression data
-    - Create dataset and dataloaders
-    - Initialize decoder model
-    - Train for a few epochs
-    - Save checkpoints
-    """
-    from pathlib import Path
-
-    from concept.decoder.train_decoder import train_decoder
-
-    # Add cell embeddings to adata
-    cell_emb_dim = 64
-    adata.obsm["X_embedding"] = np.random.randn(adata.n_obs, cell_emb_dim).astype(np.float32)
-
-    # Add gene IDs to var
-    adata.var["gene_ids"] = adata.var_names
-
-    # Set output directory
-    output_dir = str(tmp_path / "decoder_checkpoints")
-
-    # Train with minimal configuration for fast testing
-    train_decoder(
-        adata=adata,
-        cell_emb_key="X_embedding",
-        gene_id_key="gene_ids",
-        output_dir=output_dir,
-        dim_model=16,
-        num_head=2,
-        dim_hid=32,
-        nlayers=2,
-        dropout=0.1,
-        lr=1e-3,
-        weight_decay=0.0,
-        batch_size=8,
-        max_epochs=2,
-        val_split=0.2,
-        num_workers=0,  # Use 0 workers for simpler testing
-    )
-
-    # Verify checkpoints were created
-    checkpoint_dir = Path(output_dir)
-    assert checkpoint_dir.exists()
-    checkpoint_files = list(checkpoint_dir.glob("*.ckpt"))
-    assert len(checkpoint_files) > 0, "No checkpoint files were created"
-
 
 def test_decoder_model_integration(device):
     """Integration test for TransformerDecoderModel.
@@ -889,7 +840,8 @@ def test_decoder_model_integration(device):
 
     # Mock the log method to avoid trainer reference errors
     with patch.object(model, "log", _mock_log):
-        loss = model.training_step(batch, batch_idx=0)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            loss = model.training_step(batch, batch_idx=0)
 
     # Verify loss
     assert isinstance(loss, torch.Tensor)
@@ -924,6 +876,56 @@ def test_decoder_model_integration(device):
     assert not torch.isnan(val_loss)
     assert val_loss.device.type == device.type
     assert val_loss.item() >= 0
+
+
+def test_train_decoder_integration(adata, device, tmp_path):
+    """Integration test for train_decoder function.
+
+    Tests that train_decoder can:
+    - Load AnnData with cell embeddings and expression data
+    - Create dataset and dataloaders
+    - Initialize decoder model
+    - Train for a few epochs
+    - Save checkpoints
+    """
+    from pathlib import Path
+
+    from concept.decoder.train_decoder import train_decoder
+
+    # Add cell embeddings to adata
+    cell_emb_dim = 64
+    adata.obsm["X_embedding"] = np.random.randn(adata.n_obs, cell_emb_dim).astype(np.float32)
+
+    # Add gene IDs to var
+    adata.var["gene_ids"] = adata.var_names
+
+    # Set output directory
+    output_dir = str(tmp_path / "decoder_checkpoints")
+
+    # Train with minimal configuration for fast testing
+    train_decoder(
+        adata=adata,
+        cell_emb_key="X_embedding",
+        gene_id_key="gene_ids",
+        output_dir=output_dir,
+        dim_model=16,
+        num_head=2,
+        dim_hid=32,
+        nlayers=2,
+        dropout=0.1,
+        lr=1e-3,
+        weight_decay=0.0,
+        batch_size=8,
+        max_epochs=2,
+        val_split=0.2,
+        num_workers=0,  # Use 0 workers for simpler testing
+    )
+
+    # Verify checkpoints were created
+    checkpoint_dir = Path(output_dir)
+    assert checkpoint_dir.exists()
+    checkpoint_files = list(checkpoint_dir.glob("*.ckpt"))
+    assert len(checkpoint_files) > 0, "No checkpoint files were created"
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from concept.modules.td_layer import TransformerDecoderLayer
+from concept.modules.flash_attention_layer import FlashTransformerDecoderLayer
 from concept.modules.transformer import TransformerDecoder
 
 
@@ -138,12 +138,11 @@ class TransformerDecoderModel(L.LightningModule):
         self.gene_embeddings = nn.Embedding(num_genes, dim_model)
 
         # Transformer decoder
-        decoder_layer = TransformerDecoderLayer(
+        decoder_layer = FlashTransformerDecoderLayer(
             d_model=dim_model,
             nhead=num_head,
             dim_feedforward=dim_hid,
             dropout=dropout,
-            norm_first=True,
         )
         decoder_norm = nn.LayerNorm(dim_model)
         self.decoder = TransformerDecoder(decoder_layer, nlayers, decoder_norm)

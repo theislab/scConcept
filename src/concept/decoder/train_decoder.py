@@ -210,6 +210,7 @@ def train_decoder(
         callbacks=[checkpoint_callback],
         default_root_dir=output_dir,
         log_every_n_steps=10,
+        precision="bf16-mixed",
     )
 
     # Train
