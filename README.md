@@ -43,7 +43,7 @@ pip install git+https://github.com/theislab/scConcept.git@main
 2. [Flash Attention][] (required) - CUDA is required for installing flash-attn (Can take a few minutes to build):
 
 ```bash
-MAX_JOBS=4 pip install flash-attn>=2.7 --no-build-isolation
+MAX_JOBS=10 pip install flash-attn>=2.7 --no-build-isolation
 ```
 
 3. Install lamin-dataloader from GitHub (required):
