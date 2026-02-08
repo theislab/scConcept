@@ -241,7 +241,7 @@ class GeneEncoder(nn.Module):
 
         self.enc_norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x: Tensor, add_specie_embs: bool = False) -> Tensor:
+    def forward(self, x: Tensor, add_specie_embs: bool = None) -> Tensor:
         if self.pretrained_vocabulary_available:
             specie_specific_embs = self.specie_specific_embs(x)
 
@@ -413,12 +413,14 @@ class ContrastiveModel(BaseTransformerModel):
             self.stage = "predict"
 
         # Deterministically add specie_specific_embs based on use_specie_embs_freq
-        if self.stage == "train" and not self.LOGGING_STEP:
-            add_specie_embs = int((self.global_step + 1) * self.use_specie_embs_freq) > int(
-                self.global_step * self.use_specie_embs_freq
-            )
-        else:
-            add_specie_embs = True
+        add_specie_embs = None
+        if self.gene_token_encoder.pretrained_vocabulary_available:
+            if self.stage == "train" and not self.LOGGING_STEP:
+                add_specie_embs = int((self.global_step + 1) * self.use_specie_embs_freq) > int(
+                    self.global_step * self.use_specie_embs_freq
+                )
+            else:
+                add_specie_embs = True
 
         return self.gene_token_encoder(tokens, add_specie_embs=add_specie_embs)
 

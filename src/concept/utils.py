@@ -21,11 +21,25 @@ def merge_lists(split):
 
     return split
 
-def load_pretrained_vocabulary(pretrained_vocabulary_path: str, tokenizer: GeneIdTokenizer) -> list:
+def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneIdTokenizer) -> list:
     import pandas as pd
+    import glob
 
-    df = pd.read_csv(pretrained_vocabulary_path, index_col=0)
-    pretrained_dict = {str(idx): row.values for idx, row in df.iterrows()}
+    # Load all CSV files from the directory
+    csv_files = glob.glob(os.path.join(pretrained_vocabulary_dir, "*.csv"))
+    if not csv_files:
+        raise ValueError(f"No CSV files found in {pretrained_vocabulary_dir}")
+    
+    logger.info(f"Loading {len(csv_files)} CSV files from {pretrained_vocabulary_dir}")
+    
+    # Merge all CSV files into a single dictionary
+    pretrained_dict = {}
+    for csv_file in csv_files:
+        df = pd.read_csv(csv_file, index_col=0)
+        for idx, row in df.iterrows():
+            pretrained_dict[str(idx)] = row.values
+    
+    logger.info(f"Loaded {len(pretrained_dict)} gene embeddings from {len(csv_files)} files")
 
     pretrained_vocabulary = {}
     gene_names = tokenizer.decode(list(range(len(tokenizer.gene_mapping))))

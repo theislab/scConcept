@@ -100,7 +100,9 @@ def train_config(adata, tokenizer, device, tmp_path):
     gene_mapping_path = tmp_path / "gene_mapping.csv"
     gene_mapping_series.to_csv(gene_mapping_path, index_label="gene_id")
 
-    pretrained_vocabulary_path = tmp_path / "pretrained_vocabulary.csv"
+    pretrained_vocabulary_dir = tmp_path / "embeddings"
+    pretrained_vocabulary_dir.mkdir()
+    pretrained_vocabulary_path = pretrained_vocabulary_dir / "pretrained_vocabulary.csv"
     gene_names = list(tokenizer.gene_mapping.keys())[2:]  # skip <pad> and <cls>
     vectors = [np.random.rand(10) for _ in gene_names]
     df = pd.DataFrame(vectors, index=gene_names)
@@ -126,7 +128,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 f"PATH.ADATA_PATH={adata_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
                 f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
-                f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_path}",
+                f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
                 # Override datamodule settings
                 "datamodule.columns=[]",
                 "datamodule.normalization=raw",
