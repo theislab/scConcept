@@ -1,8 +1,10 @@
 import logging
+import math
 import os
+from typing import Iterator, Optional
 
 import numpy as np
-from lightning.fabric.utilities.distributed import DistributedSamplerWrapper as LightningDistributedSamplerWrapper
+import torch.distributed as dist
 from torch.utils.data import Sampler
 
 logger = logging.getLogger(__name__)
@@ -11,19 +13,19 @@ logger = logging.getLogger(__name__)
 class WithinGroupSampler(Sampler):
     def __init__(
         self,
-        storage_idx,
         obs_list,
         batch_size,
         num_samples=None,
+        max_samples_per_group=None,
         shuffle=True,
         drop_last=True,
         stage="train",
         start_epoch=0,
     ):
-        self.storage_idx = storage_idx
         self.obs_list = obs_list
         self.batch_size = batch_size
         self.num_samples = num_samples
+        self.max_samples_per_group = max_samples_per_group
         self.shuffle = shuffle
         self.drop_last = drop_last
         self.batches = None
@@ -37,16 +39,15 @@ class WithinGroupSampler(Sampler):
         return sum([len(batch) for batch in self.batches])
 
     def __iter__(self):
+        yield from np.hstack(self.batches)
         if self.stage == "train":
             self._create_batches()
-        yield from np.hstack(self.batches)
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
 
     def _validate_batches(self):
-        storage_idx = self.storage_idx
-        n_invalid_batches = sum([~(storage_idx[batch][0] == storage_idx[batch]).all() for batch in self.batches])
+        n_invalid_batches = sum([~(self.obs_list[batch][0] == self.obs_list[batch]).all() for batch in self.batches])
         assert n_invalid_batches == 0, f"Number of invalid batches: {n_invalid_batches}"
 
     def _create_batches(self):
@@ -57,31 +58,88 @@ class WithinGroupSampler(Sampler):
             rng = np.random.default_rng(self.seed)  # for validation and test
 
         self.batches = []
-        count = 0
-        for obs in self.obs_list:
-            n_obs = len(obs)
-            for value in np.unique(obs):
-                indices = np.argwhere(obs == value).flatten() + count
-                if self.shuffle:
-                    indices = rng.choice(indices, len(indices), replace=False)
-                num_chunks = int(np.ceil(len(indices) / self.batch_size))
-                batches = [indices[i * self.batch_size : (i + 1) * self.batch_size] for i in range(num_chunks)]
-                # drop_last
+        for value in np.unique(self.obs_list):
+            indices = np.argwhere(self.obs_list == value).flatten()
+            if self.shuffle:
+                indices = rng.choice(indices, len(indices), replace=False)
+            if self.max_samples_per_group is not None:
+                indices = indices[:self.max_samples_per_group]
+            num_chunks = int(np.ceil(len(indices) / self.batch_size))
+            batches = [indices[i * self.batch_size : (i + 1) * self.batch_size] for i in range(num_chunks)]
+            if self.drop_last:
                 batches = batches[:-1] if len(batches[-1]) < self.batch_size else batches
-                # shuffle(batches)
-                self.batches.extend(batches)
-            count += n_obs
-        rng.shuffle(self.batches)
+            self.batches.extend(batches)
+        if self.shuffle:
+            rng.shuffle(self.batches)
         if self.num_samples is not None:
             self.batches = self.batches[: self.num_samples // self.batch_size]
         self._validate_batches()
 
 
-class DistributedSamplerWrapper(LightningDistributedSamplerWrapper):
-    # Lightning calls this method when the epoch is set :
-    # https://github.com/Lightning-AI/pytorch-lightning/blob/a967b6eba0556943ad1d7c2a8dc41f1da4f68b2d/pytorch_lightning/loops/fit_loop.py#L216
+class DistributedSamplerWrapper(Sampler):
+    def __init__(
+        self,
+        sampler: Sampler,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+    ) -> None:
+        if num_replicas is None:
+            if not dist.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            num_replicas = dist.get_world_size()
+        if rank is None:
+            if not dist.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            rank = dist.get_rank()
+        if rank >= num_replicas or rank < 0:
+            raise ValueError(f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]")
+
+        self.sampler = sampler
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+
+    def __iter__(self) -> Iterator:
+        # Get all indices from the wrapped sampler
+
+        num_samples = self.__len__()
+
+        total_size = num_samples * self.num_replicas
+
+        indices = list(self.sampler)
+        # remove tail of data to make it evenly divisible.
+        indices = indices[:total_size]
+
+        assert len(indices) == total_size, f"Expected {total_size} indices, got {len(indices)}"
+
+        # subsample
+        indices = indices[self.rank : total_size : self.num_replicas]
+        assert len(indices) == num_samples, f"Expected {num_samples} indices, got {len(indices)}"
+
+        return iter(indices)
+
+    def __len__(self) -> int:
+        # Compute length dynamically based on current sampler state
+        total_samples = len(self.sampler)
+        if total_samples % self.num_replicas != 0:
+            num_samples = math.ceil((total_samples - self.num_replicas) / self.num_replicas)
+        else:
+            num_samples = math.ceil(total_samples / self.num_replicas)
+
+        return num_samples
 
     def set_epoch(self, epoch: int) -> None:
-        super().set_epoch(epoch)
-        if hasattr(self.dataset._sampler, "set_epoch"):
-            self.dataset._sampler.set_epoch(epoch)
+        r"""
+        Set the epoch for this sampler.
+
+        This method forwards the epoch information to the wrapped sampler
+        if it has a `set_epoch` method, allowing the wrapped sampler to
+        update its internal state for proper randomization across epochs.
+
+        Args:
+            epoch (int): Epoch number.
+        """
+        self.epoch = epoch
+        # Pass epoch to wrapped sampler if it supports it
+        if hasattr(self.sampler, "set_epoch"):
+            self.sampler.set_epoch(epoch)

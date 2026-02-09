@@ -73,7 +73,7 @@ def tokenizer(adata):
     gene_names = adata.var_names.tolist()
     n_genes = len(gene_names)
 
-    gene_mapping = {"<pad>": 0, "<cls>": 1, **{gene_name: i + 2 for i, gene_name in enumerate(gene_names)}}
+    gene_mapping = {"<cls>": 0, "<pad>": 1, **{gene_name: i + 2 for i, gene_name in enumerate(gene_names)}}
 
     return GeneIdTokenizer(gene_mapping)
 

@@ -1,9 +1,9 @@
 defaults:
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15
-  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus
-  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta
-  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes  
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08
+  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08
+  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08
+  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08
+  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08  
   # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
   # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
   # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
@@ -160,6 +160,7 @@ dataloader:
       pin_memory: False
       drop_last: ${datamodule.dataloader.train.drop_last}
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P200_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -168,6 +169,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P800_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -176,6 +178,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P6400_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -184,6 +187,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_unbalanced_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -192,6 +196,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_Preselected_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -200,6 +205,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P_Xenium_hIO_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -208,6 +214,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P_Xenium_hIO_vs_all_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -216,6 +223,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P_SEAAD_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -224,6 +232,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P_SEAAD_vs_all_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -232,6 +241,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P_Xenium_Human_Prime_5K_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -240,6 +250,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P6400_B256_mmusculus:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -248,6 +259,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     # across_P800_B256:
     #   within_group_sampling: null
     #   batch_size: 256
@@ -256,6 +268,7 @@ dataloader:
     #   pin_memory: False
     #   drop_last: True
     #   num_samples: 100000
+    #   max_samples_per_group: 5000
     # within_donor_P800_B256:
     #   within_group_sampling: "donor_id"
     #   batch_size: 256
@@ -264,3 +277,4 @@ dataloader:
     #   pin_memory: False
     #   drop_last: True
     #   num_samples: 100000
+    #   max_samples_per_group: 5000

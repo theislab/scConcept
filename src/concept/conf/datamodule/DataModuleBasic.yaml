@@ -1,9 +1,9 @@
 defaults:
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15
-  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus
-  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta
-  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes  
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08
+  # - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08
+  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08
+  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08
+  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08  
   # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
   # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
   # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
@@ -92,6 +92,7 @@ dataloader:
       pin_memory: False
       drop_last: ${datamodule.dataloader.train.drop_last}
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P200_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -100,6 +101,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P800_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -108,6 +110,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000
     within_P6400_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -116,3 +119,4 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      max_samples_per_group: 5000

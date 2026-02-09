@@ -4,6 +4,7 @@ import os
 from typing import Dict, List, Optional
 
 import lightning as L
+import numpy as np
 import torch
 import torch.distributed as dist
 from anndata import AnnData
@@ -83,7 +84,7 @@ class AnnDataModule(L.LightningDataModule):
                 )
 
             self.train_dataset = TokenizedDataset(
-                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"]}
+                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"}
             )
 
         if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
@@ -214,18 +215,18 @@ class AnnDataModule(L.LightningDataModule):
         num_workers = dataloader_kwargs.pop("num_workers")
         num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), num_workers)
 
-        assert drop_last == True, "drop_last must be True during training and validation"
-        assert shuffle == True, "shuffle must be True during training and validation"
+        assert drop_last, "drop_last must be True during training and validation"
+        assert shuffle, "shuffle must be True during training and validation"
 
         if num_samples is not None and num_samples >= len(dataset):
             logger.warning(
                 f"num_samples ({num_samples}) is greater than or equal to the number of samples in the dataset ({len(dataset)})."
             )
 
+        obs_list = dataset.collection._cached_obs[sampling_key]
         if sampling_key:
             sampler = WithinGroupSampler(
-                dataset.collection.storage_idx,
-                dataset.collection._cached_obs[sampling_key],
+                np.concatenate([np.array(obs) for obs in obs_list]),
                 batch_size * num_replicas,
                 num_samples,
                 shuffle=shuffle,
@@ -236,7 +237,7 @@ class AnnDataModule(L.LightningDataModule):
             sampler = RandomSampler(dataset, num_samples=num_samples)
 
         if torch.distributed.is_initialized():
-            sampler = DistributedSamplerWrapper(sampler, shuffle=False, drop_last=False)
+            sampler = DistributedSamplerWrapper(sampler)
 
         # torch_worker_init_fn may not exist for InMemoryCollection
         worker_init_fn = getattr(dataset.collection, "torch_worker_init_fn", None)
