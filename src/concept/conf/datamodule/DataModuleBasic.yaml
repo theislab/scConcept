@@ -1,30 +1,8 @@
 defaults:
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08
-  # - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08
-  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08
-  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08
-  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08  
-  # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
-  # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
-  # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
-  # - split_scbasecount_cjacchus: split_scbasecount_cjacchus
-  # - split_scbasecount_ptroglodytes: split_scbasecount_ptroglodytes
-  # - split_scbasecount_btaurus: split_scbasecount_btaurus
-  # - split_scbasecount_celegans: split_scbasecount_celegans
-  # - split_scbasecount_drerio: split_scbasecount_drerio
-  # - split_scbasecount_dmelanogaster: split_scbasecount_dmelanogaster
-  # - split_scbasecount_ecaballus: split_scbasecount_ecaballus
-  # - split_scbasecount_ggallus: split_scbasecount_ggallus
-  # - split_scbasecount_ggorilla: split_scbasecount_ggorilla
-  # - split_scbasecount_hgfemale: split_scbasecount_hgfemale
-  # - split_scbasecount_ocuniculus: split_scbasecount_ocuniculus
-  # - split_scbasecount_oaries: split_scbasecount_oaries
-  # - split_scbasecount_sscrofa: split_scbasecount_sscrofa
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
 
 name: DataModule
-columns: ["cell_type", "donor_id"] # include all obs keys to retrieve from dataloader
-label_keys_to_monitor: ["cell_type"]
-batch_keys_to_monitor: ["donor_id"]
+obs_keys: ["dataset", "tissue", "cell_type", "donor_id"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
 model_speed_sanity_check: False
@@ -45,7 +23,7 @@ dataset:
     qc_threshold: null
     max_total_seq_length: null
   val:
-    same:
+    same_as_train:
       split:
         - ${datamodule.split_cellxgene_hsapiens.val}
       panel_overlap: ${datamodule.dataset.train.panel_overlap}
@@ -84,7 +62,7 @@ dataloader:
     drop_last: True
     num_samples: null
   val:
-    same:
+    same_as_train:
       within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
       batch_size: ${datamodule.dataloader.train.batch_size}
       shuffle: ${datamodule.dataloader.train.shuffle}

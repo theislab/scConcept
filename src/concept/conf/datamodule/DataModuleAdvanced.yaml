@@ -1,30 +1,16 @@
 defaults:
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08
-  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08
-  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08
-  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08  
-  # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
-  # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
-  # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
-  # - split_scbasecount_cjacchus: split_scbasecount_cjacchus
-  # - split_scbasecount_ptroglodytes: split_scbasecount_ptroglodytes
-  # - split_scbasecount_btaurus: split_scbasecount_btaurus
-  # - split_scbasecount_celegans: split_scbasecount_celegans
-  # - split_scbasecount_drerio: split_scbasecount_drerio
-  # - split_scbasecount_dmelanogaster: split_scbasecount_dmelanogaster
-  # - split_scbasecount_ecaballus: split_scbasecount_ecaballus
-  # - split_scbasecount_ggallus: split_scbasecount_ggallus
-  # - split_scbasecount_ggorilla: split_scbasecount_ggorilla
-  # - split_scbasecount_hgfemale: split_scbasecount_hgfemale
-  # - split_scbasecount_ocuniculus: split_scbasecount_ocuniculus
-  # - split_scbasecount_oaries: split_scbasecount_oaries
-  # - split_scbasecount_sscrofa: split_scbasecount_sscrofa
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
+  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15_primary
+
+  # - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08_primary
+  # - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08_primary
+  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08_primary
+  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08_primary
+  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08_primary
+
 
 name: DataModule
-columns: ["cell_type", "donor_id"] # include all obs keys to retrieve from dataloader
-label_keys_to_monitor: ["cell_type"]
-batch_keys_to_monitor: ["donor_id"]
+obs_keys: ["dataset", "tissue", "cell_type", "donor_id"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
 model_speed_sanity_check: False
@@ -33,6 +19,7 @@ dataset:
   train:
     split: 
       - ${datamodule.split_cellxgene_hsapiens.train}
+      # - ${datamodule.split_cellxgene_mmusculus.train}
     max_tokens: 1000
     panel_overlap: False
     panel_selection: mixed
@@ -45,7 +32,7 @@ dataset:
     qc_threshold: null
     max_total_seq_length: null
   val:
-    same:
+    same_as_train:
       split: 
         - ${datamodule.split_cellxgene_hsapiens.val}
       panel_overlap: ${datamodule.dataset.train.panel_overlap}
@@ -78,56 +65,35 @@ dataset:
       panel_selection: random
       panel_size_min: 15000
       panel_size_max: 15000
-    within_Preselected_B256:
+    within_Preselected_vs_all_B256:
       split: 
         - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
       panel_filter_regex: ".*"
-      panel_size_min: 800
-      panel_size_max: 800
-    within_P_Xenium_hIO_B256:
+      panel_size_min: 100000
+      panel_size_max: 100000
+    within_Preselected_vs_all_overlap_B256:
       split: 
         - ${datamodule.split_cellxgene_hsapiens.val}
       panel_selection: preselected
-      panel_filter_regex: "Xenium_hIO_v1"
-      panel_size_min: 800
-      panel_size_max: 800
-    within_P_Xenium_hIO_vs_all_B256:
-      split: 
-        - ${datamodule.split_cellxgene_hsapiens.val}
-      panel_selection: preselected
-      panel_filter_regex: "Xenium_hIO_v1"
+      panel_filter_regex: ".*"
       panel_size_min: 100000
       panel_size_max: 100000
       panel_overlap: True
-    within_P_SEAAD_B256:
-      split: 
-        - ${datamodule.split_cellxgene_hsapiens.val}
-      panel_selection: preselected
-      panel_filter_regex: "Merfish-SEA-AD"
-      panel_size_min: 800
-      panel_size_max: 800
-    within_P_SEAAD_vs_all_B256:
-      split: 
-        - ${datamodule.split_cellxgene_hsapiens.val}
-      panel_selection: preselected
-      panel_filter_regex: "Merfish-SEA-AD"
-      panel_size_min: 100000
-      panel_size_max: 100000
-      panel_overlap: True
-    within_P_Xenium_Human_Prime_5K_B256:
-      split: 
-        - ${datamodule.split_cellxgene_hsapiens.val}
-      panel_selection: preselected
-      panel_filter_regex: "Xenium_Human_Prime_5K"
-      panel_size_min: 800
-      panel_size_max: 800
     within_P6400_B256_mmusculus:
       split: 
         - ${datamodule.split_cellxgene_mmusculus.val}
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
+    # within_P6400_B256_other_species:
+    #   split: 
+    #     - ${datamodule.split_cellxgene_cjacchus.val}
+    #     - ${datamodule.split_cellxgene_mmulatta.val}
+    #     - ${datamodule.split_cellxgene_ptroglodytes.val}
+    #   panel_selection: random
+    #   panel_size_min: 6400
+    #   panel_size_max: 6400
     # across_P800_B256:
     #   split: 
     #     - ${datamodule.split_cellxgene_hsapiens.val}
@@ -152,7 +118,7 @@ dataloader:
     drop_last: True
     num_samples: null
   val:
-    same:
+    same_as_train:
       within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
       batch_size: ${datamodule.dataloader.train.batch_size}
       shuffle: ${datamodule.dataloader.train.shuffle}
@@ -197,7 +163,7 @@ dataloader:
       drop_last: True
       num_samples: 100000
       max_samples_per_group: 5000
-    within_Preselected_B256:
+    within_Preselected_vs_all_B256:
       within_group_sampling: "dataset"
       batch_size: 256
       shuffle: True
@@ -206,43 +172,7 @@ dataloader:
       drop_last: True
       num_samples: 100000
       max_samples_per_group: 5000
-    within_P_Xenium_hIO_B256:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      max_samples_per_group: 5000
-    within_P_Xenium_hIO_vs_all_B256:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      max_samples_per_group: 5000
-    within_P_SEAAD_B256:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      max_samples_per_group: 5000
-    within_P_SEAAD_vs_all_B256:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      max_samples_per_group: 5000
-    within_P_Xenium_Human_Prime_5K_B256:
+    within_Preselected_vs_all_overlap_B256:
       within_group_sampling: "dataset"
       batch_size: 256
       shuffle: True
@@ -260,6 +190,15 @@ dataloader:
       drop_last: True
       num_samples: 100000
       max_samples_per_group: 5000
+    # within_P6400_B256_other_species:
+    #   within_group_sampling: "dataset"
+    #   batch_size: 256
+    #   shuffle: True
+    #   num_workers: 2
+    #   pin_memory: False
+    #   drop_last: True
+    #   num_samples: 100000
+    #   max_samples_per_group: 5000
     # across_P800_B256:
     #   within_group_sampling: null
     #   batch_size: 256

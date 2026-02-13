@@ -183,7 +183,7 @@ class Collate(BaseCollate):
     #         # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
     #         return available_panels, panel_probs
 
-    def _get_predesigned_panel(self, batch, organism, tissue):
+    def _get_predesigned_panel(self, batch, organism, tissues):
         # Randomly select a panel from that organism
         panels = self.panels_dict[organism]
         panel_names = self.panel_names_dict[organism]
@@ -212,8 +212,11 @@ class Collate(BaseCollate):
         ]
 
         if self.split_input:
-            organism, tissue = batch[0].get("_organism"), batch[0].get("_tissue")
-            assert organism is not None, "_organism is None"
+            organisms = [item.pop("_organism", None) for item in batch]
+            tissues = [item.pop("_tissue", None) for item in batch]
+            assert organisms is not None, "_organism is None"
+            assert len(set(organisms)) == 1, "Multiple organisms in the same batch is not supported"
+            organism = organisms[0]
 
             n_tokens = len(batch_permute[0]["tokens"])
             panel_indices = np.arange(n_tokens)
@@ -234,7 +237,7 @@ class Collate(BaseCollate):
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
             else:
-                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, organism, tissue)
+                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, organism, tissues)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]["tokens"], panel))[0]
                 panel_size_1 = len(panel_idx_1)
 
@@ -317,8 +320,8 @@ class Collate(BaseCollate):
                 "panel_name_2": panel_name_2,
                 "seq_length_1": seq_length_1,
                 "seq_length_2": seq_length_2,
-                "organism": organism,
-                "tissue": tissue,
+                "_organism": organisms,
+                "_tissue": tissues,
                 **{
                     key: default_collate([item[key] for item in batch])
                     for key in batch[0].keys()

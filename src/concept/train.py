@@ -81,7 +81,7 @@ def train(cfg: DictConfig, build_only: bool = False):
 
     datamodule_args = {
         "panels_path": cfg.PATH.PANELS_PATH,
-        "columns": cfg.datamodule.columns,
+        "obs_keys": cfg.datamodule.obs_keys,
         "precomp_embs_key": cfg.datamodule.precomp_embs_key,
         "normalization": cfg.datamodule.normalization,
         "gene_sampling_strategy": cfg.datamodule.gene_sampling_strategy,
@@ -155,8 +155,7 @@ def train(cfg: DictConfig, build_only: bool = False):
         "pretrained_vocabulary": pretrained_vocabulary,
         "world_size": trainer.world_size,
         "val_loader_names": val_loader_names,
-        "label_keys_to_monitor": cfg.datamodule.label_keys_to_monitor,
-        "batch_keys_to_monitor": cfg.datamodule.batch_keys_to_monitor,
+        "obs_keys": cfg.datamodule.obs_keys,
         "precomp_embs_key": cfg.datamodule.precomp_embs_key,
     }
 

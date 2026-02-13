@@ -436,7 +436,7 @@ class scConcept:
         datamodule_args = {
             "panels_path": panels_dir,
             "tokenizer": self.tokenizer,
-            "columns": [],
+            "obs_keys": [],
             "precomp_embs_key": self.cfg.datamodule.precomp_embs_key,
             "normalization": self.cfg.datamodule.normalization,
             "gene_sampling_strategy": self.cfg.datamodule.gene_sampling_strategy,

@@ -62,7 +62,7 @@ def adata():
     adata.var_names = real_gene_names
     adata.var["gene_symbols"] = real_gene_names
     adata.uns["_organism"] = "hsapiens"
-    adata.uns["_tissue"] = "test_tissue"
+    adata.uns["_tissue"] = np.array(["blood", "brain"])
 
     return adata
 
@@ -130,7 +130,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
                 f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
                 # Override datamodule settings
-                "datamodule.columns=[]",
+                "datamodule.obs_keys=[]",
                 "datamodule.normalization=raw",
                 "datamodule.gene_sampling_strategy=top-nonzero",
                 "datamodule.dataset.train.max_tokens=10",

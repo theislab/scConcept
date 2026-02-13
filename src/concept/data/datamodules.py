@@ -23,7 +23,7 @@ class AnnDataModule(L.LightningDataModule):
         self,
         panels_path: str,
         tokenizer: Tokenizer,
-        columns: List[str],
+        obs_keys: List[str],
         precomp_embs_key: str = None,
         normalization: str = "log1p",
         gene_sampling_strategy: str = "top-nonzero",
@@ -42,7 +42,7 @@ class AnnDataModule(L.LightningDataModule):
         self.default_max_tokens = dataset_kwargs["train"]["max_tokens"]
 
         dataset_kwargs_shared = {
-            "obs_keys": columns,
+            "obs_keys": obs_keys,
             "obsm_key": precomp_embs_key,
             "tokenizer": tokenizer,
             "normalization": normalization,
@@ -60,7 +60,7 @@ class AnnDataModule(L.LightningDataModule):
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
                     adata_list=train_split,
-                    obs_keys=columns,
+                    obs_keys=obs_keys,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
                     keys_to_cache=keys_to_cache,
@@ -74,7 +74,7 @@ class AnnDataModule(L.LightningDataModule):
                 collection = LaminDiskCollection(
                     train_split,
                     layers_keys="X",
-                    obs_keys=columns,
+                    obs_keys=obs_keys,
                     keys_to_cache=keys_to_cache,
                     join=join,
                     encode_labels=True,
@@ -113,7 +113,7 @@ class AnnDataModule(L.LightningDataModule):
                     # Use InMemoryCollection for AnnData objects
                     collection = InMemoryCollection(
                         adata_list=val_split,
-                        obs_keys=columns,
+                        obs_keys=obs_keys,
                         layers_keys=["X"],
                         obsm_keys=precomp_embs_key,
                         keys_to_cache=keys_to_cache,
@@ -127,7 +127,7 @@ class AnnDataModule(L.LightningDataModule):
                     collection = LaminDiskCollection(
                         val_split,
                         layers_keys="X",
-                        obs_keys=columns,
+                        obs_keys=obs_keys,
                         keys_to_cache=keys_to_cache,
                         join=join,
                         encode_labels=True,
@@ -149,7 +149,7 @@ class AnnDataModule(L.LightningDataModule):
                 assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
                 collection = InMemoryCollection(
                     adata_list=test_split,
-                    obs_keys=columns,
+                    obs_keys=obs_keys,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
                     keys_to_cache=keys_to_cache,
@@ -162,7 +162,7 @@ class AnnDataModule(L.LightningDataModule):
                 collection = LaminDiskCollection(
                     test_split,
                     layers_keys="X",
-                    obs_keys=columns,
+                    obs_keys=obs_keys,
                     keys_to_cache=keys_to_cache,
                     join=None,
                     encode_labels=True,
@@ -212,15 +212,16 @@ class AnnDataModule(L.LightningDataModule):
         shuffle = dataloader_kwargs.pop("shuffle")
         drop_last = dataloader_kwargs.pop("drop_last")
         num_samples = dataloader_kwargs.pop("num_samples")
+        max_samples_per_group = dataloader_kwargs.pop("max_samples_per_group", None)
         num_workers = dataloader_kwargs.pop("num_workers")
         num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), num_workers)
 
         assert drop_last, "drop_last must be True during training and validation"
         assert shuffle, "shuffle must be True during training and validation"
 
-        if num_samples is not None and num_samples >= len(dataset):
+        if num_samples is not None and num_samples > len(dataset):
             logger.warning(
-                f"num_samples ({num_samples}) is greater than or equal to the number of samples in the dataset ({len(dataset)})."
+                f"num_samples ({num_samples}) is greater than the number of samples in the dataset ({len(dataset)})."
             )
 
         obs_list = dataset.collection._cached_obs[sampling_key]
@@ -229,6 +230,7 @@ class AnnDataModule(L.LightningDataModule):
                 np.concatenate([np.array(obs) for obs in obs_list]),
                 batch_size * num_replicas,
                 num_samples,
+                max_samples_per_group=max_samples_per_group,
                 shuffle=shuffle,
                 drop_last=drop_last,
                 stage=stage,

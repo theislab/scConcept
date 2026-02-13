@@ -349,8 +349,7 @@ class ContrastiveModel(BaseTransformerModel):
         precomp_embs_key: str = None,
         world_size: int = 1,
         val_loader_names=[],
-        label_keys_to_monitor: List[str] = [],
-        batch_keys_to_monitor: List[str] = [],
+        obs_keys: List[str] = [],
         debug: bool = False,
     ):
         if config["mlm_loss_weight"] > 0:
@@ -369,8 +368,7 @@ class ContrastiveModel(BaseTransformerModel):
         self.vocab_size = vocab_size
         self.world_size = world_size
         self.val_loader_names = val_loader_names
-        self.label_keys_to_monitor = list(label_keys_to_monitor)
-        self.batch_keys_to_monitor = list(batch_keys_to_monitor)
+        self.obs_keys = list(obs_keys)
         assert self.contrastive_loss in ["binary", "multiclass"]
         self.LOGGING_STEP = False
 
@@ -461,6 +459,7 @@ class ContrastiveModel(BaseTransformerModel):
 
     def _step(self, batch, batch_idx, log_prefix="train"):
         assert self.stage in ["train", "val"], f"Invalid stage: {self.stage}"
+        metrics = {}
 
         batch_size = len(batch["tokens_1"])
         batch_1 = {
@@ -585,16 +584,16 @@ class ContrastiveModel(BaseTransformerModel):
         # Log extra metrics for monitoring
         ######################################################################
 
-        for label_key in self.label_keys_to_monitor:
-            if self.stage != "train" and label_key in batch:
-                labels_1, labels_2 = batch[label_key], batch[label_key]
+        for key in self.obs_keys:
+            if self.stage != "train" and key in batch:
+                labels_1, labels_2 = batch[key], batch[key]
                 if self.world_size > 1:
                     labels_1 = torch.cat(all_gather(labels_1), dim=0)
                     labels_2 = torch.cat(all_gather(labels_2), dim=0)
                 label_acc = 0.5 * (
                     self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1)
                 )
-                self.log_metrics(f"{log_prefix}/knn_acc_{label_key}", label_acc, batch_size=batch_size)
+                self.log_metrics(f"{log_prefix}/knn_acc_{key}", label_acc, batch_size=batch_size)
 
         if self.stage == "train" and self.LOGGING_STEP:
             global_rank = torch.tensor([self.global_rank] * len(batch_1["tokens"]), device=self.device)
@@ -654,8 +653,13 @@ class ContrastiveModel(BaseTransformerModel):
                 logger.debug(f"match in batch_1, {idx} tokens: {batch_1['tokens'][idx]}")
                 logger.debug(f"match in batch_1, {idx} values: {batch_1['values'][idx]}")
         ######################################################################
+        metrics["loss"] = loss.detach()
+        metrics["acc_cont"] = acc_cont.detach()
+        metrics["acc_top5_cont"] = top5_acc_cont.detach()
+        metrics["acc_cont_both_batch"] = acc_cont_both_batch.detach()
+        metrics["acc_top5_cont_both_batch"] = top5_acc_cont_both_batch.detach()
 
-        return loss
+        return loss, metrics
 
     def training_step(self, batch, batch_idx):
         self.stage = "train"
@@ -666,11 +670,14 @@ class ContrastiveModel(BaseTransformerModel):
             self.log_metrics("train/loss", loss)
             return loss
 
+        loss, metrics = self._step(batch, batch_idx, log_prefix="train")
+
         if self.LOGGING_STEP:
             sample_stats = self._get_sample_stats(batch)
+            sample_stats["acc_cont"] = metrics["acc_cont"]
+            sample_stats["acc_cont_both_batch"] = metrics["acc_cont_both_batch"]
             self.sample_stats["train"].append(sample_stats)
 
-        loss = self._step(batch, batch_idx, log_prefix="train")
 
         if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
@@ -687,12 +694,14 @@ class ContrastiveModel(BaseTransformerModel):
             return loss
 
         val_name = self.val_loader_names[dataloader_idx]
-        prefix = prefix = f"val/{val_name}" if val_name != "same" else "val"
+        prefix = f"val/{val_name}"
+
+        loss, metrics = self._step(batch, batch_idx, log_prefix=prefix)
 
         sample_stats = self._get_sample_stats(batch)
+        sample_stats["acc_cont"] = metrics["acc_cont"]
+        sample_stats["acc_cont_both_batch"] = metrics["acc_cont_both_batch"]
         self.sample_stats["val"][val_name].append(sample_stats)
-
-        loss = self._step(batch, batch_idx, log_prefix=prefix)
 
         if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
@@ -765,7 +774,7 @@ class ContrastiveModel(BaseTransformerModel):
 
     def on_validation_epoch_end(self):
         for val_name in self.val_loader_names:
-            prefix = prefix = f"val/{val_name}" if val_name != "same" else "val"
+            prefix = f"val/{val_name}"
             if self.global_rank == 0:
                 max_size = 1000
                 try:
@@ -821,8 +830,8 @@ class ContrastiveModel(BaseTransformerModel):
         token_intersect = np.intersect1d(batch["tokens_1"][0].cpu().numpy(), batch["tokens_2"][0].cpu().numpy()).size
 
         sample_stats = {
-            "organism": batch["organism"],
-            "tissue": batch["tissue"],
+            "_organism": batch["_organism"][0],
+            "_tissue": ", ".join(list(batch["_tissue"][0])),
             "panel_name_1": batch["panel_name_1"],
             "panel_name_2": batch["panel_name_2"],
             "panel_size_1": int(panel_size_1),
@@ -843,10 +852,10 @@ class ContrastiveModel(BaseTransformerModel):
             "batch_size": len(batch["tokens_1"]),
         }
 
-        for batch_key in ["dataset"] + self.batch_keys_to_monitor:
-            if batch_key in batch:
-                value = torch.cat(all_gather(batch[batch_key]), dim=0) if self.world_size > 1 else batch[batch_key]
-                sample_stats[f"same_{batch_key}"] = (value[0] == value).all().detach()
+        for key in self.obs_keys:
+            if key in batch:
+                value = torch.cat(all_gather(batch[key]), dim=0) if self.world_size > 1 else batch[key]
+                sample_stats[f"same_{key}"] = (value[0] == value).all().detach()
 
         return sample_stats
 

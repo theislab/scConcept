@@ -183,8 +183,8 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "organism": "hsapiens",
-        "tissue": "test_tissue",
+        "_organism": "hsapiens",
+        "_tissue": ["brain", "blood"],
     }
 
     # Test training step
@@ -262,8 +262,8 @@ def test_validation_step(mock_config, device, flash_attention):
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "organism": "hsapiens",
-        "tissue": "test_tissue",
+        "_organism": "hsapiens",
+        "_tissue": ["brain", "blood"],
     }
 
     # Test validation step and check model.log calls
@@ -554,7 +554,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         "test": [adata],
     }
 
-    columns = []  # No obs columns needed for basic test
+    obs_keys = []  # No obs keys needed for basic test
 
     dataset_kwargs = {
         "train": {
@@ -618,7 +618,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     datamodule = AnnDataModule(
         panels_path=str(panels_dir),
         tokenizer=tokenizer,
-        columns=columns,
+        obs_keys=obs_keys,
         precomp_embs_key=None,
         normalization="raw",
         gene_sampling_strategy="top-nonzero",
