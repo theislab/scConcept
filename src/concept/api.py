@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .model import ContrastiveModel
-from .utils import merge_lists, check_organism_in_h5ad_files
+from .utils import merge_lists
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +371,7 @@ class scConcept:
 
         return result
 
-    def train(self, adata_list=None, organism=None, max_steps=None, batch_size=None):
+    def train(self, adata_list, organism=None, max_steps=None, batch_size=None):
         """Train a new model using the configuration in self.cfg.
 
         Uses self.model if it exists, otherwise initializes a new model.
@@ -407,35 +407,23 @@ class scConcept:
         dataset_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
         dataloader_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
-        # Create split dictionary (only train, no validation)
-        if adata_list is not None:
-            # Handle single AnnData object or list of AnnData objects
-            if isinstance(adata_list, ad.AnnData):
-                # Convert single AnnData to list
-                adata_list = [adata_list]
-            elif isinstance(adata_list, list):
-                # Validate list
-                if len(adata_list) == 0:
-                    raise ValueError("adata_list cannot be empty")
-                if not all(isinstance(adata, ad.AnnData) for adata in adata_list):
-                    raise ValueError("All items in adata_list must be AnnData objects")
-            else:
-                raise ValueError("adata_list must be an AnnData object or a list of AnnData objects")
-            # Use provided AnnData objects
-            dataset_kwargs["train"]["split"] = adata_list
-            for adata in adata_list:
-                adata.uns["_organism"] = organism
-        else:
-            # Load from file paths
-            dataset_path = self.cfg.PATH.ADATA_PATH
-            if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-                dataset_kwargs["train"]["split"] = merge_lists(dataset_kwargs["train"]["split"])
 
-                file_paths = [
-                    os.path.join(dataset_path, file) if not os.path.isabs(file) else file
-                    for file in dataset_kwargs["train"]["split"]
-                ]
-                check_organism_in_h5ad_files(file_paths)
+        if isinstance(adata_list, ad.AnnData):
+            # Convert single AnnData to list
+            adata_list = [adata_list]
+        elif isinstance(adata_list, list):
+            # Validate list
+            if len(adata_list) == 0:
+                raise ValueError("adata_list cannot be empty")
+            if not all(isinstance(adata, ad.AnnData) for adata in adata_list):
+                raise ValueError("All items in adata_list must be AnnData objects")
+        else:
+            raise ValueError("adata_list must be an AnnData object or a list of AnnData objects")
+        # Use provided AnnData objects
+        dataset_kwargs["train"]["split"] = adata_list
+        for adata in adata_list:
+            adata.uns["_organism"] = organism
+
 
         if adaptaion:
             assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."

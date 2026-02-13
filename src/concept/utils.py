@@ -154,23 +154,3 @@ def _get_callbacks(checkpoint_path: str, max_steps: int):
     ]
     return callbacks
 
-
-def check_organism_in_h5ad_files(file_paths: list) -> None:
-    """Check if all h5ad files have '_organism' in their uns attribute.
-
-    Args:
-        file_paths: List of paths to h5ad files to check
-
-    Raises
-    ------
-    ValueError
-        If any file is missing the '_organism' key in uns
-    """
-    for file_path in file_paths:
-        if not os.path.exists(file_path):
-            logger.warning(f"File not found: {file_path}")
-            continue
-
-        with h5py.File(file_path, 'r') as f:
-            if 'uns' not in f or '_organism' not in f['uns']:
-                raise ValueError(f"File {file_path} is missing '_organism' in uns")
