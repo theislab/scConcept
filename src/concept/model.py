@@ -399,11 +399,16 @@ class ContrastiveModel(BaseTransformerModel):
         self.logit_masks = {}
         self.stage = None
 
-    def log_metrics(self, metric_name, value, **kwargs):
+    def log_metric(self, metric_name, value, **kwargs):
         kwargs = {"add_dataloader_idx": False, "sync_dist": True, **kwargs}
         if self.stage == "train":
             self.log(metric_name, value, on_step=True, on_epoch=False, **kwargs)
         self.log(metric_name + "_epoch", value, on_step=False, on_epoch=True, **kwargs)
+
+    def log_metrics_dict(self, metrics: dict, prefix: str, batch_size=None):
+        kwargs = {} if batch_size is None else {"batch_size": batch_size}
+        for name, value in metrics.items():
+            self.log_metric(f"{prefix}/{name}", value, **kwargs)
 
     def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
         if self.stage is None:
@@ -544,14 +549,13 @@ class ContrastiveModel(BaseTransformerModel):
         logits_both_batch *= torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
 
         if self.contrastive_loss == "binary":
-            loss_cont, acc_cont = self._contrastive_binary_loss(logits)
-            top5_acc_cont = 0
-            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_binary_loss(
+            loss_cont, recall_top1, recall_top5 = self._contrastive_binary_loss(logits)
+            loss_cont_both_batch, recall_top1_both_batch, recall_top5_both_batch = self._contrastive_binary_loss(
                 logits_both_batch
             )
         elif self.contrastive_loss == "multiclass":
-            loss_cont, acc_cont, top5_acc_cont = self._clip_loss(logits)
-            loss_cont_both_batch, acc_cont_both_batch, top5_acc_cont_both_batch = self._contrastive_multiclass_loss(
+            loss_cont, recall_top1, recall_top5 = self._clip_loss(logits)
+            loss_cont_both_batch, recall_top1_both_batch, recall_top5_both_batch = self._contrastive_multiclass_loss(
                 logits_both_batch
             )
 
@@ -560,25 +564,14 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             loss = self.mlm_loss_weight * loss_mlm + self.cont_loss_weight * loss_cont_both_batch
 
-        if self.stage == "val" or (self.stage == "train" and self.LOGGING_STEP):
-            self.log_metrics(f"{log_prefix}/loss", loss, batch_size=batch_size)
-            self.log_metrics(f"{log_prefix}/loss_cont", loss_cont, batch_size=batch_size)
-            if loss_mlm > 0:
-                self.log_metrics(f"{log_prefix}/loss_mlm", loss_mlm, batch_size=batch_size)
-            self.log_metrics(f"{log_prefix}/acc_cont_{self.contrastive_loss}", acc_cont, batch_size=batch_size)
-            self.log_metrics(
-                f"{log_prefix}/acc_top5_cont_{self.contrastive_loss}", top5_acc_cont, batch_size=batch_size
-            )
-            self.log_metrics(
-                f"{log_prefix}/acc_cont_both_batch_{self.contrastive_loss}",
-                acc_cont_both_batch,
-                batch_size=batch_size,
-            )
-            self.log_metrics(
-                f"{log_prefix}/acc_top5_cont_both_batch_{self.contrastive_loss}",
-                top5_acc_cont_both_batch,
-                batch_size=batch_size,
-            )
+        metrics["loss"] = loss.detach()
+        metrics["loss_cont"] = loss_cont.detach()
+        if loss_mlm > 0:
+            metrics["loss_mlm"] = loss_mlm.detach()
+        metrics["recall@1"] = recall_top1.detach()
+        metrics["recall@5"] = recall_top5.detach()
+        metrics["recall@1_combined"] = recall_top1_both_batch.detach()
+        metrics["recall@5_combined"] = recall_top5_both_batch.detach()
 
         ######################################################################
         # Log extra metrics for monitoring
@@ -593,7 +586,7 @@ class ContrastiveModel(BaseTransformerModel):
                 label_acc = 0.5 * (
                     self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1)
                 )
-                self.log_metrics(f"{log_prefix}/knn_acc_{key}", label_acc, batch_size=batch_size)
+                metrics[f"knn_acc_{key}"] = label_acc.detach()
 
         if self.stage == "train" and self.LOGGING_STEP:
             global_rank = torch.tensor([self.global_rank] * len(batch_1["tokens"]), device=self.device)
@@ -603,13 +596,13 @@ class ContrastiveModel(BaseTransformerModel):
                 self._knn_accuracy(logits, global_rank, global_rank)
                 + self._knn_accuracy(logits.t(), global_rank, global_rank)
             )
-            self.log_metrics(f"{log_prefix}/knn_acc_global_rank", global_rank_acc, batch_size=batch_size)
+            metrics["knn_acc_global_rank"] = global_rank_acc.detach()
 
         if self.stage != "train":
             views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
             views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
-            self.log_metrics(f"{log_prefix}/views_mixing_score", views_mixing_score, batch_size=batch_size)
-            self.log_metrics(f"{log_prefix}/views_mixing_score_top_5", views_mixing_score_top_5, batch_size=batch_size)
+            metrics["views_mixing_score"] = views_mixing_score.detach()
+            metrics["views_mixing_score_top_5"] = views_mixing_score_top_5.detach()
 
         if self.debug and self.LOGGING_STEP:
             nonzero_cnt_1 = (batch_1["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
@@ -623,13 +616,13 @@ class ContrastiveModel(BaseTransformerModel):
                 [torch.corrcoef(torch.stack([logits[i], length_sim[i]]))[0, 1] for i in range(logits.size(0))]
             )
             length_logit_corr = torch.mean(length_logit_corr[~torch.isnan(length_logit_corr)]).item()
-            self.log_metrics(f"{log_prefix}/length_logit_corr", length_logit_corr, batch_size=batch_size)
+            metrics["corr_seqlength"] = length_logit_corr
 
             length_r2 = 0.5 * (
                 self._knn_r2(logits, nonzero_cnt_1, nonzero_cnt_2)
                 + self._knn_r2(logits.t(), nonzero_cnt_2, nonzero_cnt_1)
             )
-            self.log_metrics(f"{log_prefix}/length_r2", length_r2, batch_size=batch_size)
+            metrics["knn_r2_seqlength"] = length_r2.detach() if hasattr(length_r2, "detach") else length_r2
 
         if (
             self.debug
@@ -653,11 +646,6 @@ class ContrastiveModel(BaseTransformerModel):
                 logger.debug(f"match in batch_1, {idx} tokens: {batch_1['tokens'][idx]}")
                 logger.debug(f"match in batch_1, {idx} values: {batch_1['values'][idx]}")
         ######################################################################
-        metrics["loss"] = loss.detach()
-        metrics["acc_cont"] = acc_cont.detach()
-        metrics["acc_top5_cont"] = top5_acc_cont.detach()
-        metrics["acc_cont_both_batch"] = acc_cont_both_batch.detach()
-        metrics["acc_top5_cont_both_batch"] = top5_acc_cont_both_batch.detach()
 
         return loss, metrics
 
@@ -667,15 +655,14 @@ class ContrastiveModel(BaseTransformerModel):
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("train/loss", loss)
+            self.log_metrics_dict({"train/loss": loss})
             return loss
 
         loss, metrics = self._step(batch, batch_idx, log_prefix="train")
-
         if self.LOGGING_STEP:
+            self.log_metrics_dict(metrics, "train", batch_size=len(batch["tokens_1"]))
             sample_stats = self._get_sample_stats(batch)
-            sample_stats["acc_cont"] = metrics["acc_cont"]
-            sample_stats["acc_cont_both_batch"] = metrics["acc_cont_both_batch"]
+            sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
             self.sample_stats["train"].append(sample_stats)
 
 
@@ -690,17 +677,17 @@ class ContrastiveModel(BaseTransformerModel):
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics("val/loss", loss)
+            self.log_metrics_dict({"val/loss": loss})
             return loss
 
         val_name = self.val_loader_names[dataloader_idx]
         prefix = f"val/{val_name}"
 
         loss, metrics = self._step(batch, batch_idx, log_prefix=prefix)
+        self.log_metrics_dict(metrics, prefix, batch_size=len(batch["tokens_1"]))
 
         sample_stats = self._get_sample_stats(batch)
-        sample_stats["acc_cont"] = metrics["acc_cont"]
-        sample_stats["acc_cont_both_batch"] = metrics["acc_cont_both_batch"]
+        sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
         self.sample_stats["val"][val_name].append(sample_stats)
 
         if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
@@ -950,26 +937,31 @@ class ContrastiveModel(BaseTransformerModel):
         cont_target = torch.cat([torch.zeros(len(neg_pairs)), torch.ones(len(pos_pairs))]).to(self.device)
         cont_pred = torch.cat([same_cell_pred[list(zip(*neg_pairs))], same_cell_pred[list(zip(*pos_pairs))]])
         loss_cont = F.binary_cross_entropy(cont_pred, cont_target)
-        acc_cont = self.binarcy_accuracy(cont_pred, cont_target)
-        return loss_cont, acc_cont
+        recall_top1 = self.binarcy_accuracy(cont_pred, cont_target)
+        recall_top5 = 0
+        return loss_cont, recall_top1, recall_top5
 
     def _clip_loss(self, logits):
-        loss_1, acc_cont_1, top5_acc_cont_1 = self._contrastive_multiclass_loss(logits)
-        loss_2, acc_cont_2, top5_acc_cont_2 = self._contrastive_multiclass_loss(logits.t())
-        return (loss_1 + loss_2) / 2.0, (acc_cont_1 + acc_cont_2) / 2.0, (top5_acc_cont_1 + top5_acc_cont_2) / 2.0
+        loss_1, recall_top1_1, recall_top5_1 = self._contrastive_multiclass_loss(logits)
+        loss_2, recall_top1_2, recall_top5_2 = self._contrastive_multiclass_loss(logits.t())
+        return (
+            (loss_1 + loss_2) / 2.0,
+            (recall_top1_1 + recall_top1_2) / 2.0,
+            (recall_top5_1 + recall_top5_2) / 2.0,
+        )
 
     def _contrastive_multiclass_loss(self, logits):
         cont_target = torch.arange(len(logits), device=self.device)
 
         loss_cont = F.cross_entropy(logits, cont_target)
-        acc_cont = (logits.argmax(dim=1) == cont_target).float().mean()
+        recall_top1 = (logits.argmax(dim=1) == cont_target).float().mean()
 
         if len(logits) >= 5:
-            top5_acc_cont = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float().mean()
+            recall_top5 = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float().mean()
         else:
-            top5_acc_cont = 0.0
+            recall_top5 = torch.tensor(0.0, device=logits.device)
 
-        return loss_cont, acc_cont, top5_acc_cont
+        return loss_cont, recall_top1, recall_top5
 
     def _knn_accuracy(self, logits, labels_1, labels_2, k=5):
         logits_diag = logits - torch.eye(len(logits), device=self.device) * self.logit_scale.exp() * 2

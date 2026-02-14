@@ -195,7 +195,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         # Capture a deepcopy of all model parameters before training step
     params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
 
-    with patch.object(model, "log_metrics") as mock_log:
+    with patch.object(model, "log_metric") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             loss = model.training_step(batch, batch_idx=0)
 
@@ -268,7 +268,7 @@ def test_validation_step(mock_config, device, flash_attention):
 
     # Test validation step and check model.log calls
     model.eval()
-    with torch.no_grad(), patch.object(model, "log_metrics") as mock_log:
+    with torch.no_grad(), patch.object(model, "log_metric") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             model.validation_step(batch, batch_idx=0, dataloader_idx=0)
 
@@ -524,11 +524,12 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     assert parameters_changed, "Model parameters should have changed after training"
 
 
-def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
-    """Integration test for AnnDataModule with AnnData objects
+@pytest.mark.parametrize("use_stored_adata", [False, True], ids=["in_memory", "stored"])
+def test_anndatamodule_integration(adata, tokenizer, device, tmp_path, use_stored_adata):
+    """Integration test for AnnDataModule with AnnData objects (in-memory or stored on disk).
 
     Tests that AnnDataModule can:
-    - Initialize with AnnData objects
+    - Initialize with AnnData objects (in-memory) or paths to h5ad files (stored)
     - Create train and test dataloaders
     - Iterate through dataloaders and produce valid batches
     - Handle collate functions properly
@@ -547,18 +548,21 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     panel_df = pd.DataFrame({"Ensembl_ID": panel_genes})
     panel_df.to_csv(panel_file, index=False)
 
-    # Configuration for AnnDataModule
-    split = {
-        "train": [adata],  # List of AnnData objects
-        "val": [adata],
-        "test": [adata],
-    }
+    # Build split: in-memory AnnData list or paths to stored h5ad files
+    if use_stored_adata:
+        adata_dir = tmp_path / "h5ads"
+        adata_dir.mkdir()
+        adata_path = adata_dir / "test_data.h5ad"
+        adata.write(adata_path)
+        split = [str(adata_path)]
+    else:
+        split = [adata]
 
     obs_keys = []  # No obs keys needed for basic test
 
     dataset_kwargs = {
         "train": {
-            "split": [adata],
+            "split": split,
             "max_tokens": 20,
             "panel_selection": "mixed",
             "panel_selection_mixed_prob": 0.5,
@@ -570,7 +574,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         },
         "val": {
             "val_1": {
-                "split": [adata],
+                "split": split,
                 "max_tokens": 20,
                 "panel_selection": "random",
                 "panel_selection_mixed_prob": 0.5,
@@ -580,7 +584,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             }
         },
         "test": {
-            "split": [adata],
+            "split": split,
             "max_tokens": 20,
         },
     }
@@ -597,7 +601,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         },
         "val": {
             "val_1": {
-                "within_group_sampling": "dataset",
+                "within_group_sampling": ["dataset", "tissue"] if use_stored_adata else "dataset",
                 "batch_size": 4,
                 "shuffle": True,
                 "drop_last": True,

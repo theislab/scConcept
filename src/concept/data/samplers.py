@@ -4,6 +4,7 @@ import os
 from typing import Iterator, Optional
 
 import numpy as np
+import pandas as pd
 import torch.distributed as dist
 from torch.utils.data import Sampler
 
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class WithinGroupSampler(Sampler):
     def __init__(
         self,
-        obs_list,
+        sampling_key,
         batch_size,
         num_samples=None,
         max_samples_per_group=None,
@@ -22,7 +23,7 @@ class WithinGroupSampler(Sampler):
         stage="train",
         start_epoch=0,
     ):
-        self.obs_list = obs_list
+        self.sampling_key = sampling_key
         self.batch_size = batch_size
         self.num_samples = num_samples
         self.max_samples_per_group = max_samples_per_group
@@ -47,7 +48,7 @@ class WithinGroupSampler(Sampler):
         self.current_epoch = epoch
 
     def _validate_batches(self):
-        n_invalid_batches = sum([~(self.obs_list[batch][0] == self.obs_list[batch]).all() for batch in self.batches])
+        n_invalid_batches = sum([~(self.sampling_key[batch][0] == self.sampling_key[batch]).all() for batch in self.batches])
         assert n_invalid_batches == 0, f"Number of invalid batches: {n_invalid_batches}"
 
     def _create_batches(self):
@@ -58,8 +59,10 @@ class WithinGroupSampler(Sampler):
             rng = np.random.default_rng(self.seed)  # for validation and test
 
         self.batches = []
-        for value in np.unique(self.obs_list):
-            indices = np.argwhere(self.obs_list == value).flatten()
+        unique_values = np.unique(self.sampling_key)
+        unique_values = pd.Series(unique_values).dropna().values
+        for value in unique_values:
+            indices = np.argwhere(self.sampling_key == value).flatten()
             if self.shuffle:
                 indices = rng.choice(indices, len(indices), replace=False)
             if self.max_samples_per_group is not None:
