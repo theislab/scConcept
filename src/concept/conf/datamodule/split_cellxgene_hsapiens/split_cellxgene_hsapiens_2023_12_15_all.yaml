@@ -1,3 +1,5 @@
+source_name: cxg_raw_2023-12-15
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
 - 2bdd3a2c-2ff4-4314-adf3-8a06b797a33a.h5ad
 - f5b0810c-1664-4a62-ad06-be1d9964aa8b.h5ad

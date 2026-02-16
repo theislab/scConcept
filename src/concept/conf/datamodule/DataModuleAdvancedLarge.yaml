@@ -1,13 +1,26 @@
 defaults:
-  # - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_old
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
-
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15_primary
-
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2025_11_08_primary
+  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2025_11_08_primary
   - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08_primary
   - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08_primary
   - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08_primary
 
+  - split_scbasecount_hsapiens: split_scbasecount_hsapiens_2025_02_25
+  - split_scbasecount_mmusculus: split_scbasecount_mmusculus_2025_02_25
+  - split_scbasecount_mmulatta: split_scbasecount_mmulatta_2025_02_25
+  - split_scbasecount_cjacchus: split_scbasecount_cjacchus_2025_02_25
+  - split_scbasecount_ptroglodytes: split_scbasecount_ptroglodytes_2025_02_25
+  - split_scbasecount_btaurus: split_scbasecount_btaurus_2025_02_25
+  - split_scbasecount_celegans: split_scbasecount_celegans_2025_02_25
+  - split_scbasecount_drerio: split_scbasecount_drerio_2025_02_25
+  - split_scbasecount_dmelanogaster: split_scbasecount_dmelanogaster_2025_02_25
+  - split_scbasecount_ecaballus: split_scbasecount_ecaballus_2025_02_25
+  - split_scbasecount_ggallus: split_scbasecount_ggallus_2025_02_25
+  - split_scbasecount_ggorilla: split_scbasecount_ggorilla_2025_02_25
+  - split_scbasecount_hgfemale: split_scbasecount_hgfemale_2025_02_25
+  - split_scbasecount_ocuniculus: split_scbasecount_ocuniculus_2025_02_25
+  - split_scbasecount_oaries: split_scbasecount_oaries_2025_02_25
+  - split_scbasecount_sscrofa: split_scbasecount_sscrofa_2025_02_25
 
 name: DataModule
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
@@ -19,6 +32,26 @@ dataset:
   train:
     split: 
       - ${datamodule.split_cellxgene_hsapiens}
+      - ${datamodule.split_cellxgene_mmusculus}
+      - ${datamodule.split_cellxgene_cjacchus}
+      - ${datamodule.split_cellxgene_mmulatta}
+      - ${datamodule.split_cellxgene_ptroglodytes}
+      - ${datamodule.split_scbasecount_hsapiens}
+      - ${datamodule.split_scbasecount_mmusculus}
+      - ${datamodule.split_scbasecount_mmulatta}
+      - ${datamodule.split_scbasecount_cjacchus}
+      - ${datamodule.split_scbasecount_ptroglodytes}
+      - ${datamodule.split_scbasecount_btaurus}
+      - ${datamodule.split_scbasecount_celegans}
+      - ${datamodule.split_scbasecount_drerio}
+      - ${datamodule.split_scbasecount_dmelanogaster}
+      - ${datamodule.split_scbasecount_ecaballus}
+      - ${datamodule.split_scbasecount_ggallus}
+      - ${datamodule.split_scbasecount_ggorilla}
+      - ${datamodule.split_scbasecount_hgfemale}
+      - ${datamodule.split_scbasecount_ocuniculus}
+      - ${datamodule.split_scbasecount_oaries}
+      - ${datamodule.split_scbasecount_sscrofa}
     max_tokens: 1000
     panel_overlap: False
     panel_selection: mixed
@@ -85,14 +118,14 @@ dataset:
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
-    # within_P6400_B256_other_species:
-    #   split: 
-    #     - ${datamodule.split_cellxgene_cjacchus}
-    #     - ${datamodule.split_cellxgene_mmulatta}
-    #     - ${datamodule.split_cellxgene_ptroglodytes}
-    #   panel_selection: random
-    #   panel_size_min: 6400
-    #   panel_size_max: 6400
+    within_P6400_B256_other_species:
+      split: 
+        - ${datamodule.split_cellxgene_cjacchus}
+        - ${datamodule.split_cellxgene_mmulatta}
+        - ${datamodule.split_cellxgene_ptroglodytes}
+      panel_selection: random
+      panel_size_min: 6400
+      panel_size_max: 6400
     within_tissue_P6400_B256:
       split: 
         - ${datamodule.split_cellxgene_hsapiens}
@@ -189,15 +222,15 @@ dataloader:
       drop_last: True
       num_samples: 100000
       sample_groups_equally: True
-    # within_P6400_B256_other_species:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    #   sample_groups_equally: True
+    within_P6400_B256_other_species:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+      sample_groups_equally: True
     within_tissue_P6400_B256:
       within_group_sampling: "tissue"
       batch_size: 256

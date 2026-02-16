@@ -124,10 +124,7 @@ def train_config(adata, tokenizer, device, tmp_path):
             overrides=[
                 # Override paths
                 f"PATH.PROJECT_PATH={tmp_path}",
-                f"PATH.PROJECT_DATA_PATH={tmp_path}",
                 f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
-                f"PATH.DATASET_PATH={tmp_path}",
-                f"PATH.ADATA_PATH={adata_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
                 f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
                 f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
@@ -162,7 +159,7 @@ def train_config(adata, tokenizer, device, tmp_path):
         )
 
     # Manually override the split to use our test file
-    cfg.datamodule.dataset.train.split = ["test_data.h5ad"]
+    cfg.datamodule.dataset.train.split = [str(adata_file)]
     logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     return cfg

@@ -1,3 +1,28 @@
+
+# Project directory structure:
+# PROJECT_PATH/
+# ├── data/
+# │   └── <dataset_name>/
+# │       ├── pc_gene_token_mapping.pkl
+# │       └── h5ads/
+# │           ├── <adata_1>.h5ad
+# │           ├── <adata_2>.h5ad
+# │           └── ...
+# ├── model_checkpoints/
+# └── panels/
+# |   └── <panel_name>/
+# |       ├── panel_1.csv
+# |       ├── panel_2.csv
+# |       └── ...
+# └── references/
+# |   └── embeddings/
+# |       └── <embedding_name>/
+# |           └── <human_gene_embeddings>.csv
+# |           └── <mouse_gene_embeddings>.csv
+# |           └── ...
+# |   └── vocabulary/
+# |       └── <gene_token_mapping_16_species>.csv
+
 defaults:
   - model: ContrastiveModel
   - datamodule: DataModuleBasic
@@ -20,29 +45,10 @@ profiler:
   
 PATH:
   PROJECT_PATH: ???
-  PROJECT_DATA_PATH: ${PATH.PROJECT_PATH}/data
+  LOCAL_DIR: null # A fast local directory to copy datasets to for faster training
   CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
-  DATASET_PATH: ${PATH.PROJECT_DATA_PATH}/cxg_raw_2023-12-15
-  ADATA_PATH: ${PATH.DATASET_PATH}/h5ads
-  LOCAL_DIR: null # If not None, copy files to this directory for faster training
   PANELS_PATH: ${PATH.PROJECT_PATH}/panels
-  GENE_MAPPING_PATH: ${PATH.DATASET_PATH}/pc_gene_token_mapping.csv
-  PRETRAINED_VOCABULARY: null
+  GENE_MAPPING_PATH: ${PATH.PROJECT_PATH}/references/vocabulary/gene_token_mapping_16_species.csv
+  PRETRAINED_VOCABULARY: ${PATH.PROJECT_PATH}/references/embeddings/esm2_t30
 
 
-
-# Project directory structure:
-# PROJECT_PATH/
-# ├── data/
-# │   └── <dataset_name>/
-# │       ├── pc_gene_token_mapping.pkl
-# │       └── h5ads/
-# │           ├── <adata_1>.h5ad
-# │           ├── <adata_2>.h5ad
-# │           └── ...
-# ├── model_checkpoints/
-# └── panels/
-#     └── <panel_name>/
-#         ├── panel_1.csv
-#         ├── panel_2.csv
-#         └── ...

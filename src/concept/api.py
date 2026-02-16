@@ -15,7 +15,6 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .model import ContrastiveModel
-from .utils import merge_lists
 
 logger = logging.getLogger(__name__)
 

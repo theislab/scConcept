@@ -1,12 +1,8 @@
+source_name: scbasecount-2025-02-25
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
-- SRX15090986.h5ad
-- SRX15090984.h5ad
-- SRX15090985.h5ad
-- SRX17382436.h5ad
-- SRX17382437.h5ad
-- SRX26373274.h5ad
-- SRX26373272.h5ad
-- SRX26373270.h5ad
-- SRX27536440.h5ad
-- SRX27536446.h5ad
+- SRP372960.h5ad
+- SRP395050.h5ad
+- SRP538407.h5ad
+- SRP561013.h5ad
 val: []

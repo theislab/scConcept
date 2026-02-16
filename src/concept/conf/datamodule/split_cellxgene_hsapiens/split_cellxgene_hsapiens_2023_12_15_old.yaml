@@ -1,3 +1,5 @@
+source_name: cxg_raw_2023-12-15
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 test: null
 val:
 - 4724c395-0c46-46d2-81f7-60fd271fb488.h5ad

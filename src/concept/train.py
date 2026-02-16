@@ -20,7 +20,7 @@ from concept.utils import (
     get_profiler,
     resume_wandb_config,
     load_pretrained_vocabulary,
-    merge_lists,
+    resolve_split_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ def train(cfg: DictConfig, build_only: bool = False):
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
-
     gene_mapping = pd.read_csv(cfg.PATH.GENE_MAPPING_PATH, index_col="gene_id")["token"].to_dict()
     tokenizer = GeneIdTokenizer(gene_mapping)
 
@@ -48,36 +47,31 @@ def train(cfg: DictConfig, build_only: bool = False):
     if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
         pretrained_vocabulary = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
 
+    if cfg.PATH.LOCAL_DIR is not None:
+        for key, value in cfg.datamodule.items():
+            if isinstance(value, (dict, DictConfig)) and "source_name" in value and "source_path" in value:
+                source_name = value["source_name"]
+                source_path = value["source_path"]
+                files = list(value["train"]) + list(value["val"])
+                if rank_zero_only.rank == 0:
+                    logger.info(f"Copying {len(files)} files from {source_path} to {os.path.join(cfg.PATH.LOCAL_DIR, source_name)}")
+                    copy_files(
+                        source_path,
+                        os.path.join(cfg.PATH.LOCAL_DIR, source_name),
+                        files,
+                        compare_files=True,
+                        force_copy=False,
+                    )
+                    cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
+
     dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
     dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
-    merged_split = set()
     if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        dataset_kwargs["train"]["split"] = merge_lists(dataset_kwargs["train"]["split"])
-        merged_split.update(dataset_kwargs["train"]["split"])
+        dataset_kwargs["train"]["split"] = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
     if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
         for val_name, val_kwargs in dataset_kwargs["val"].items():
-            dataset_kwargs["val"][val_name]["split"] = merge_lists(val_kwargs["split"])
-            merged_split.update(dataset_kwargs["val"][val_name]["split"])
-
-    # Copy files to faster local directory
-    data_path = cfg.PATH.ADATA_PATH
-    if cfg.PATH.LOCAL_DIR is not None and rank_zero_only.rank == 0:
-        copy_files(
-            data_path,
-            cfg.PATH.LOCAL_DIR,
-            list(merged_split),
-            compare_files=True,
-            force_copy=False,
-        )
-        data_path = cfg.PATH.LOCAL_DIR
-
-    if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        dataset_kwargs["train"]["split"] = [os.path.join(data_path, file) for file in dataset_kwargs["train"]["split"]]
-    if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
-        for val_name, val_kwargs in dataset_kwargs["val"].items():
-            dataset_kwargs["val"][val_name]["split"] = [os.path.join(data_path, file) for file in val_kwargs["split"]]
-
+            dataset_kwargs["val"][val_name]["split"] = resolve_split_list(val_kwargs["split"], key="val")
 
     datamodule_args = {
         "panels_path": cfg.PATH.PANELS_PATH,

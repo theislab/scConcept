@@ -4,22 +4,42 @@ import logging
 import os
 import shutil
 from datetime import timedelta
-from typing import List
-
 import torch
 from lamin_dataloader import GeneIdTokenizer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
-from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
-def merge_lists(split):
-    """Flatten a list of lists into a single list. Returns the original data if not a list of lists."""
-    if isinstance(split, list) and len(split) > 0 and isinstance(split[0], list):
-        split = [item for sublist in split for item in sublist]
 
-    return split
+def resolve_split_list(split_list: list, key: str | None = None) -> list:
+    """
+    Expand split config refs and flatten to a single list.
+
+    If key is set (e.g. "train" or "val"), items that are dicts with that key
+    are replaced by the key's list; otherwise items are kept as-is. Then any
+    list-of-lists is flattened to a single list.
+    """
+
+    expanded = []
+    for item in split_list:
+        source_path = None
+        if isinstance(item, dict):
+            if "source_path" in item:
+                source_path = item["source_path"]
+            if key is not None and key in item:
+                item = item[key]
+        if isinstance(item, str):
+            item = [item]
+        if source_path:
+            item = [os.path.join(source_path, file) for file in item]
+        expanded.extend(item)
+
+        split_list = expanded
+    # if len(split_list) > 0 and isinstance(split_list[0], list):
+    #     split_list = [item for sublist in split_list for item in sublist]
+    return split_list
+
 
 def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneIdTokenizer) -> list:
     import pandas as pd
@@ -29,16 +49,16 @@ def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneId
     csv_files = glob.glob(os.path.join(pretrained_vocabulary_dir, "*.csv"))
     if not csv_files:
         raise ValueError(f"No CSV files found in {pretrained_vocabulary_dir}")
-    
+
     logger.info(f"Loading {len(csv_files)} CSV files from {pretrained_vocabulary_dir}")
-    
+
     # Merge all CSV files into a single dictionary
     pretrained_dict = {}
     for csv_file in csv_files:
         df = pd.read_csv(csv_file, index_col=0)
         for idx, row in df.iterrows():
             pretrained_dict[str(idx)] = row.values
-    
+
     logger.info(f"Loaded {len(pretrained_dict)} gene embeddings from {len(csv_files)} files")
 
     pretrained_vocabulary = {}
@@ -56,6 +76,7 @@ def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneId
     else:
         logger.info(f"Pretrained embeddings found for all {len(gene_names)} genes")
     return pretrained_vocabulary
+
 
 def get_start_epoch(cfg) -> int:
     if not cfg.initialize.resume:
@@ -92,7 +113,9 @@ def get_profiler(checkpoint_path: str):
     return pl_profiler
 
 
-def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files: bool = False, force_copy: bool = False):
+def copy_files(
+    src_path: str, dst_path: str, filenames: list[str], compare_files: bool = False, force_copy: bool = False
+):
     logger.info("Copying files to directory...")
     if not os.path.exists(dst_path):
         os.makedirs(dst_path, exist_ok=True)
@@ -100,7 +123,11 @@ def copy_files(src_path: str, dst_path: str, filenames: List[str], compare_files
     for file in filenames:
         src_file = os.path.join(src_path, file)
         dst_file = os.path.join(dst_path, file)
-        if not os.path.exists(dst_file) or (compare_files and not filecmp.cmp(src_file, dst_file, shallow=True)) or force_copy:
+        if (
+            not os.path.exists(dst_file)
+            or (compare_files and not filecmp.cmp(src_file, dst_file, shallow=True))
+            or force_copy
+        ):
             shutil.copy(src_file, dst_file)
             copy_count += 1
     logger.info(f"{copy_count} files copied successfully!")
@@ -153,4 +180,3 @@ def _get_callbacks(checkpoint_path: str, max_steps: int):
         ),
     ]
     return callbacks
-
