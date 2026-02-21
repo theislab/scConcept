@@ -54,7 +54,6 @@ def train(cfg: DictConfig, build_only: bool = False):
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
                 if rank_zero_only.rank == 0:
-                    logger.info(f"Copying {len(files)} files from {source_path} to {os.path.join(cfg.PATH.LOCAL_DIR, source_name)}")
                     copy_files(
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),

@@ -116,7 +116,7 @@ def get_profiler(checkpoint_path: str):
 def copy_files(
     src_path: str, dst_path: str, filenames: list[str], compare_files: bool = False, force_copy: bool = False
 ):
-    logger.info("Copying files to directory...")
+    logger.info(f"Copying {len(filenames)} files from {src_path} to {dst_path} ...")
     if not os.path.exists(dst_path):
         os.makedirs(dst_path, exist_ok=True)
     copy_count = 0
@@ -130,7 +130,7 @@ def copy_files(
         ):
             shutil.copy(src_file, dst_file)
             copy_count += 1
-    logger.info(f"{copy_count} files copied successfully!")
+    logger.info(f"{copy_count} new files copied successfully!")
 
 
 def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
