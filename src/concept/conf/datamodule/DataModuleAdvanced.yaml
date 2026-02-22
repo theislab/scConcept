@@ -1,6 +1,6 @@
 defaults:
-  # - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_old
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_old
+  # - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
 
   - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15_primary
 
@@ -85,14 +85,14 @@ dataset:
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
-    # within_P6400_B256_other_species:
-    #   split: 
-    #     - ${datamodule.split_cellxgene_cjacchus}
-    #     - ${datamodule.split_cellxgene_mmulatta}
-    #     - ${datamodule.split_cellxgene_ptroglodytes}
-    #   panel_selection: random
-    #   panel_size_min: 6400
-    #   panel_size_max: 6400
+    within_P6400_B256_other_species:
+      split: 
+        - ${datamodule.split_cellxgene_cjacchus}
+        - ${datamodule.split_cellxgene_mmulatta}
+        - ${datamodule.split_cellxgene_ptroglodytes}
+      panel_selection: random
+      panel_size_min: 6400
+      panel_size_max: 6400
     within_tissue_P6400_B256:
       split: 
         - ${datamodule.split_cellxgene_hsapiens}
@@ -189,15 +189,15 @@ dataloader:
       drop_last: True
       num_samples: 100000
       sample_groups_equally: True
-    # within_P6400_B256_other_species:
-    #   within_group_sampling: "dataset"
-    #   batch_size: 256
-    #   shuffle: True
-    #   num_workers: 2
-    #   pin_memory: False
-    #   drop_last: True
-    #   num_samples: 100000
-    #   sample_groups_equally: True
+    within_P6400_B256_other_species:
+      within_group_sampling: "dataset"
+      batch_size: 256
+      shuffle: True
+      num_workers: 2
+      pin_memory: False
+      drop_last: True
+      num_samples: 100000
+      sample_groups_equally: True
     within_tissue_P6400_B256:
       within_group_sampling: "tissue"
       batch_size: 256
