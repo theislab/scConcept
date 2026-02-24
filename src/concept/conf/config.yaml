@@ -21,7 +21,7 @@
 # |           └── <mouse_gene_embeddings>.csv
 # |           └── ...
 # |   └── vocabulary/
-# |       └── <gene_token_mapping_16_species>.csv
+# |       └── <gene_token_mapping>.csv
 
 defaults:
   - model: ContrastiveModel
