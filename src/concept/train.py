@@ -36,6 +36,10 @@ def train(cfg: DictConfig, build_only: bool = False):
     # Validate configuration constraints
     scConcept.validate_config(cfg)
 
+    local_rank = os.environ.get("SLURM_LOCALID", None)
+    global_rank = rank_zero_only.rank
+    logger.info(f"GLOBAL_RANK: {global_rank}, LOCAL_RANK: {local_rank}")
+
     val_loader_names = []
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
@@ -53,7 +57,7 @@ def train(cfg: DictConfig, build_only: bool = False):
                 source_name = value["source_name"]
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
-                if rank_zero_only.rank == 0:
+                if local_rank == 0:
                     copy_files(
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),
@@ -106,11 +110,11 @@ def train(cfg: DictConfig, build_only: bool = False):
             log_model=False,
             **kwargs,
         )
-        if rank_zero_only.rank == 0 and not RESUME_LOGGER:
+        if global_rank == 0 and not RESUME_LOGGER:
             wandb_logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     run_id = "dummy"
-    if rank_zero_only.rank == 0:
+    if global_rank == 0:
         run_id = wandb_logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
