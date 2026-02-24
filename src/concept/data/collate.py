@@ -162,26 +162,6 @@ class Collate(BaseCollate):
             return np.arange(len(mask))
         return list(np.where(mask)[0])
 
-    # def _custom_panel_selection(self, batch):
-    #     tokens = batch[0]['tokens']
-    #     count_nnz = batch[0]['count_nnz']
-    #     if self.gene_sampling_strategy == 'random-nonzero':
-    #         # perc_nnz = count_nnz / len(batch)
-    #         # expressed_features = tokens[np.argsort(count_nnz)[::-1][:500]]
-    #         available_panels = []
-    #         panel_probs = []
-    #         for i in range(len(self.panels)):
-    #             panel = self.panels[i]
-    #             available_panels.append(i)
-    #             panel_probs.append(np.median(count_nnz[np.isin(tokens, panel)]))
-    #             # panel_probs.append(np.intersect1d(self.panels[i], expressed_features).size / len(self.panels[i]))
-    #             # if np.intersect1d(self.panels[i], expressed_features).size > (len(self.panels[i]) * 0.5):
-    #             #     available_panels.append(i)
-    #             # available_panels.append((self.panel_names[i], len(self.panels[i]), f'{panel_probs[-1]:.2f}'))
-
-    #         panel_probs = panel_probs // panel_probs.sum()
-    #         # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
-    #         return available_panels, panel_probs
 
     def _get_predesigned_panel(self, batch, organism, tissues):
         # Randomly select a panel from that organism
@@ -189,8 +169,6 @@ class Collate(BaseCollate):
         panel_names = self.panel_names_dict[organism]
         i = self.rng.integers(0, len(panels))
 
-        # available_panels, panel_probs = self._custom_panel_selection(batch)
-        # i = self.rng.choice(available_panels, p=panel_probs)
         panel = panels[i]
         if self.panel_max_drop_rate is not None and self.panel_max_drop_rate > 0:
             panel_max_drop_rate = self.rng.uniform(0, self.panel_max_drop_rate)
@@ -205,8 +183,6 @@ class Collate(BaseCollate):
             {
                 "tokens": item["tokens"][permute],
                 "values": item["values"][permute],
-                #   'count_nnz': item['count_nnz'][permute],
-                #   'dataset_name': item['dataset_name'],
             }
             for item in batch
         ]
@@ -270,11 +246,9 @@ class Collate(BaseCollate):
             batch_2 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_2]
 
             max_lenght_1 = max([len(item["tokens"]) for item in batch_1])
-            max_lenght_1 = min(max_lenght_1, self.max_tokens - 1)  # todo
-            # min_lenght_1 = min([len(item['tokens']) for item in batch_1])
-            # max_lenght_1 = min(self.int_samping(min_lenght_1, max_lenght_1), self.max_tokens)
+            max_lenght_1 = min(max_lenght_1, self.max_tokens - 1)  # -1 for the cls token
             max_lenght_2 = max([len(item["tokens"]) for item in batch_2])
-            max_lenght_2 = min(max_lenght_2, self.max_tokens - 1)  # todo
+            max_lenght_2 = min(max_lenght_2, self.max_tokens - 1)  # -1 for the cls token
 
             seq_length_1 = [min(len(item["tokens"]), max_lenght_1) for item in batch_1]
             seq_length_2 = [min(len(item["tokens"]), max_lenght_2) for item in batch_2]
