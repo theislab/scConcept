@@ -29,31 +29,10 @@ source .venv/bin/activate
 echo "📥 Installing dependencies..."
 uv sync --all-extras
 
-# Check for CUDA availability
-check_cuda() {
-    if command -v nvidia-smi &> /dev/null; then
-        echo "🔍 CUDA detected via nvidia-smi"
-        return 0
-    elif python -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
-        echo "🔍 CUDA detected via PyTorch"
-        return 0
-    else
-        echo "⚠️  CUDA not detected"
-        return 1
-    fi
-}
-
-# Install flash-attn only if CUDA is available
-if check_cuda; then
-    echo "⚡ Installing flash-attn (CUDA detected)..."
-    MAX_JOBS=10 uv pip install flash-attn>=2.7 --no-build-isolation
-else
-    echo "⏭️  Skipping flash-attn installation (CUDA not available)"
-fi
-
 # Install lamin-dataloader from GitHub
 echo "🔗 Installing lamin-dataloader from GitHub..."
-uv pip install git+https://github.com/theislab/lamin_dataloader.git
+# uv pip install git+https://github.com/theislab/lamin_dataloader.git
+uv pip install -e /home/icb/mojtaba.bahrami/projects/lamin-dataloader
 
 # Install package in development mode
 echo "🔗 Installing package in development mode..."
