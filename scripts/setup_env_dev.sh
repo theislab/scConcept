@@ -34,7 +34,7 @@ echo "🔗 Installing package in development mode..."
 uv pip install -e . --no-deps
 
 echo "🔗 Installing local lamin-dataloader in development mode"
-uv pip install -e ~/projects/lamin-dataloader --no-deps
+uv pip install -e ~/projects/lamin_dataloader --no-deps
 
 echo "✅ Setup complete!"
 echo ""
