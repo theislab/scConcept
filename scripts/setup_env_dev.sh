@@ -17,8 +17,9 @@ fi
 
 echo "✅ uv is already installed"
 
+# A flash-attn build is available for this Python version
 echo "📦 Creating virtual environment..."
-uv venv
+uv venv --python 3.12
 
 echo "🔧 Activating virtual environment..."
 source .venv/bin/activate
@@ -28,10 +29,10 @@ uv sync --all-extras
 
 
 echo "🔗 Installing package in development mode..."
-uv pip install -e .
+uv pip install -e . --no-deps
 
 echo "🔗 Installing local lamin-dataloader in development mode"
-uv pip install -e ~/projects/lamin-dataloader
+uv pip install -e ~/projects/lamin-dataloader --no-deps
 
 echo "✅ Setup complete!"
 echo ""
