@@ -28,7 +28,7 @@ echo "📥 Installing dependencies..."
 uv sync --all-extras
 
 echo "📦 Installing flash-attn..."
-MAX_JOBS=4 uv pip install flash-attn>=2.7 --no-build-isolation
+MAX_JOBS=4 uv pip install flash-attn --no-build-isolation
 
 echo "🔗 Installing package in development mode..."
 uv pip install -e . --no-deps
