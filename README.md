@@ -19,10 +19,10 @@ You need to have Python 3.10 or newer installed on your system.
 If you don't have Python installed, we recommend installing [uv][].
 scConcept also uses [Flash Attention][] which requires CUDA.
 
-### Create virtual env from scratch:
-`cd` to the root of project directory and the run [`./scripts/setup_uv.sh`](scripts/setup_uv.sh) which installs uv if not available and creates the whole virtual environment in one go!
+### Create env from scratch:
+`cd` to the root of project directory and the run [`./scripts/setup_env.sh`](scripts/setup_env.sh) which installs uv if not available and creates the whole virtual environment in one go!
 
-### Install on an already existing environment:
+### Install manually:
 
 <!-- There are several alternative options to install scConcept: -->
 
@@ -39,18 +39,15 @@ pip install scConcept
 ```bash
 pip install git+https://github.com/theislab/scConcept.git@main
 ```
+Make sure a cuda version of Pytorch is installed. More information [here](https://pytorch.org/get-started/previous-versions/).
 
-2. [Flash Attention][] (required) - CUDA is required for installing flash-attn (Can take a few minutes to build):
+2. [Flash Attention][] (required) - CUDA is required for installing flash-attn:
 
 ```bash
 MAX_JOBS=4 pip install flash-attn>=2.7 --no-build-isolation
 ```
+This can take up to an hour depending on the system specifications and if a pre-built releases of flash-attn is available for your exact verions of Python, Pytorch, and CUDA. If this takes long we highly recommend installing with the script in previous section!
 
-3. Install lamin-dataloader from GitHub (required):
-
-```bash
-pip install git+https://github.com/theislab/lamin_dataloader.git
-```
 
 ## How to use
 

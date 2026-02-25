@@ -43,8 +43,7 @@ dependencies = [
   "ninja",
   "huggingface-hub>=0.34.0,<1.0",
   "torchdata>=0.11.0",
-  "flash-attn>=2.7",
-  "lamin-dataloader",
+  "lamin-dataloader @ git+https://github.com/theislab/lamin_dataloader.git",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://scConcept.readthedocs.io/"
@@ -85,13 +84,9 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
-lamin-dataloader = { git = "https://github.com/theislab/lamin_dataloader.git" }
 
-# https://docs.astral.sh/uv/concepts/projects/config/#build-isolation
-[tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }, "ninja"]
-[tool.uv.extra-build-variables]
-flash-attn = { MAX_JOBS = "8" }
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch]
 envs.default.installer = "uv"
