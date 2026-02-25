@@ -17,32 +17,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+import flash_attn
 
-logger = logging.getLogger(__name__)
-
-# Check if flash-attn is installed
-try:
-    import flash_attn
-
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
-
-logger.info(f"\n\nFLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
-
-# Mock flash_attn and its submodules only if flash-attn is not installed
-if not FLASH_ATTN_AVAILABLE:
-    logger.info("Mocking flash_attn")
-    sys.modules["flash_attn"] = MagicMock()
-    sys.modules["flash_attn.modules"] = MagicMock()
-    sys.modules["flash_attn.modules.mha"] = MagicMock()
-
-# Now we can import the modules
 from lamin_dataloader import BaseCollate, InMemoryCollection, TokenizedDataset
 from torch.utils.data import DataLoader
 
 from concept import ContrastiveModel
 
+logger = logging.getLogger(__name__)
 
 def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=None):
     """
@@ -56,23 +38,6 @@ def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=No
     cell_embs = embs_padded[:, 0, :]
     return embs_padded, cell_embs
 
-
-def _mock_log(self, *args, **kwargs):
-    """Mock the log method to avoid trainer reference errors."""
-    pass
-
-
-@pytest.fixture(autouse=True)
-def mock_model_methods():
-    """Automatically mock model methods for all tests in this module."""
-    # Always mock log to avoid trainer reference errors
-    with patch.object(ContrastiveModel, "log", _mock_log):
-        # Only mock _encode if flash-attn is not available
-        if not FLASH_ATTN_AVAILABLE:
-            with patch.object(ContrastiveModel, "_encode", _mock_encode):
-                yield
-        else:
-            yield
 
 
 @pytest.fixture
@@ -411,7 +376,6 @@ def test_predict_step_with_lamin_dataloader(
     assert all_mean_embs.shape[1] == mock_config["dim_model"]
 
 
-@pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
 @pytest.mark.parametrize("use_direct_paths", [False, True])
 def test_api_integration(adata, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
