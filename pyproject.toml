@@ -29,7 +29,7 @@ dependencies = [
   "session-info2",
   "numpy",
   "pandas",
-  "torch>=2.6.0",
+  "torch>=2.6,<2.10",
   "torchvision",
   "lightning<=2.5.1",
   "scanpy>=1.10.0",
@@ -84,7 +84,7 @@ lamin-dataloader = { git = "https://github.com/theislab/lamin_dataloader.git" }
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }, "ninja"]
 [tool.uv.extra-build-variables]
-flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE", MAX_JOBS = "10" }
+flash-attn = { MAX_JOBS = "15" }
 
 [tool.hatch]
 envs.default.installer = "uv"

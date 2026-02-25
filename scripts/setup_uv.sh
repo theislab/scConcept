@@ -17,26 +17,21 @@ fi
 
 echo "✅ uv is already installed"
 
-# Create virtual environment
 echo "📦 Creating virtual environment..."
 uv venv
 
-# Activate virtual environment
 echo "🔧 Activating virtual environment..."
 source .venv/bin/activate
 
-# Install dependencies
 echo "📥 Installing dependencies..."
 uv sync --all-extras
 
-# Install lamin-dataloader from GitHub
-echo "🔗 Installing lamin-dataloader from GitHub..."
-# uv pip install git+https://github.com/theislab/lamin_dataloader.git
-uv pip install -e /home/icb/mojtaba.bahrami/projects/lamin-dataloader
 
-# Install package in development mode
 echo "🔗 Installing package in development mode..."
 uv pip install -e .
+
+echo "🔗 Installing local lamin-dataloader in development mode"
+uv pip install -e ~/projects/lamin-dataloader
 
 echo "✅ Setup complete!"
 echo ""
