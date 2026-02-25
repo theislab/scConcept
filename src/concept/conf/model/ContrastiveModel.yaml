@@ -25,8 +25,8 @@ training:
   weight_decay: 0.0
   optimizer_class: AdamW
   scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
-  freeze_pretrained_vocabulary: null # needed only if PRETRAINED_VOCABULARY is provided in PATH
-  use_specie_embs_freq: null # needed only if PRETRAINED_VOCABULARY is provided in PATH
+  freeze_pretrained_vocabulary: False
+  use_specie_embs_freq: null
   warmup: 10000
   max_steps: 10000000
   min_lr: 0.0

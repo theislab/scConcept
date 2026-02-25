@@ -201,7 +201,7 @@ class GeneEncoder(nn.Module):
         super().__init__()
         self.emb_dim = emb_dim
         self.freeze_pretrained_vocabulary = freeze_pretrained_vocabulary
-        self.pretrained_vocabulary_available = pretrained_vocabulary is not None        
+        self.pretrained_vocabulary_available = pretrained_vocabulary is not None
 
         # If a pretrained vocabulary is provided, build custom embedding weights
         if self.pretrained_vocabulary_available:
@@ -241,7 +241,7 @@ class GeneEncoder(nn.Module):
 
         self.enc_norm = nn.LayerNorm(emb_dim)
 
-    def forward(self, x: Tensor, add_specie_embs: bool = None) -> Tensor:
+    def forward(self, x: Tensor, add_specie_embs: bool = False) -> Tensor:
         if self.pretrained_vocabulary_available:
             specie_specific_embs = self.specie_specific_embs(x)
 
@@ -373,11 +373,6 @@ class ContrastiveModel(BaseTransformerModel):
         self.LOGGING_STEP = False
 
         self.use_specie_embs_freq = config["training"]["use_specie_embs_freq"]
-        if pretrained_vocabulary is not None:
-            assert self.use_specie_embs_freq is not None, (
-                "use_specie_embs_freq must be provided if pretrained_vocabulary is provided"
-            )
-            assert 0.0 <= self.use_specie_embs_freq <= 1.0, "use_specie_embs_freq must be between 0.0 and 1.0"
         self.gene_token_encoder = GeneEncoder(
             self.vocab_size,
             self.dim_model,
@@ -416,8 +411,8 @@ class ContrastiveModel(BaseTransformerModel):
             self.stage = "predict"
 
         # Deterministically add specie_specific_embs based on use_specie_embs_freq
-        add_specie_embs = None
-        if self.gene_token_encoder.pretrained_vocabulary_available:
+        add_specie_embs = False
+        if self.gene_token_encoder.pretrained_vocabulary_available and self.use_specie_embs_freq is not None:
             if self.stage == "train" and not self.LOGGING_STEP:
                 add_specie_embs = int((self.global_step + 1) * self.use_specie_embs_freq) > int(
                     self.global_step * self.use_specie_embs_freq
@@ -664,7 +659,6 @@ class ContrastiveModel(BaseTransformerModel):
             sample_stats = self._get_sample_stats(batch)
             sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
             self.sample_stats["train"].append(sample_stats)
-
 
         if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
