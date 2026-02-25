@@ -22,7 +22,7 @@ echo "📦 Creating virtual environment..."
 uv venv --python 3.12
 
 echo "📦 Installing flash-attn..."
-MAX_JOBS=4 uv pip install flash-attn --no-build-isolation
+MAX_JOBS=4 uv pip install "flash-attn==2.8.3" --no-build-isolation
 
 echo "🔧 Activating virtual environment..."
 source .venv/bin/activate
