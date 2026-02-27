@@ -31,27 +31,27 @@ precomp_embs_key: null
 dataset:
   train:
     split: 
-      # - ${datamodule.split_cellxgene_hsapiens}
-      # - ${datamodule.split_cellxgene_mmusculus}
-      # - ${datamodule.split_cellxgene_cjacchus}
-      # - ${datamodule.split_cellxgene_mmulatta}
-      # - ${datamodule.split_cellxgene_ptroglodytes}
+      - ${datamodule.split_cellxgene_hsapiens}
+      - ${datamodule.split_cellxgene_mmusculus}
+      - ${datamodule.split_cellxgene_cjacchus}
+      - ${datamodule.split_cellxgene_mmulatta}
+      - ${datamodule.split_cellxgene_ptroglodytes}
       - ${datamodule.split_scbasecount_hsapiens}
-      # - ${datamodule.split_scbasecount_mmusculus}
-      # - ${datamodule.split_scbasecount_mmulatta}
-      # - ${datamodule.split_scbasecount_cjacchus}
-      # - ${datamodule.split_scbasecount_ptroglodytes}
-      # - ${datamodule.split_scbasecount_btaurus}
-      # - ${datamodule.split_scbasecount_celegans}
-      # - ${datamodule.split_scbasecount_drerio}
-      # - ${datamodule.split_scbasecount_dmelanogaster}
-      # - ${datamodule.split_scbasecount_ecaballus}
-      # - ${datamodule.split_scbasecount_ggallus}
-      # - ${datamodule.split_scbasecount_ggorilla}
-      # - ${datamodule.split_scbasecount_hgfemale}
-      # - ${datamodule.split_scbasecount_ocuniculus}
-      # - ${datamodule.split_scbasecount_oaries}
-      # - ${datamodule.split_scbasecount_sscrofa}
+      - ${datamodule.split_scbasecount_mmusculus}
+      - ${datamodule.split_scbasecount_mmulatta}
+      - ${datamodule.split_scbasecount_cjacchus}
+      - ${datamodule.split_scbasecount_ptroglodytes}
+      - ${datamodule.split_scbasecount_btaurus}
+      - ${datamodule.split_scbasecount_celegans}
+      - ${datamodule.split_scbasecount_drerio}
+      - ${datamodule.split_scbasecount_dmelanogaster}
+      - ${datamodule.split_scbasecount_ecaballus}
+      - ${datamodule.split_scbasecount_ggallus}
+      - ${datamodule.split_scbasecount_ggorilla}
+      - ${datamodule.split_scbasecount_hgfemale}
+      - ${datamodule.split_scbasecount_ocuniculus}
+      - ${datamodule.split_scbasecount_oaries}
+      - ${datamodule.split_scbasecount_sscrofa}
     max_tokens: 1000
     panel_overlap: False
     panel_selection: mixed
