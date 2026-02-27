@@ -36,7 +36,7 @@ def train(cfg: DictConfig, build_only: bool = False):
     # Validate configuration constraints
     scConcept.validate_config(cfg)
 
-    local_rank = os.environ.get("SLURM_LOCALID", None)
+    local_rank = int(os.environ.get("SLURM_LOCALID", -1))
     global_rank = rank_zero_only.rank
     logger.info(f"GLOBAL_RANK: {global_rank}, LOCAL_RANK: {local_rank}")
 

@@ -60,6 +60,8 @@ class BaseTransformerModel(L.LightningModule):
         self.log_every_n_steps = config["training"].get("log_every_n_steps", 100)
         self.values_only_sanity_check = config["values_only_sanity_check"]
         self.data_loading_speed_sanity_check = config["data_loading_speed_sanity_check"]
+        self.norm_scheme = config.get("norm_scheme", "post")
+        self.activation = config.get("activation", "relu")
 
         encoder_layers = FlashTransformerEncoderLayer(
             self.dim_model,
@@ -68,6 +70,8 @@ class BaseTransformerModel(L.LightningModule):
             self.dropout,
             batch_first=True,
             use_flash_attn=self.flash_attention,
+            norm_scheme=self.norm_scheme,
+            activation=self.activation,
         )
         self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
         # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
@@ -228,16 +232,12 @@ class GeneEncoder(nn.Module):
             if self.freeze_pretrained_vocabulary:
                 self.embedding.weight.register_hook(lambda grad: grad * self.freeze_mask)
 
-            if pretrained_dim != emb_dim:
-                self.adapt_linear = nn.Linear(pretrained_dim, emb_dim, bias=True)
-            else:
-                self.adapt_linear = None
             self.specie_specific_embs = nn.Embedding(
-                n_genes, emb_dim, padding_idx=padding_idx, _weight=torch.zeros(n_genes, emb_dim, dtype=torch.float)
+                n_genes, pretrained_dim, padding_idx=padding_idx, _weight=torch.zeros(n_genes, pretrained_dim, dtype=torch.float)
             )
+            self.adapt_linear = nn.Linear(pretrained_dim, emb_dim, bias=True)
         else:
             self.embedding = nn.Embedding(n_genes, emb_dim, padding_idx=padding_idx)
-            self.adapt_linear = None
 
         self.enc_norm = nn.LayerNorm(emb_dim)
 
@@ -247,10 +247,8 @@ class GeneEncoder(nn.Module):
 
         x = self.embedding(x)
         if self.pretrained_vocabulary_available:
-            if self.adapt_linear is not None:
-                x = self.adapt_linear(x)
-
             x = x + specie_specific_embs * int(add_specie_embs)
+            x = self.adapt_linear(x)
 
         x = self.enc_norm(x)
         return x
@@ -650,7 +648,6 @@ class ContrastiveModel(BaseTransformerModel):
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics_dict({"train/loss": loss})
             return loss
 
         loss, metrics = self._step(batch, batch_idx, log_prefix="train")
@@ -671,7 +668,6 @@ class ContrastiveModel(BaseTransformerModel):
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            self.log_metrics_dict({"val/loss": loss})
             return loss
 
         val_name = self.val_loader_names[dataloader_idx]
