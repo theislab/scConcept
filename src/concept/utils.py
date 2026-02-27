@@ -19,26 +19,39 @@ def resolve_split_list(split_list: list, key: str | None = None) -> list:
     If key is set (e.g. "train" or "val"), items that are dicts with that key
     are replaced by the key's list; otherwise items are kept as-is. Then any
     list-of-lists is flattened to a single list.
+
+    Items can also be wrapped as ``{source: <split_config>, key: "train"|"val"}``
+    to override the default key for that specific entry, e.g.:
+
+        split:
+          - ${datamodule.split_cellxgene_hsapiens}        # uses default key
+          - source: ${datamodule.split_cellxgene_mmusculus}
+            key: val                                       # override to val sublist
     """
 
     expanded = []
     for item in split_list:
         source_path = None
+        effective_key = key
+
         if isinstance(item, dict):
+            # Wrapper syntax: {source: <split_config>, key: "train"|"val"}
+            if "source" in item:
+                effective_key = item.get("key", key)
+                item = item["source"]
+
             if "source_path" in item:
                 source_path = item["source_path"]
-            if key is not None and key in item:
-                item = item[key]
+            if effective_key is not None and effective_key in item:
+                item = item[effective_key]
+
         if isinstance(item, str):
             item = [item]
         if source_path:
             item = [os.path.join(source_path, file) for file in item]
         expanded.extend(item)
 
-        split_list = expanded
-    # if len(split_list) > 0 and isinstance(split_list[0], list):
-    #     split_list = [item for sublist in split_list for item in sublist]
-    return split_list
+    return expanded
 
 
 def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneIdTokenizer) -> list:

@@ -95,7 +95,8 @@ dataset:
       panel_size_max: 6400
     within_tissue_P6400_B256:
       split: 
-        - ${datamodule.split_cellxgene_hsapiens}
+        - source: ${datamodule.split_cellxgene_hsapiens}
+          key: train
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
