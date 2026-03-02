@@ -74,9 +74,10 @@ def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneId
 
     logger.info(f"Loaded {len(pretrained_dict)} gene embeddings from {len(csv_files)} files")
 
-    pretrained_vocabulary = {}
     gene_names = tokenizer.decode(list(range(len(tokenizer.gene_mapping))))
     not_found_embeddings = []
+    pretrained_dim = next(iter(pretrained_dict.values())).shape[0]
+    pretrained_vocabulary = torch.zeros(len(gene_names), pretrained_dim, dtype=torch.float)
     for idx, gene_name in enumerate(gene_names):
         if gene_name == tokenizer.CLS_VOCAB or gene_name == tokenizer.PAD_VOCAB:
             continue

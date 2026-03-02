@@ -270,8 +270,8 @@ class scConcept:
             cfg.PATH.GENE_MAPPING_PATH = cfg.PATH.gene_mapping_path
         if "freeze_pretrained_vocabulary" not in cfg.model.training:
             cfg.model.training.freeze_pretrained_vocabulary = None
-        if "use_specie_embs_freq" not in cfg.model.training:
-            cfg.model.training.use_specie_embs_freq = None
+        if "use_learnable_embs_freq" not in cfg.model.training:
+            cfg.model.training.use_learnable_embs_freq = None
         return cfg
 
     def extract_embeddings(

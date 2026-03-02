@@ -45,6 +45,7 @@ def mock_config():
     """Create a mock configuration for testing"""
     return {
         "flash_attention": False,  # Set to False to use regular transformer
+        "dim_gene_embs": 64,
         "dim_model": 64,
         "num_head": 4,
         "dim_hid": 128,
@@ -71,7 +72,7 @@ def mock_config():
             "optimizer_class": "AdamW",
             "scheduler": "warmup",
             "freeze_pretrained_vocabulary": None,
-            "use_specie_embs_freq": None,
+            "use_learnable_embs_freq": None,
             "warmup": 100,
             "max_steps": 1000,
             "min_lr": 0.0,
@@ -100,20 +101,19 @@ def test_model_initialization(mock_config, device):
 def test_training_step(mock_config, device, flash_attention, use_pretrained_vocabulary):
     """Test that the model can perform a training step"""
     # Update mock_config with parameterized flash_attention value
+    vocab_size = 20
     mock_config["flash_attention"] = flash_attention
     mock_config["training"]["scheduler"] = None
 
     if use_pretrained_vocabulary:
-        fixed_idx = 2
         # Create a pretrained vocabulary with a known value and keep reference for later
         with torch.no_grad():
-            pretrained_vocabulary = {fixed_idx: torch.ones(256, requires_grad=False)}
+            pretrained_vocabulary = torch.ones(vocab_size, 256, requires_grad=False)
         mock_config["training"]["freeze_pretrained_vocabulary"] = True
-        mock_config["training"]["use_specie_embs_freq"] = 1.0
+        mock_config["training"]["use_learnable_embs_freq"] = 1.0
     else:
         pretrained_vocabulary = None
 
-    vocab_size = 20
     model = ContrastiveModel(
         config=mock_config,
         cls_token_id=0,
@@ -154,9 +154,9 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
 
     # Test training step
     model.train()
-    # Keep a copy of pretrained embedding tensor before backward if it is used
+    # Keep a copy of pretrained pretrained_embs tensor before backward if it is used
     if use_pretrained_vocabulary:
-        pretrained_embed_before = model.gene_token_encoder.embedding.weight.clone()
+        pretrained_embed_before = model.gene_token_encoder.pretrained_embs.weight.clone()
         # Capture a deepcopy of all model parameters before training step
     params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
 
@@ -189,10 +189,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
                     assert not torch.equal(before, param), f"Parameter {name} was not updated!"
 
         if use_pretrained_vocabulary:
-            assert torch.equal(pretrained_embed_before[fixed_idx], model.gene_token_encoder.embedding.weight[fixed_idx])
-            assert not torch.equal(
-                pretrained_embed_before[fixed_idx + 1], model.gene_token_encoder.embedding.weight[fixed_idx + 1]
-            )
+            assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs.weight)
 
 
 @pytest.mark.parametrize("flash_attention", [False, True])

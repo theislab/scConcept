@@ -39,13 +39,13 @@ class BaseTransformerModel(L.LightningModule):
         super().__init__()
         self.debug = debug
         self.flash_attention = config["flash_attention"]
+        self.dim_gene_embs = config.get("dim_gene_embs", config["dim_model"])
         self.dim_model = config["dim_model"]
         self.dim_hid = config["dim_hid"]
         self.num_head = config["num_head"]
         self.nlayers = config["nlayers"]
         self.dropout = config["dropout"]
         self.decoder_head = config["decoder_head"]
-        self.mask_padding = config["mask_padding"]
         self.input_encoding = config["input_encoding"]
         self.PAD_TOKEN_ID = pad_token_id
         self.CLS_TOKEN_ID = cls_token_id
@@ -79,24 +79,40 @@ class BaseTransformerModel(L.LightningModule):
         if self.decoder_head:
             self.expression_decoder = GeneExpressionDecoder(self.dim_model)
 
+        self.cls_embedding = nn.Parameter(torch.zeros(self.dim_model))
+
     def _encode(
         self,
         tokens: Tensor,
         values: Tensor,
-        src_key_padding_mask: Tensor,
         seq_lengths: List[int] = None,
     ) -> Tensor:
+        batch_size = tokens.size(0)
+
+        src_key_padding_mask = tokens == self.PAD_TOKEN_ID
+
+        gene_embs = self._encode_gene_tokens(tokens)
+
+        # Prepend learnable CLS embedding at position 0
+        cls_emb = self.cls_embedding.view(1, 1, -1).expand(batch_size, 1, -1)
+        gene_embs = torch.cat([cls_emb, gene_embs], dim=1)
+
+        # Prepend a CLS value placeholder so value/rank encoders stay aligned
+        cls_val = torch.full((batch_size, 1), self.CLS_VALUE, dtype=values.dtype, device=values.device)
+        values = torch.cat([cls_val, values], dim=1)
+
+        # CLS position is never padding
+        cls_col = torch.zeros(batch_size, 1, dtype=torch.bool, device=gene_embs.device)
+        src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask], dim=1)
+
         if self.flash_attention:
             assert seq_lengths is not None, "seq_lengths must be provided for flash attention"
-            batch_size = tokens.size(0)
-            max_length = tokens.size(1)
+            max_length = tokens.size(1) + 1  # +1 for CLS
+            seq_lengths = [l + 1 for l in seq_lengths]
 
-            tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
-                tokens.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths
+            gene_embs, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
+                gene_embs, ~src_key_padding_mask, seq_lengths=seq_lengths
             )
-            tokens = tokens.squeeze(-1)
-
-            gene_embs = self._encode_gene_tokens(tokens)
 
             if self.input_encoding == "rank_encoding":
                 # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
@@ -117,7 +133,6 @@ class BaseTransformerModel(L.LightningModule):
             # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
-            gene_embs = self._encode_gene_tokens(tokens)
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
@@ -135,10 +150,8 @@ class BaseTransformerModel(L.LightningModule):
     def _encode_values(self, values: Tensor) -> Tensor:
         raise NotImplementedError("Subclasses must implement _encode_values method.")
 
-    def forward(self, input_tokens, input_values, src_key_padding_mask: Tensor = None, seq_lengths: List[int] = None):
-        embs_padded, cell_embs = self._encode(
-            input_tokens, input_values, src_key_padding_mask=src_key_padding_mask, seq_lengths=seq_lengths
-        )
+    def forward(self, input_tokens, input_values, seq_lengths: List[int] = None):
+        embs_padded, cell_embs = self._encode(input_tokens, input_values, seq_lengths=seq_lengths)
         pred = self.expression_decoder(embs_padded) if self.decoder_head else None
 
         return pred, embs_padded, cell_embs
@@ -197,59 +210,61 @@ class GeneEncoder(nn.Module):
     def __init__(
         self,
         n_genes: int,
-        emb_dim: int,
+        dim_gene_embs: int,
+        dim_model: int,
         padding_idx: Optional[int] = None,
-        pretrained_vocabulary: Optional[dict] = None,
+        pretrained_vocabulary: Optional[Tensor] = None,
         freeze_pretrained_vocabulary: bool = None,
     ):
         super().__init__()
-        self.emb_dim = emb_dim
+        self.dim_gene_embs = dim_gene_embs
+        self.dim_model = dim_model
         self.freeze_pretrained_vocabulary = freeze_pretrained_vocabulary
         self.pretrained_vocabulary_available = pretrained_vocabulary is not None
 
         # If a pretrained vocabulary is provided, build custom embedding weights
         if self.pretrained_vocabulary_available:
-            assert len(pretrained_vocabulary) <= n_genes, (
-                f"Pretrained vocabulary must have at most the same length as the number of genes: {len(pretrained_vocabulary)} <= {n_genes}"
+            assert pretrained_vocabulary.shape[0] == n_genes, (
+                f"Pretrained vocabulary must have the same length as the number of genes: {pretrained_vocabulary.shape[0]} == {n_genes}"
             )
             assert freeze_pretrained_vocabulary is not None, (
                 "freeze_pretrained_vocabulary must be provided if pretrained_vocabulary is provided"
             )
 
-            pretrained_dim = next(iter(pretrained_vocabulary.values())).shape[0]
-            logger.info(f"Using pretrained embeddings for {len(pretrained_vocabulary)} genes of size {pretrained_dim}")
-
-            self.embedding = nn.Embedding(n_genes, pretrained_dim, padding_idx=padding_idx)
-
-            freeze_mask = torch.ones_like(self.embedding.weight)
-            with torch.no_grad():
-                for idx in range(n_genes):
-                    if idx in pretrained_vocabulary:
-                        self.embedding.weight[idx].copy_(pretrained_vocabulary[idx])
-                        freeze_mask[idx].fill_(0)
-
-            self.register_buffer("freeze_mask", freeze_mask)  ## todo: put inside if self.freeze_pretrained_vocabulary
-            if self.freeze_pretrained_vocabulary:
-                self.embedding.weight.register_hook(lambda grad: grad * self.freeze_mask)
-
-            self.specie_specific_embs = nn.Embedding(
-                n_genes, pretrained_dim, padding_idx=padding_idx, _weight=torch.zeros(n_genes, pretrained_dim, dtype=torch.float)
+            pretrained_dim = pretrained_vocabulary.shape[1]
+            logger.info(
+                f"Using pretrained embeddings for {len(pretrained_vocabulary)} genes of size {pretrained_dim} with dim_gene_embs={dim_gene_embs}"
             )
-            self.adapt_linear = nn.Linear(pretrained_dim, emb_dim, bias=True)
+
+            self.pretrained_embs = nn.Embedding.from_pretrained(
+                pretrained_vocabulary, freeze=freeze_pretrained_vocabulary, padding_idx=padding_idx
+            )
+            self.adapter1 = nn.Linear(pretrained_dim, dim_gene_embs, bias=True)
+
+            self.embedding = nn.Embedding(
+                n_genes,
+                dim_gene_embs,
+                padding_idx=padding_idx,
+                _weight=torch.zeros(n_genes, dim_gene_embs, dtype=torch.float),
+            )
         else:
-            self.embedding = nn.Embedding(n_genes, emb_dim, padding_idx=padding_idx)
+            self.embedding = nn.Embedding(n_genes, dim_gene_embs, padding_idx=padding_idx)
 
-        self.enc_norm = nn.LayerNorm(emb_dim)
+        self.adapter2 = nn.Linear(dim_gene_embs, dim_model, bias=True)
+        self.enc_norm = nn.LayerNorm(dim_model)
 
-    def forward(self, x: Tensor, add_specie_embs: bool = False) -> Tensor:
+    def forward(self, x: Tensor, add_learnable_embs: bool = False) -> Tensor:
+        x_learnable = self.embedding(x)
         if self.pretrained_vocabulary_available:
-            specie_specific_embs = self.specie_specific_embs(x)
+            x_pretrained = self.pretrained_embs(x)
+            x_pretrained = self.adapter1(x_pretrained)
 
-        x = self.embedding(x)
         if self.pretrained_vocabulary_available:
-            x = x + specie_specific_embs * int(add_specie_embs)
-            x = self.adapt_linear(x)
+            x = x_pretrained + x_learnable * int(add_learnable_embs)
+        else:
+            x = x_learnable
 
+        x = self.adapter2(x)
         x = self.enc_norm(x)
         return x
 
@@ -370,9 +385,10 @@ class ContrastiveModel(BaseTransformerModel):
         assert self.contrastive_loss in ["binary", "multiclass"]
         self.LOGGING_STEP = False
 
-        self.use_specie_embs_freq = config["training"]["use_specie_embs_freq"]
+        self.use_learnable_embs_freq = config["training"]["use_learnable_embs_freq"]
         self.gene_token_encoder = GeneEncoder(
             self.vocab_size,
+            self.dim_gene_embs,
             self.dim_model,
             padding_idx=pad_token_id,
             pretrained_vocabulary=pretrained_vocabulary,
@@ -408,17 +424,17 @@ class ContrastiveModel(BaseTransformerModel):
             logger.warning("model.stage is not set! setting model.stage to 'predict'")
             self.stage = "predict"
 
-        # Deterministically add specie_specific_embs based on use_specie_embs_freq
-        add_specie_embs = False
-        if self.gene_token_encoder.pretrained_vocabulary_available and self.use_specie_embs_freq is not None:
+        # Deterministically add learnable_specific_embs based on use_learnable_embs_freq
+        add_learnable_embs = False
+        if self.gene_token_encoder.pretrained_vocabulary_available and self.use_learnable_embs_freq is not None:
             if self.stage == "train" and not self.LOGGING_STEP:
-                add_specie_embs = int((self.global_step + 1) * self.use_specie_embs_freq) > int(
-                    self.global_step * self.use_specie_embs_freq
+                add_learnable_embs = int((self.global_step + 1) * self.use_learnable_embs_freq) > int(
+                    self.global_step * self.use_learnable_embs_freq
                 )
             else:
-                add_specie_embs = True
+                add_learnable_embs = True
 
-        return self.gene_token_encoder(tokens, add_specie_embs=add_specie_embs)
+        return self.gene_token_encoder(tokens, add_learnable_embs=add_learnable_embs)
 
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
@@ -459,7 +475,6 @@ class ContrastiveModel(BaseTransformerModel):
         assert self.stage in ["train", "val"], f"Invalid stage: {self.stage}"
         metrics = {}
 
-        batch_size = len(batch["tokens_1"])
         batch_1 = {
             "tokens": batch["tokens_1"],
             "values": batch["values_1"],
@@ -483,15 +498,12 @@ class ContrastiveModel(BaseTransformerModel):
             batch_1["values"] = batch_1["values"][:, torch.randperm(batch_1["tokens"].size(1))]
             batch_2["values"] = batch_2["values"][:, torch.randperm(batch_2["tokens"].size(1))]
 
-        batch_1 = self.add_cls_token(batch_1)
-        batch_2 = self.add_cls_token(batch_2)
-
         if self.masking_rate > 0:
             batch_1["values_masked"], batch_1["masked_positions"] = self.mask_values(
-                batch_1["values"], self.masking_rate, ignore_idxs=[0]
+                batch_1["values"], self.masking_rate
             )
             batch_2["values_masked"], batch_2["masked_positions"] = self.mask_values(
-                batch_2["values"], self.masking_rate, ignore_idxs=[0]
+                batch_2["values"], self.masking_rate
             )
         else:
             batch_1["values_masked"] = batch_1["values"]
@@ -683,32 +695,26 @@ class ContrastiveModel(BaseTransformerModel):
         if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
 
-    def predict_step(self, batch, batch_idx, use_specie_embs: bool = True):
+    def predict_step(self, batch, batch_idx, use_learnable_embs: bool = True):
         self.stage = "predict"
-        self.use_specie_embs_freq = int(use_specie_embs)
+        self.use_learnable_embs_freq = int(use_learnable_embs)
 
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
         # logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
 
-        batch = self.add_cls_token(batch)
         if self.debug and batch_idx % 20 == 0:
             logger.debug(f"batch tokens: {batch['tokens'][0]}")
             logger.debug(f"batch values: {batch['values'][0]}")
 
-        padding_mask = (
-            (batch["tokens"] == self.PAD_TOKEN_ID)
-            if self.mask_padding
-            else torch.zeros_like(batch["tokens"], dtype=torch.bool, device=self.device)
-        )
+        padding_mask = batch["tokens"] == self.PAD_TOKEN_ID
         if "seq_lengths" not in batch or batch["seq_lengths"] is None:
             batch["seq_lengths"] = (~padding_mask).sum(dim=1).tolist()
 
-        pred, embs, cell_embs = self(
-            batch["tokens"], batch["values"], src_key_padding_mask=padding_mask, seq_lengths=batch["seq_lengths"]
-        )
+        pred, embs, cell_embs = self(batch["tokens"], batch["values"], seq_lengths=batch["seq_lengths"])
 
-        embs_mean = [embs[i, ~padding_mask[i]].mean(dim=0) for i in range(len(embs))]
+        # embs has CLS at position 0 (added inside _encode); skip it and average over gene positions
+        embs_mean = [embs[i, 1:][~padding_mask[i]].mean(dim=0) for i in range(len(embs))]
         embs_mean = torch.stack(embs_mean, dim=0)
 
         if self.projection_dim:
@@ -895,16 +901,10 @@ class ContrastiveModel(BaseTransformerModel):
         combined_tokens = torch.cat([padded_tokens_1, padded_tokens_2], dim=0)
         combined_values = torch.cat([padded_values_1, padded_values_2], dim=0)
         combined_seq_lengths = seq_lengths_1 + seq_lengths_2
-        combined_padding_mask = (
-            (combined_tokens == self.PAD_TOKEN_ID)
-            if self.mask_padding
-            else torch.zeros_like(combined_tokens, dtype=torch.bool, device=self.device)
-        )
 
         pred, _, cell_embs = self(
             combined_tokens,
             combined_values,
-            src_key_padding_mask=combined_padding_mask,
             seq_lengths=combined_seq_lengths,
         )
         cell_embs_1, cell_embs_2 = torch.chunk(cell_embs, 2, dim=0)

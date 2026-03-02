@@ -1,5 +1,6 @@
 name: ContrastiveModel
 flash_attention: True
+dim_gene_embs: 512
 dim_model: 512
 num_head: 8
 dim_hid: 1024
@@ -15,7 +16,6 @@ mlm_loss_weight: 0.0
 cont_loss_weight: 1.0
 contrastive_loss: multiclass # multiclass or binary
 logit_scale_init_value: 3.0
-mask_padding: True
 pe_max_len: 5000
 input_encoding: "rank_encoding" # "value_encoding"
 loss_switch_step: 10000
@@ -28,7 +28,7 @@ training:
   optimizer_class: AdamW
   scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
   freeze_pretrained_vocabulary: False
-  use_specie_embs_freq: null
+  use_learnable_embs_freq: null
   warmup: 10000
   max_steps: 10000000
   min_lr: 0.0

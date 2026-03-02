@@ -151,7 +151,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 "model.training.devices=1",
                 "model.training.num_nodes=1",
                 f"model.training.freeze_pretrained_vocabulary={bool(pretrained_vocabulary_path)}",
-                "model.training.use_specie_embs_freq=0.8",
+                "model.training.use_learnable_embs_freq=0.8",
                 # Disable wandb
                 "wandb.enabled=False",
                 "wandb.run_name=test_name",
