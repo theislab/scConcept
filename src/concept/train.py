@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from datetime import datetime
+import datetime
 
 import lightning as L
 import pandas as pd
@@ -115,7 +115,11 @@ def train(cfg: DictConfig, build_only: bool = False):
 
     run_id = "dummy"
     if global_rank == 0:
-        run_id = wandb_logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        run_id = (
+            wandb_logger.experiment.id
+            if cfg.wandb.enabled
+            else f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        )
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
 
@@ -169,7 +173,6 @@ def train(cfg: DictConfig, build_only: bool = False):
         model = ContrastiveModel(**model_args)
         if cfg.model.training.validate_before_training:
             trainer.validate(model=model, datamodule=datamodule)
-
 
     if build_only:
         return trainer, model, datamodule
