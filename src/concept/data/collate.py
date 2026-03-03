@@ -159,9 +159,8 @@ class Collate(BaseCollate):
         mask = mask_1 & mask_2
         if mask.sum() < min_samples_required:
             logger.warning(f"Less than {min_samples_required} cells passed QC threshold! Including all cells.")
-            return np.arange(len(mask))
-        return list(np.where(mask)[0])
-
+            return np.ones(len(mask), dtype=bool)
+        return mask
 
     def _get_predesigned_panel(self, batch, organism, tissues):
         # Randomly select a panel from that organism
@@ -245,36 +244,33 @@ class Collate(BaseCollate):
             batch_1 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_1]
             batch_2 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_2]
 
-            max_lenght_1 = max([len(item["tokens"]) for item in batch_1])
-            max_lenght_1 = min(max_lenght_1, self.max_tokens - 1)  # -1 for the cls token
-            max_lenght_2 = max([len(item["tokens"]) for item in batch_2])
-            max_lenght_2 = min(max_lenght_2, self.max_tokens - 1)  # -1 for the cls token
+            seq_length_1 = [min(len(item["tokens"]), self.max_tokens) for item in batch_1]
+            seq_length_2 = [min(len(item["tokens"]), self.max_tokens) for item in batch_2]
 
-            seq_length_1 = [min(len(item["tokens"]), max_lenght_1) for item in batch_1]
-            seq_length_2 = [min(len(item["tokens"]), max_lenght_2) for item in batch_2]
-
-            batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
-            batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
-
+            items_mask = np.ones(len(batch_1), dtype=bool)
             if (
                 self.stage == "train"
                 and self.max_total_seq_length is not None
                 and self.max_total_seq_length < float("inf")
             ):
                 batch_size = self.adapt_batch_size(seq_length_1, seq_length_2)
-                batch, batch_1, batch_2 = batch[:batch_size], batch_1[:batch_size], batch_2[:batch_size]
-                panel_1, panel_2 = panel_1[:batch_size], panel_2[:batch_size]
-                seq_length_1, seq_length_2 = seq_length_1[:batch_size], seq_length_2[:batch_size]
+                if batch_size < len(batch_1):
+                    items_mask[batch_size:] = False
 
             if self.stage == "train" and self.qc_threshold is not None:
-                qc_indices = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
-                batch = [batch[i] for i in qc_indices]
-                batch_1 = [batch_1[i] for i in qc_indices]
-                batch_2 = [batch_2[i] for i in qc_indices]
-                panel_1 = [panel_1[i] for i in qc_indices]
-                panel_2 = [panel_2[i] for i in qc_indices]
-                seq_length_1 = [seq_length_1[i] for i in qc_indices]
-                seq_length_2 = [seq_length_2[i] for i in qc_indices]
+                items_mask &= self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
+
+            for i in range(len(batch_1)):
+                if not items_mask[i]:
+                    batch_1[i] = {"tokens": np.array([]), "values": np.array([])}
+                    batch_2[i] = {"tokens": np.array([]), "values": np.array([])}
+                    seq_length_1[i] = 0
+                    seq_length_2[i] = 0
+
+            max_lenght_1 = max(seq_length_1)
+            max_lenght_2 = max(seq_length_2)
+            batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
+            batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
 
             # self.shared_feature_stats(batch_1)
 
@@ -294,6 +290,7 @@ class Collate(BaseCollate):
                 "panel_name_2": panel_name_2,
                 "seq_length_1": seq_length_1,
                 "seq_length_2": seq_length_2,
+                "items_mask": default_collate(items_mask),
                 "_organism": organisms,
                 "_tissue": tissues,
                 **{
@@ -308,7 +305,7 @@ class Collate(BaseCollate):
 
             max_lenght = max([len(item["tokens"]) for item in batch_])
 
-            max_lenght = min(max_lenght, self.max_tokens - 1)
+            max_lenght = min(max_lenght, self.max_tokens)
 
             batch_ = [self.resize_and_pad(item, max_lenght) for item in batch_]
 

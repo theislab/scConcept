@@ -229,7 +229,7 @@ class scConcept:
     def validate_config(cfg: DictConfig):
         """Validate configuration constraints."""
 
-        if "train" in cfg.datamodule.dataset and cfg.model.pe_max_len < cfg.datamodule.dataset.train.max_tokens:
+        if "train" in cfg.datamodule.dataset and cfg.model.pe_max_len < cfg.datamodule.dataset.train.max_tokens + 1:
             raise ValueError(
                 f"Configuration validation failed: model.pe_max_len ({cfg.model.pe_max_len}) must be greater than "
                 f"datamodule.dataset.train.max_tokens ({cfg.datamodule.dataset.train.max_tokens})"

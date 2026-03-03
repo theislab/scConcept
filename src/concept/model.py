@@ -14,13 +14,13 @@ import torch
 import torch.nn.functional as F
 import wandb
 from torch import Tensor, nn, optim
-from torch.distributed.nn.functional import all_gather
 from torchmetrics.classification import BinaryAccuracy
 from torchmetrics.functional.regression import r2_score
 
 from .modules.bert_padding import pad_input, unpad_input
 from .modules.flash_attention_layer import FlashTransformerEncoderLayer
 from .modules.transformer import TransformerEncoder
+from torch.distributed.nn.functional import all_gather
 
 logger = logging.getLogger(__name__)
 
@@ -525,10 +525,8 @@ class ContrastiveModel(BaseTransformerModel):
                 pred_2, batch_2["values"], batch_2["masked_positions"]
             )
 
-        # Gather embeddings from GPUs and concatenate them
-        if self.world_size > 1:
-            cell_embs_1 = torch.cat(all_gather(cell_embs_1), dim=0)
-            cell_embs_2 = torch.cat(all_gather(cell_embs_2), dim=0)
+        cell_embs_1 = self.all_gather_concat(cell_embs_1)
+        cell_embs_2 = self.all_gather_concat(cell_embs_2)
 
         if self.projection_dim:
             cell_embs_1 = self.projection(cell_embs_1)
@@ -542,7 +540,7 @@ class ContrastiveModel(BaseTransformerModel):
             cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
             logits_both_batch = torch.mm(cell_embs_concat_1, cell_embs_concat_2.t()) * self.logit_scale.exp()
         else:
-            cell_embs_2 = torch.cat(all_gather(batch[self.precomp_embs_key]), dim=0)
+            cell_embs_2 = self.all_gather_concat(batch[self.precomp_embs_key])
             logits = (1.0 / (torch.cdist(cell_embs_1, cell_embs_2, p=2) + 1e-4)) * self.logit_scale.exp()
             cell_embs_concat_1 = torch.concat([cell_embs_1, cell_embs_2], dim=0)
             cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
@@ -553,15 +551,24 @@ class ContrastiveModel(BaseTransformerModel):
         logit_size = len(logits_both_batch)
         logits_both_batch *= torch.roll(1 - torch.eye(logit_size, device=self.device), logit_size // 2, 1)
 
+        items_mask = None
+        items_mask_both_batch = None
+        if "items_mask" in batch:
+            items_mask = self.all_gather_concat(batch["items_mask"]).float()  # [N]
+            logit_mask = torch.outer(items_mask, items_mask)  # [N, N]
+            logits *= logit_mask
+            items_mask_both_batch = torch.cat([items_mask, items_mask])  # [2N]
+            logits_both_batch *= torch.outer(items_mask_both_batch, items_mask_both_batch)  # [2N, 2N]
+
         if self.contrastive_loss == "binary":
             loss_cont, recall_top1, recall_top5 = self._contrastive_binary_loss(logits)
             loss_cont_both_batch, recall_top1_both_batch, recall_top5_both_batch = self._contrastive_binary_loss(
                 logits_both_batch
             )
         elif self.contrastive_loss == "multiclass":
-            loss_cont, recall_top1, recall_top5 = self._clip_loss(logits)
+            loss_cont, recall_top1, recall_top5 = self._clip_loss(logits, items_mask)
             loss_cont_both_batch, recall_top1_both_batch, recall_top5_both_batch = self._contrastive_multiclass_loss(
-                logits_both_batch
+                logits_both_batch, items_mask_both_batch
             )
 
         if self.global_step < self.loss_switch_step:
@@ -585,36 +592,33 @@ class ContrastiveModel(BaseTransformerModel):
         for key in self.obs_keys:
             if self.stage != "train" and key in batch:
                 labels_1, labels_2 = batch[key], batch[key]
-                if self.world_size > 1:
-                    labels_1 = torch.cat(all_gather(labels_1), dim=0)
-                    labels_2 = torch.cat(all_gather(labels_2), dim=0)
+                labels_1 = self.all_gather_concat(labels_1)
+                labels_2 = self.all_gather_concat(labels_2)
                 label_acc = 0.5 * (
-                    self._knn_accuracy(logits, labels_1, labels_2) + self._knn_accuracy(logits.t(), labels_2, labels_1)
+                    self._knn_accuracy(logits, labels_1, labels_2, items_mask) + self._knn_accuracy(logits.t(), labels_2, labels_1, items_mask)
                 )
                 metrics[f"knn_acc_{key}"] = label_acc.detach()
 
         if self.stage == "train" and self.LOGGING_STEP:
             global_rank = torch.tensor([self.global_rank] * len(batch_1["tokens"]), device=self.device)
-            if self.world_size > 1:
-                global_rank = torch.cat(all_gather(global_rank), dim=0)
+            global_rank = self.all_gather_concat(global_rank)
             global_rank_acc = 0.5 * (
-                self._knn_accuracy(logits, global_rank, global_rank)
-                + self._knn_accuracy(logits.t(), global_rank, global_rank)
+                self._knn_accuracy(logits, global_rank, global_rank, items_mask)
+                + self._knn_accuracy(logits.t(), global_rank, global_rank, items_mask)
             )
             metrics["knn_acc_global_rank"] = global_rank_acc.detach()
 
         if self.stage != "train":
-            views_mixing_score = self._views_mixing_score(logits_both_batch, k=1)
-            views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, k=5)
+            views_mixing_score = self._views_mixing_score(logits_both_batch, items_mask_both_batch, k=1)
+            views_mixing_score_top_5 = self._views_mixing_score(logits_both_batch, items_mask_both_batch, k=5)
             metrics["views_mixing_score"] = views_mixing_score.detach()
             metrics["views_mixing_score_top_5"] = views_mixing_score_top_5.detach()
 
         if self.debug and self.LOGGING_STEP:
             nonzero_cnt_1 = (batch_1["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
             nonzero_cnt_2 = (batch_2["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
-            if self.world_size > 1:
-                nonzero_cnt_1 = torch.cat(all_gather(nonzero_cnt_1), dim=0)
-                nonzero_cnt_2 = torch.cat(all_gather(nonzero_cnt_2), dim=0)
+            nonzero_cnt_1 = self.all_gather_concat(nonzero_cnt_1)
+            nonzero_cnt_2 = self.all_gather_concat(nonzero_cnt_2)
 
             length_sim = torch.mm(nonzero_cnt_1.unsqueeze(1).float(), nonzero_cnt_2.unsqueeze(0).float())
             length_logit_corr = torch.tensor(
@@ -727,6 +731,12 @@ class ContrastiveModel(BaseTransformerModel):
             "context_sizes": (int(context_size), nonzero_cnt[random.randint(0, len(nonzero_cnt) - 1)].item()),
         }
 
+    def all_gather_concat(self,tensor: Tensor) -> Tensor:
+        if self.world_size > 1:
+            return torch.cat(all_gather(tensor), dim=0)
+        else:
+            return tensor
+
     def _convert_stats_tensors_to_scalars(self, stats_list):
         converted_stats = []
         for stats in stats_list:
@@ -784,8 +794,8 @@ class ContrastiveModel(BaseTransformerModel):
             self.log_dict(norms, on_step=True, on_epoch=False, sync_dist=True)
 
     def _validate_panels(self, panel_1, panel_2):
-        panel_1 = torch.cat(all_gather(panel_1), dim=0) if self.world_size > 1 else panel_1
-        panel_2 = torch.cat(all_gather(panel_2), dim=0) if self.world_size > 1 else panel_2
+        panel_1 = self.all_gather_concat(panel_1)
+        panel_2 = self.all_gather_concat(panel_2)
         assert (panel_1[:, :5] == panel_1[0, :5]).all()
         assert (panel_2[:, :5] == panel_2[0, :5]).all()
         assert (panel_2 == self.PAD_TOKEN_ID).sum() == 0
@@ -812,6 +822,9 @@ class ContrastiveModel(BaseTransformerModel):
         panel_intersect = np.intersect1d(batch["panel_1"][0].cpu().numpy(), batch["panel_2"][0].cpu().numpy()).size
         token_intersect = np.intersect1d(batch["tokens_1"][0].cpu().numpy(), batch["tokens_2"][0].cpu().numpy()).size
 
+
+        batch_size = self.all_gather_concat(batch["items_mask"]).sum().detach() if "items_mask" in batch else len(batch["tokens_1"])
+
         sample_stats = {
             "_organism": batch["_organism"][0],
             "_tissue": ", ".join(list(batch["_tissue"][0])),
@@ -832,12 +845,12 @@ class ContrastiveModel(BaseTransformerModel):
             "seq_length_sum_1": sum(batch["seq_length_1"]),  # Already on cpu
             "seq_length_sum_2": sum(batch["seq_length_2"]),  # Already on cpu
             "seq_length_sum_all": sum(batch["seq_length_1"]) + sum(batch["seq_length_2"]),  # Already on cpu
-            "batch_size": len(batch["tokens_1"]),
+            "batch_size": batch_size,
         }
 
         for key in self.obs_keys:
             if key in batch:
-                value = torch.cat(all_gather(batch[key]), dim=0) if self.world_size > 1 else batch[key]
+                value = self.all_gather_concat(batch[key])
                 sample_stats[f"same_{key}"] = (value[0] == value).all().detach()
 
         return sample_stats
@@ -931,37 +944,54 @@ class ContrastiveModel(BaseTransformerModel):
         recall_top5 = 0
         return loss_cont, recall_top1, recall_top5
 
-    def _clip_loss(self, logits):
-        loss_1, recall_top1_1, recall_top5_1 = self._contrastive_multiclass_loss(logits)
-        loss_2, recall_top1_2, recall_top5_2 = self._contrastive_multiclass_loss(logits.t())
+    def _clip_loss(self, logits, items_mask=None):
+        loss_1, recall_top1_1, recall_top5_1 = self._contrastive_multiclass_loss(logits, items_mask)
+        loss_2, recall_top1_2, recall_top5_2 = self._contrastive_multiclass_loss(logits.t(), items_mask)
         return (
             (loss_1 + loss_2) / 2.0,
             (recall_top1_1 + recall_top1_2) / 2.0,
             (recall_top5_1 + recall_top5_2) / 2.0,
         )
 
-    def _contrastive_multiclass_loss(self, logits):
+    def _contrastive_multiclass_loss(self, logits, items_mask=None):
+        if items_mask is None:
+            items_mask = torch.ones(len(logits), device=self.device, dtype=torch.bool)
+        items_mask = items_mask.float()
+
         cont_target = torch.arange(len(logits), device=self.device)
 
-        loss_cont = F.cross_entropy(logits, cont_target)
-        recall_top1 = (logits.argmax(dim=1) == cont_target).float().mean()
+        loss_cont = F.cross_entropy(logits, cont_target, reduction='none')
+        loss_cont = (loss_cont * items_mask).sum() / items_mask.sum()
+
+        recall_top1 = (logits.argmax(dim=1) == cont_target).float()
+        recall_top1 = (recall_top1 * items_mask).sum() / items_mask.sum()
 
         if len(logits) >= 5:
-            recall_top5 = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float().mean()
+            recall_top5 = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float()
+            recall_top5 = (recall_top5 * items_mask).sum() / items_mask.sum()
         else:
             recall_top5 = torch.tensor(0.0, device=logits.device)
 
         return loss_cont, recall_top1, recall_top5
 
-    def _knn_accuracy(self, logits, labels_1, labels_2, k=5):
+    def _knn_accuracy(self, logits, labels_1, labels_2, items_mask=None, k=5):
+        if items_mask is None:
+            items_mask = torch.ones(len(logits), device=self.device, dtype=torch.bool)
+        items_mask = items_mask.float()
+
         logits_diag = logits - torch.eye(len(logits), device=self.device) * self.logit_scale.exp() * 2
 
         neighbors = logits_diag.topk(k, dim=1)[1]
         neighbor_labels = labels_2[neighbors]
-        label_acc = (torch.mode(neighbor_labels, dim=1)[0] == labels_1).float().mean()
+        label_acc = (torch.mode(neighbor_labels, dim=1)[0] == labels_1).float()
+        label_acc = (label_acc * items_mask).sum() / items_mask.sum()
         return label_acc
 
-    def _views_mixing_score(self, logits, k=1):
+    def _views_mixing_score(self, logits, items_mask=None, k=1):
+        if items_mask is None:
+            items_mask = torch.ones(len(logits), device=self.device, dtype=torch.bool)
+        items_mask = items_mask.float()
+
         logits_diag = logits - torch.eye(len(logits), device=self.device) * self.logit_scale.exp() * 2
         labels_1 = torch.cat(
             [torch.zeros(len(logits) // 2, device=self.device), torch.ones(len(logits) // 2, device=self.device)], dim=0
@@ -972,10 +1002,15 @@ class ContrastiveModel(BaseTransformerModel):
 
         neighbors = logits_diag.topk(k, dim=1)[1]
         neighbor_labels = labels_2[neighbors]
-        mixsing_score = (neighbor_labels != labels_1.unsqueeze(1)).float().mean()
+        mixsing_score = (neighbor_labels != labels_1.unsqueeze(1)).float().mean(dim=1)
+        mixsing_score = (mixsing_score * items_mask).sum() / items_mask.sum()
         return mixsing_score
 
-    def _knn_r2(self, logits, labels_1, labels_2, k=5, ignore_self=False):
+    def _knn_r2(self, logits, labels_1, labels_2, items_mask=None, k=5, ignore_self=False):
+        if items_mask is None:
+            items_mask = torch.ones(len(logits), device=self.device, dtype=torch.bool)
+        items_mask = items_mask.float()
+
         if ignore_self:
             logits = logits - torch.eye(len(logits), device=self.device) * self.logit_scale.exp() * 2
 
@@ -983,7 +1018,8 @@ class ContrastiveModel(BaseTransformerModel):
         neighbor_labels = labels_2[neighbors]
         preds = neighbor_labels.float().mean(dim=1)
         # rmse = torch.sqrt(((preds - labels_1.float())**2).mean())
-        r2 = r2_score(preds, labels_1.float())
+        r2 = r2_score(preds, labels_1.float(), multioutput='raw_values')
+        r2 = (r2 * items_mask).sum() / items_mask.sum()
         return r2
 
 
