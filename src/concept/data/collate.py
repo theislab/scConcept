@@ -150,16 +150,13 @@ class Collate(BaseCollate):
 
         return new_batch_size
 
-    def qc_mask(self, seq_length_1, seq_length_2, panel_1, panel_2, min_samples_required=5):
+    def qc_mask(self, seq_length_1, seq_length_2, panel_1, panel_2):
         seq_length_1, seq_length_2 = np.array(seq_length_1), np.array(seq_length_2)
         panel_size_1 = np.array([len(p) for p in panel_1])
         panel_size_2 = np.array([len(p) for p in panel_2])
         mask_1 = seq_length_1 > panel_size_1 * self.qc_threshold
         mask_2 = seq_length_2 > panel_size_2 * self.qc_threshold
         mask = mask_1 & mask_2
-        if mask.sum() < min_samples_required:
-            logger.warning(f"Less than {min_samples_required} cells passed QC threshold! Including all cells.")
-            return np.ones(len(mask), dtype=bool)
         return mask
 
     def _get_predesigned_panel(self, batch, organism, tissues):
@@ -258,7 +255,14 @@ class Collate(BaseCollate):
                     items_mask[batch_size:] = False
 
             if self.stage == "train" and self.qc_threshold is not None:
-                items_mask &= self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
+                min_samples_required = 5
+                qc_mask = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
+                if qc_mask.sum() < min_samples_required:
+                    logger.warning(
+                        f"Less than {min_samples_required} cells using panel: {panel_name_1} passed QC threshold! Including all cells..."
+                    )
+                else:
+                    items_mask &= qc_mask
 
             for i in range(len(batch_1)):
                 if not items_mask[i]:
