@@ -29,18 +29,20 @@ class WithinGroupSampler(Sampler):
         self.sample_groups_equally = sample_groups_equally
         self.shuffle = shuffle
         self.drop_last = drop_last
+        assert drop_last, "The current implementation of WithinGroupSampler requires drop_last=True"
         self.batches = None
         self.stage = stage
         self.current_epoch = start_epoch
+        self._batches_epoch = None
         assert stage in ["train", "val", "test"], 'stage must be one of "train", "val", "test"'
         self.seed = int(os.environ.get("PL_GLOBAL_SEED", 42))
         self._create_batches()
 
     def __len__(self):
-        return sum([len(batch) for batch in self.batches])
+        return self.batches.size
 
     def __iter__(self):
-        yield from np.hstack(self.batches)
+        yield from self.batches.ravel()
         if self.stage == "train":
             self._create_batches()
 
@@ -48,35 +50,67 @@ class WithinGroupSampler(Sampler):
         self.current_epoch = epoch
 
     def _validate_batches(self):
-        n_invalid_batches = sum([~(self.sampling_key[batch][0] == self.sampling_key[batch]).all() for batch in self.batches])
-        assert n_invalid_batches == 0, f"Number of invalid batches: {n_invalid_batches}"
+        if self.batches.size == 0:
+            return
+        # Single vectorized fancy-index: (num_batches, batch_size) keys
+        batch_keys = self.sampling_key[self.batches]
+        n_invalid = int(np.any(batch_keys != batch_keys[:, :1], axis=1).sum())
+        assert n_invalid == 0, f"Number of invalid batches: {n_invalid}"
 
     def _create_batches(self):
+        epoch_key = self.current_epoch if self.stage == "train" else "fixed"
+        if self.batches is not None and self._batches_epoch == epoch_key:
+            logger.info(f"Reusing cached {self.stage} batches for epoch {self.current_epoch}")
+            return
+
         # Create RNG instance based on current epoch to ensure reproducibility
         if self.stage == "train":
             rng = np.random.default_rng(self.seed * 10_000 + self.current_epoch)
+            logger.info(f"Creating train sampler for epoch {self.current_epoch}")
         else:
             rng = np.random.default_rng(self.seed)  # for validation and test
 
-        self.batches = []
-        unique_values = np.unique(self.sampling_key)
-        unique_values = pd.Series(unique_values).dropna().values
-        for value in unique_values:
-            indices = np.argwhere(self.sampling_key == value).flatten()
+        # Drop NaN entries once, then sort by group key — O(N log N) vs O(N*G)
+        nan_mask = pd.isnull(self.sampling_key)
+        valid_pos = np.where(~nan_mask)[0]
+        valid_keys = self.sampling_key[valid_pos]
+        sort_order = np.argsort(valid_keys, kind="stable")
+        sorted_pos = valid_pos[sort_order]
+        sorted_keys = valid_keys[sort_order]
+
+        # Group boundaries from a single diff pass
+        boundaries = np.where(sorted_keys[1:] != sorted_keys[:-1])[0] + 1
+        group_slices = np.split(sorted_pos, boundaries)
+        n_groups = len(group_slices)
+
+        all_batches = []
+        for indices in group_slices:
             if self.shuffle:
-                indices = rng.choice(indices, len(indices), replace=False)
+                rng.shuffle(indices)
             if self.sample_groups_equally:
-                indices = indices[:max(self.num_samples // len(unique_values), self.batch_size)]
-            num_chunks = int(np.ceil(len(indices) / self.batch_size))
-            batches = [indices[i * self.batch_size : (i + 1) * self.batch_size] for i in range(num_chunks)]
-            if self.drop_last:
-                batches = batches[:-1] if len(batches[-1]) < self.batch_size else batches
-            self.batches.extend(batches)
+                indices = indices[: max(self.num_samples // n_groups, self.batch_size)]
+            n_full = (len(indices) // self.batch_size) * self.batch_size
+            if n_full == 0:
+                continue
+            all_batches.append(indices[:n_full].reshape(-1, self.batch_size))
+
+        if all_batches:
+            # Stack into a single (num_batches, batch_size) array
+            self.batches = np.vstack(all_batches)
+        else:
+            self.batches = np.empty((0, self.batch_size), dtype=np.intp)
+
         if self.shuffle:
+            # Shuffling rows of a 2D array is a single vectorized permutation
             rng.shuffle(self.batches)
+
         if self.num_samples is not None:
             self.batches = self.batches[: self.num_samples // self.batch_size]
+
         self._validate_batches()
+        self._batches_epoch = self.current_epoch if self.stage == "train" else "fixed"
+        if self.stage == "train":
+            logger.info(f"Sampler created for training epoch {self.current_epoch}")
 
 
 class DistributedSamplerWrapper(Sampler):
@@ -109,7 +143,7 @@ class DistributedSamplerWrapper(Sampler):
 
         total_size = num_samples * self.num_replicas
 
-        indices = list(self.sampler)
+        indices = np.fromiter(self.sampler, dtype=np.intp, count=len(self.sampler))
         # remove tail of data to make it evenly divisible.
         indices = indices[:total_size]
 
