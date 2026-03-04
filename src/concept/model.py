@@ -678,6 +678,15 @@ class ContrastiveModel(BaseTransformerModel):
 
         return loss
 
+    def on_fit_start(self):
+        if self.data_loading_speed_sanity_check:
+            self.requires_grad_(False)
+
+    def backward(self, loss, *args, **kwargs):
+        if self.data_loading_speed_sanity_check:
+            return
+        super().backward(loss, *args, **kwargs)
+
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         self.stage = "val"
         self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
