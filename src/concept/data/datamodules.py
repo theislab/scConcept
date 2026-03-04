@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import os
+import random
 from typing import Dict, List, Optional
 
 import lightning as L
@@ -59,7 +60,9 @@ class AnnDataModule(L.LightningDataModule):
             self.dataloader_kwargs["train"]["within_group_sampling"] = within_group_sampling
             self.train_collate_fn = self._get_collate_fn(dataset_kwargs["train"], stage="train", split_input=True)
 
-            if isinstance(train_split[0], AnnData):
+            if isinstance(train_split[0], AnnData) or self.model_speed_sanity_check:
+                if self.model_speed_sanity_check:
+                    train_split = random.choices(train_split, k=5)
                 assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
