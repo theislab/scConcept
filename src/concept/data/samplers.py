@@ -66,7 +66,7 @@ class WithinGroupSampler(Sampler):
             if self.shuffle:
                 indices = rng.choice(indices, len(indices), replace=False)
             if self.sample_groups_equally:
-                indices = indices[:self.num_samples // len(unique_values)]
+                indices = indices[:max(self.num_samples // len(unique_values), self.batch_size)]
             num_chunks = int(np.ceil(len(indices) / self.batch_size))
             batches = [indices[i * self.batch_size : (i + 1) * self.batch_size] for i in range(num_chunks)]
             if self.drop_last:
