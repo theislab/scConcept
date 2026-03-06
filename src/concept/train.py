@@ -181,6 +181,10 @@ def train(cfg: DictConfig, build_only: bool = False):
 
 
 if __name__ == "__main__":
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (65536, hard))
+
     logging.basicConfig(
         level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
         format="%(levelname)s: %(message)s",
