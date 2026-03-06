@@ -959,16 +959,13 @@ class ContrastiveModel(BaseTransformerModel):
         cont_target = torch.arange(len(logits), device=self.device)
 
         loss_cont = F.cross_entropy(logits, cont_target, reduction='none')
-        loss_cont = (loss_cont * items_mask).sum() / items_mask.sum()
+        loss_cont = (loss_cont * items_mask).sum() / items_mask.sum().clamp(min=1)
 
         recall_top1 = (logits.argmax(dim=1) == cont_target).float()
-        recall_top1 = (recall_top1 * items_mask).sum() / items_mask.sum()
+        recall_top1 = (recall_top1 * items_mask).sum() / items_mask.sum().clamp(min=1)
 
-        if len(logits) >= 5:
-            recall_top5 = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float()
-            recall_top5 = (recall_top5 * items_mask).sum() / items_mask.sum()
-        else:
-            recall_top5 = torch.tensor(0.0, device=logits.device)
+        recall_top5 = (logits.topk(5, dim=1)[1] == cont_target.unsqueeze(1)).any(dim=1).float()
+        recall_top5 = (recall_top5 * items_mask).sum() / items_mask.sum().clamp(min=1)
 
         return loss_cont, recall_top1, recall_top5
 
@@ -982,7 +979,7 @@ class ContrastiveModel(BaseTransformerModel):
         neighbors = logits_diag.topk(k, dim=1)[1]
         neighbor_labels = labels_2[neighbors]
         label_acc = (torch.mode(neighbor_labels, dim=1)[0] == labels_1).float()
-        label_acc = (label_acc * items_mask).sum() / items_mask.sum()
+        label_acc = (label_acc * items_mask).sum() / items_mask.sum().clamp(min=1)
         return label_acc
 
     def _views_mixing_score(self, logits, items_mask=None, k=1):
@@ -1001,7 +998,7 @@ class ContrastiveModel(BaseTransformerModel):
         neighbors = logits_diag.topk(k, dim=1)[1]
         neighbor_labels = labels_2[neighbors]
         mixsing_score = (neighbor_labels != labels_1.unsqueeze(1)).float().mean(dim=1)
-        mixsing_score = (mixsing_score * items_mask).sum() / items_mask.sum()
+        mixsing_score = (mixsing_score * items_mask).sum() / items_mask.sum().clamp(min=1)
         return mixsing_score
 
     def _knn_r2(self, logits, labels_1, labels_2, items_mask=None, k=5, ignore_self=False):
@@ -1017,7 +1014,7 @@ class ContrastiveModel(BaseTransformerModel):
         preds = neighbor_labels.float().mean(dim=1)
         # rmse = torch.sqrt(((preds - labels_1.float())**2).mean())
         r2 = r2_score(preds, labels_1.float(), multioutput='raw_values')
-        r2 = (r2 * items_mask).sum() / items_mask.sum()
+        r2 = (r2 * items_mask).sum() / items_mask.sum().clamp(min=1)
         return r2
 
 
