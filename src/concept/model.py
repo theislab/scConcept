@@ -20,7 +20,7 @@ from torchmetrics.functional.regression import r2_score
 from .modules.bert_padding import pad_input, unpad_input
 from .modules.flash_attention_layer import FlashTransformerEncoderLayer
 from .modules.transformer import TransformerEncoder
-from torch.distributed.nn.functional import all_gather
+from .tensor_gather import GatherLayer
 
 logger = logging.getLogger(__name__)
 
@@ -740,9 +740,9 @@ class ContrastiveModel(BaseTransformerModel):
             "context_sizes": (int(context_size), nonzero_cnt[random.randint(0, len(nonzero_cnt) - 1)].item()),
         }
 
-    def all_gather_concat(self,tensor: Tensor) -> Tensor:
+    def all_gather_concat(self, tensor: Tensor) -> Tensor:
         if self.world_size > 1:
-            return torch.cat(all_gather(tensor), dim=0)
+            return torch.cat(GatherLayer.apply(tensor.contiguous()), dim=0)
         else:
             return tensor
 
