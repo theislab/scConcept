@@ -758,38 +758,27 @@ class ContrastiveModel(BaseTransformerModel):
             converted_stats.append(converted)
         return converted_stats
 
-    def on_train_epoch_end(self):
-        if self.global_rank == 0:
-            max_size = 1000
-            try:
-                stats_train = self._convert_stats_tensors_to_scalars(self.sample_stats["train"])
-                df = pd.DataFrame(stats_train)
-                if len(df) > max_size:
-                    indices = np.random.choice(len(df), max_size, replace=False)
-                    df = df.iloc[indices]
 
-                table = wandb.Table(dataframe=df)
-                self.logger.experiment.log({"train/sample_stats": table})
-            except:
-                pass
-        self.sample_stats["train"] = []
+    def _log_sample_stats(self, stats_list, prefix):
+        if self.global_rank != 0:
+            return
+        max_size = 1000
+        try:
+            stats = self._convert_stats_tensors_to_scalars(stats_list)
+            df = pd.DataFrame(stats)
+            if len(df) > max_size:
+                indices = np.random.choice(len(df), max_size, replace=False)
+                df = df.iloc[indices]
+            table = wandb.Table(dataframe=df)
+            self.logger.experiment.log({f"{prefix}/sample_stats": table})
+        except:
+            pass
 
     def on_validation_epoch_end(self):
+        self._log_sample_stats(self.sample_stats["train"], "train")
+        self.sample_stats["train"] = []
         for val_name in self.val_loader_names:
-            prefix = f"val/{val_name}"
-            if self.global_rank == 0:
-                max_size = 1000
-                try:
-                    stats_val = self._convert_stats_tensors_to_scalars(self.sample_stats["val"][val_name])
-                    df = pd.DataFrame(stats_val)
-                    if len(df) > max_size:
-                        indices = np.random.choice(len(df), max_size, replace=False)
-                        df = df.iloc[indices]
-
-                    table = wandb.Table(dataframe=df)
-                    self.logger.experiment.log({f"{prefix}/sample_stats": table})
-                except:
-                    pass
+            self._log_sample_stats(self.sample_stats["val"][val_name], f"val/{val_name}")
             self.sample_stats["val"][val_name] = []
 
     def on_before_optimizer_step(self, optimizer):
