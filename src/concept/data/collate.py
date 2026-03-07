@@ -255,14 +255,8 @@ class Collate(BaseCollate):
                     items_mask[batch_size:] = False
 
             if self.stage == "train" and self.qc_threshold is not None:
-                min_samples_required = 5
                 qc_mask = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
-                if qc_mask.sum() < min_samples_required:
-                    logger.warning(
-                        f"Less than {min_samples_required} cells using panel: {panel_name_1} passed QC threshold! Including all cells..."
-                    )
-                else:
-                    items_mask &= qc_mask
+                items_mask &= qc_mask
 
             for i in range(len(batch_1)):
                 if not items_mask[i]:
