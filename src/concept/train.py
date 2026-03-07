@@ -138,6 +138,7 @@ def train(cfg: DictConfig, build_only: bool = False):
         "check_val_every_n_epoch": cfg.model.training.check_val_every_n_epoch,
         "limit_train_batches": cfg.model.training.limit_train_batches,
         "accumulate_grad_batches": cfg.model.training.accumulate_grad_batches,
+        "gradient_clip_val": cfg.model.training.gradient_clip_val,
         "profiler": profiler,
         "callbacks": _get_callbacks(CHECKPOINT_PATH, cfg.model.training.max_steps),
     }
