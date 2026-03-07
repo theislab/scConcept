@@ -178,9 +178,12 @@ class BaseTransformerModel(L.LightningModule):
         return lr_scheduler
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)  # default Adam
-        if self.optimizer_class == "AdamW":
+        if self.optimizer_class == "Adam":
+            optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)  # default Adam
+        elif self.optimizer_class == "AdamW":
             optimizer = optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        else:
+            raise ValueError(f"Invalid optimizer class: {self.optimizer_class}, expected 'Adam' or 'AdamW'")
 
         if self.scheduler:
             lr_scheduler = self._get_scheduler(optimizer)
@@ -461,9 +464,12 @@ class ContrastiveModel(BaseTransformerModel):
         else:
             param_groups = [{"params": self.parameters(), "weight_decay": self.weight_decay}]
 
-        optimizer = optim.Adam(param_groups, lr=self.lr)  # default Adam
-        if self.optimizer_class == "AdamW":
+        if self.optimizer_class == "Adam":
+            optimizer = optim.Adam(param_groups, lr=self.lr)
+        elif self.optimizer_class == "AdamW":
             optimizer = optim.AdamW(param_groups, lr=self.lr)
+        else:
+            raise ValueError(f"Invalid optimizer class: {self.optimizer_class}, expected 'Adam' or 'AdamW'")
 
         if self.scheduler:
             lr_scheduler = self._get_scheduler(optimizer)
