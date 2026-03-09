@@ -17,6 +17,7 @@ logging.basicConfig(
     format="%(levelname)s: %(message)s",
 )
 
+
 def get_embs(
     cfg: DictConfig,
     ckpt_path: str,
@@ -38,10 +39,17 @@ def get_embs(
         gene_sampling_strategy: Gene sampling strategy (if None, uses config default)
         gene_id_column: Column name in adata.var to use as gene IDs (default: None, uses index)
     """
+    # Apply compatibility changes before accessing config fields
+    cfg = scConcept.apply_compatibility_changes(cfg)
+
     # Use scConcept API to load config and model
     concept = scConcept()
     concept.load_config_and_model(
-        config=cfg, model_path=ckpt_path, gene_mapping_path=cfg.PATH.gene_mapping_path, panels_dir=cfg.PATH.PANELS_PATH
+        config=cfg,
+        model_path=ckpt_path,
+        gene_mapping_path=cfg.PATH.GENE_MAPPING_PATH,
+        pretrained_vocabulary_path=cfg.PATH.PRETRAINED_VOCABULARY,
+        panels_dir=cfg.PATH.PANELS_PATH,
     )
 
     # Load AnnData
@@ -80,6 +88,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32, help="batch size to use")
     parser.add_argument("--max_tokens", type=int, default=None, help="number of tokens to use")
     parser.add_argument("--gene_sampling_strategy", type=str, default=None, help="gene sampling strategy to use")
+    parser.add_argument("--overwrite", action="store_true", default=False, help="overwrite existing embeddings")
     args = parser.parse_args()
 
     wandb.login()
@@ -100,7 +109,7 @@ if __name__ == "__main__":
 
     output_emb_path = Path(args.output_emb_path)
 
-    if (output_emb_path / "cell_embs_cls.npy").exists():
+    if (output_emb_path / "cell_embs_cls.npy").exists() and not args.overwrite:
         logger.info(f"Embeddings already exist in {output_emb_path} ...")
         exit(0)
 

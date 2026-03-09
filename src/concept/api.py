@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import os
 import shutil
 from pathlib import Path
@@ -15,6 +16,7 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .model import ContrastiveModel
+from .utils import load_pretrained_vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class scConcept:
 
     def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
-        Download model checkpoint, config, gene mapping files, and panels directory from HuggingFace Hub if they don't exist.
+        Download model checkpoint, config, gene mapping, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
 
         Args:
             model_name: Model name (e.g., 'Corpus-30M')
@@ -58,6 +60,7 @@ class scConcept:
         gene_mapping_path = model_dir / "pc_gene_token_mapping.pkl"
         config_path = model_dir / "config.yaml"
         panels_dir = model_dir / "panels"
+        pretrained_vocabulary_dir = model_dir / "pretrained_vocabulary"
 
         model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -142,7 +145,38 @@ class scConcept:
             logger.warning(f"Could not download panels directory: {e}")
             logger.warning(f"Panels directory will be created at {panels_dir} but may be empty")
 
-        return model_path, gene_mapping_path, config_path, panels_dir
+        # Download pretrained vocabulary directory if needed
+        pretrained_vocabulary_dir_resolved = None
+        try:
+            repo_files = api.list_repo_files(repo_id=self.repo_id, repo_type="model")
+            pv_files = [
+                f for f in repo_files
+                if f.startswith(f"{model_name}/pretrained_vocabulary/") and f.endswith(".csv")
+            ]
+            if pv_files:
+                pretrained_vocabulary_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(
+                    f"Downloading pretrained vocabulary from HuggingFace Hub ({self.repo_id}/{model_name}/pretrained_vocabulary/)..."
+                )
+                for pv_file in pv_files:
+                    pv_filename = os.path.basename(pv_file)
+                    pv_path = pretrained_vocabulary_dir / pv_filename
+                    if not pv_path.exists():
+                        downloaded_path = hf_hub_download(
+                            repo_id=self.repo_id,
+                            filename=pv_file,
+                            cache_dir=str(model_dir.parent),
+                        )
+                        if downloaded_path != str(pv_path):
+                            shutil.copy2(downloaded_path, str(pv_path))
+                logger.info(f"Pretrained vocabulary saved to {pretrained_vocabulary_dir}")
+                pretrained_vocabulary_dir_resolved = pretrained_vocabulary_dir
+            else:
+                logger.info(f"No pretrained vocabulary found in HuggingFace Hub ({self.repo_id}/{model_name}/pretrained_vocabulary/)")
+        except Exception as e:
+            logger.warning(f"Could not download pretrained vocabulary directory: {e}")
+
+        return model_path, gene_mapping_path, config_path, panels_dir, pretrained_vocabulary_dir_resolved
 
     def load_config_and_model(
         self,
@@ -151,6 +185,7 @@ class scConcept:
         model_path: str = None,
         gene_mapping_path: str = None,
         panels_dir: str = None,
+        pretrained_vocabulary_path: str = None,
     ):
         """
         Load configuration and initialize the model.
@@ -161,6 +196,7 @@ class scConcept:
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
             gene_mapping_path: Path to gene mapping file (.pkl) - if provided, bypasses HuggingFace download
             panels_dir: Path to panels directory - if provided, bypasses HuggingFace download
+            pretrained_vocabulary_path: Path to pretrained vocabulary directory (containing .csv files) - if provided, overrides config PATH.PRETRAINED_VOCABULARY
         """
 
         if model_name:
@@ -171,7 +207,9 @@ class scConcept:
             logger.info(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
 
             # Download files if they don't exist
-            model_path, gene_mapping_path, config, panels_dir = self._download_files_if_needed(model_name, model_dir)
+            model_path, gene_mapping_path, config, panels_dir, pretrained_vocabulary_path = self._download_files_if_needed(
+                model_name, model_dir
+            )
         else:
             if not all([config, model_path, gene_mapping_path]):
                 raise ValueError("If using direct paths config, model_path and gene_mapping_path must be provided")
@@ -194,14 +232,20 @@ class scConcept:
         # Create tokenizer
         self.tokenizer = GeneIdTokenizer(gene_mapping)
 
+        pretrained_vocabulary = None
+        if pretrained_vocabulary_path is not None:
+            pretrained_vocabulary = load_pretrained_vocabulary(pretrained_vocabulary_path, self.tokenizer)
+
+
         # Load model
         model_args = {
             "config": self.cfg.model,
             "pad_token_id": gene_mapping["<pad>"],
             "cls_token_id": gene_mapping["<cls>"],
             "vocab_size": len(gene_mapping),
+            "pretrained_vocabulary": pretrained_vocabulary,
         }
-        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=False)
+        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=True)
 
         # Get device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -323,10 +367,11 @@ class scConcept:
         collate_fn = BaseCollate(
             self.tokenizer.PAD_TOKEN, max_tokens=max_tokens, gene_sampling_strategy=gene_sampling_strategy
         )
+        num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), 8)
 
         # Create DataLoader
         dataloader = DataLoader(
-            dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=False, drop_last=False, num_workers=10
+            dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=False, drop_last=False, num_workers=num_workers
         )
 
         logger.info(f"Processing {len(dataset)} cells...")
