@@ -739,6 +739,8 @@ class ContrastiveModel(BaseTransformerModel):
         if self.projection_dim:
             cell_embs = self.projection(cell_embs)
 
+        cell_embs = F.normalize(cell_embs, p=2, dim=1)
+
         return {
             "pred": pred,
             "cls_cell_emb": cell_embs.float(),
