@@ -17,6 +17,7 @@ class WithinGroupSampler(Sampler):
         sampling_key,
         batch_size,
         num_samples=None,
+        num_groups=None,
         sample_groups_equally=False,
         shuffle=True,
         drop_last=True,
@@ -26,6 +27,7 @@ class WithinGroupSampler(Sampler):
         self.sampling_key = sampling_key
         self.batch_size = batch_size
         self.num_samples = num_samples if num_samples is not None else len(sampling_key)
+        self.num_groups = num_groups
         self.sample_groups_equally = sample_groups_equally
         self.shuffle = shuffle
         self.drop_last = drop_last
@@ -82,6 +84,12 @@ class WithinGroupSampler(Sampler):
         boundaries = np.where(sorted_keys[1:] != sorted_keys[:-1])[0] + 1
         group_slices = np.split(sorted_pos, boundaries)
         n_groups = len(group_slices)
+
+        if self.num_groups is not None and self.num_groups < n_groups:
+            chosen = rng.choice(n_groups, size=self.num_groups, replace=False)
+            group_slices = [group_slices[i] for i in chosen]
+            n_groups = self.num_groups
+            logger.info(f"Subsampled {n_groups} groups out of {len(boundaries) + 1} total groups")
 
         all_batches = []
         for indices in group_slices:

@@ -117,6 +117,7 @@ dataloader:
     pin_memory: True
     drop_last: True
     num_samples: null
+    num_groups: null
   val:
     same_as_train:
       within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
@@ -126,6 +127,7 @@ dataloader:
       pin_memory: False
       drop_last: ${datamodule.dataloader.train.drop_last}
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_P200_B256:
       within_group_sampling: "dataset"
@@ -135,6 +137,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_P800_B256:
       within_group_sampling: "dataset"
@@ -144,6 +147,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_P6400_B256:
       within_group_sampling: "dataset"
@@ -153,6 +157,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_unbalanced_B256:
       within_group_sampling: "dataset"
@@ -162,6 +167,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_Preselected_vs_all_B256:
       within_group_sampling: "dataset"
@@ -171,6 +177,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_Preselected_vs_all_overlap_B256:
       within_group_sampling: "dataset"
@@ -180,6 +187,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_P6400_B256_mmusculus:
       within_group_sampling: "dataset"
@@ -189,6 +197,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_P6400_B256_other_species:
       within_group_sampling: "dataset"
@@ -198,6 +207,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_tissue_P6400_B256:
       within_group_sampling: "tissue"
@@ -207,6 +217,7 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True
     within_donor_P6400_B256:
       within_group_sampling: ["dataset", "donor_id"]
@@ -216,4 +227,5 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
       sample_groups_equally: True

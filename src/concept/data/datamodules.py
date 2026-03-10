@@ -221,6 +221,7 @@ class AnnDataModule(L.LightningDataModule):
         shuffle = dataloader_kwargs.pop("shuffle")
         drop_last = dataloader_kwargs.pop("drop_last")
         num_samples = dataloader_kwargs.pop("num_samples")
+        num_groups = dataloader_kwargs.pop("num_groups", None)
         sample_groups_equally = dataloader_kwargs.pop("sample_groups_equally", False)
         num_workers = dataloader_kwargs.pop("num_workers")
         num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), num_workers)
@@ -253,6 +254,7 @@ class AnnDataModule(L.LightningDataModule):
                 sampling_key,
                 batch_size * num_replicas,
                 num_samples,
+                num_groups=num_groups,
                 sample_groups_equally=sample_groups_equally,
                 shuffle=shuffle,
                 drop_last=drop_last,
