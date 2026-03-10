@@ -34,7 +34,7 @@ def resolve_split_list(split_list: list, key: str | None = None) -> list:
         source_path = None
         effective_key = key
 
-        if isinstance(item, dict):
+        if isinstance(item, (dict, DictConfig)):
             # Wrapper syntax: {source: <split_config>, key: "train"|"val"}
             if "source" in item:
                 effective_key = item.get("key", key)
@@ -162,7 +162,10 @@ def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
         os.environ["WANDB_TAGS"] = ",".join(run.tags) + "," + os.environ.get("WANDB_TAGS", "")
 
     # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
-    cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval)
+    val_check_interval = cfg.model.training.val_check_interval
+    cfg.model.training.val_check_interval = (
+        float(val_check_interval) if val_check_interval <= 1 else int(val_check_interval)
+    )
     cfg.model.training.limit_train_batches = float(cfg.model.training.limit_train_batches)
     return cfg
 
