@@ -178,7 +178,7 @@ def _get_callbacks(checkpoint_path: str, max_steps: int):
             filename="{epoch}",
             every_n_epochs=1,
             save_on_train_epoch_end=True,
-            save_top_k=-1,
+            save_top_k=1,
             save_last="link",
         ),
         ModelCheckpoint(
