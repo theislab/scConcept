@@ -38,75 +38,118 @@ class _FabricContrastiveModel(ContrastiveModel):
         pass
 
 
-def train(cfg: DictConfig) -> None:
-    """Train using Lightning Fabric instead of the full Lightning Trainer."""
-    scConcept.validate_config(cfg)
+class FabricTrainer:
+    """Minimal Fabric-based trainer that replaces the Lightning Trainer."""
 
-    # Build tokenizer
-    species_gene_mappings: dict = {}
-    for species, mapping_path in cfg.PATH.GENE_MAPPING_PATHS.items():
-        species_gene_mappings[species] = pd.read_csv(mapping_path, index_col="gene_id")["token"].to_dict()
-    tokenizer = MultiSpeciesTokenizer(species_gene_mappings)
+    def __init__(self, cfg: DictConfig) -> None:
+        scConcept.validate_config(cfg)
+        self.cfg = cfg
+        self.global_step = 0
 
-    pretrained_vocabularies = None
-    if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
-        pretrained_vocabularies = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
+        self.tokenizer = self._build_tokenizer()
+        self.pretrained_vocabularies = self._load_pretrained_vocabularies()
+        self.fabric = self._build_fabric()
+        self.fabric.launch()
+        self._upload_wandb_config()
+        self.checkpoint_path = self._resolve_checkpoint_path()
+        self._copy_datasets_to_local()
+        self.datamodule = self._build_datamodule()
+        self.model, self.optimizer, self.scheduler = self._build_model_and_optimizer()
+        self._resume_if_requested()
+        self.train_dataloader = self.fabric.setup_dataloaders(
+            self.datamodule.train_dataloader(), use_distributed_sampler=False
+        )
+        self.max_steps = cfg.model.training.max_steps
+        self.accumulate_grad_batches = cfg.model.training.accumulate_grad_batches
+        self.log_every_n_steps = cfg.model.training.log_every_n_steps
+        self.gradient_clip_val = cfg.model.training.gradient_clip_val
 
-    # Initialise Fabric early so distributed is set up before dataloader creation,
-    # which needs world_size for per-replica batch size calculation.
-    RESUME_LOGGER = cfg.initialize.resume and not cfg.initialize.create_new_run
-    wandb_logger = None
-    if cfg.wandb.enabled:
-        if cfg.wandb.entity is None or cfg.wandb.project is None or cfg.wandb.run_name is None:
-            raise ValueError("wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True")
-        kwargs = {}
-        if RESUME_LOGGER:
-            kwargs = {
-                "id": cfg.initialize.run_id,
-                "resume": "allow",
-                "tags": os.environ.get("WANDB_TAGS", "").split(","),
-            }
-        wandb_logger = WandbLogger(
-            name=cfg.wandb.run_name,
-            entity=cfg.wandb.entity,
-            project=cfg.wandb.project,
-            save_dir=cfg.PATH.PROJECT_PATH,
-            log_model=False,
-            **kwargs,
+    # ------------------------------------------------------------------
+    # Setup helpers
+    # ------------------------------------------------------------------
+
+    def _build_tokenizer(self) -> MultiSpeciesTokenizer:
+        species_gene_mappings = {
+            species: pd.read_csv(path, index_col="gene_id")["token"].to_dict()
+            for species, path in self.cfg.PATH.GENE_MAPPING_PATHS.items()
+        }
+        return MultiSpeciesTokenizer(species_gene_mappings)
+
+    def _load_pretrained_vocabularies(self):
+        if "PRETRAINED_VOCABULARY" in self.cfg.PATH and self.cfg.PATH.PRETRAINED_VOCABULARY is not None:
+            return load_pretrained_vocabulary(self.cfg.PATH.PRETRAINED_VOCABULARY, self.tokenizer)
+        return None
+
+    def _build_fabric(self) -> Fabric:
+        cfg = self.cfg
+        resume_logger = cfg.initialize.resume and not cfg.initialize.create_new_run
+
+        wandb_logger = None
+        if cfg.wandb.enabled:
+            if cfg.wandb.entity is None or cfg.wandb.project is None or cfg.wandb.run_name is None:
+                raise ValueError(
+                    "wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True"
+                )
+            kwargs = (
+                {
+                    "id": cfg.initialize.run_id,
+                    "resume": "allow",
+                    "tags": os.environ.get("WANDB_TAGS", "").split(","),
+                }
+                if resume_logger
+                else {}
+            )
+            wandb_logger = WandbLogger(
+                name=cfg.wandb.run_name,
+                entity=cfg.wandb.entity,
+                project=cfg.wandb.project,
+                save_dir=cfg.PATH.PROJECT_PATH,
+                log_model=False,
+                **kwargs,
+            )
+
+        self._resume_logger = resume_logger
+        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", cfg.model.training.num_nodes))
+        return Fabric(
+            accelerator=cfg.model.training.accelerator,
+            devices=cfg.model.training.devices,
+            num_nodes=num_nodes,
+            strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
+            precision="bf16-mixed",
+            loggers=wandb_logger if wandb_logger is not None else [],
         )
 
-    num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", cfg.model.training.num_nodes))
-    fabric = Fabric(
-        accelerator=cfg.model.training.accelerator,
-        devices=cfg.model.training.devices,
-        num_nodes=num_nodes,
-        strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
-        precision="bf16-mixed",
-        loggers=wandb_logger if wandb_logger is not None else [],
-    )
-    fabric.launch()
+    def _upload_wandb_config(self) -> None:
+        if self.cfg.wandb.enabled and self.fabric.is_global_zero and not self._resume_logger:
+            self.fabric.logger.experiment.config.update(
+                OmegaConf.to_container(self.cfg, resolve=True, throw_on_missing=True)
+            )
 
-    if cfg.wandb.enabled and fabric.is_global_zero and not RESUME_LOGGER:
-        fabric.logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
+    def _resolve_checkpoint_path(self) -> str:
+        cfg = self.cfg
+        run_id = (
+            (
+                self.fabric.logger.experiment.id
+                if cfg.wandb.enabled
+                else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            )
+            if self.fabric.is_global_zero
+            else ""
+        )
+        run_id = self.fabric.broadcast(run_id)
+        return os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
 
-    # Derive a stable run ID so checkpoints are grouped under one directory.
-    run_id = (
-        fabric.logger.experiment.id
-        if cfg.wandb.enabled
-        else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    ) if fabric.is_global_zero else ""
-    run_id = fabric.broadcast(run_id)
-    CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
-
-    # Copy datasets to a fast local directory (e.g. NVMe scratch) if configured.
-    # Only rank-0 on each node performs the copy; all ranks update the source_path.
-    if cfg.PATH.LOCAL_DIR is not None:
+    def _copy_datasets_to_local(self) -> None:
+        """Copy dataset files to a fast local directory (e.g. NVMe scratch) if configured."""
+        cfg = self.cfg
+        if cfg.PATH.LOCAL_DIR is None:
+            return
         for key, value in cfg.datamodule.items():
             if isinstance(value, (dict, DictConfig)) and "source_name" in value and "source_path" in value:
                 source_name = value["source_name"]
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
-                if fabric.is_global_zero:
+                if self.fabric.is_global_zero:
                     copy_files(
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),
@@ -115,147 +158,160 @@ def train(cfg: DictConfig) -> None:
                         force_copy=False,
                     )
                 cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
-        fabric.barrier()  # wait for rank-0 to finish copying before other ranks open the files
+        self.fabric.barrier()
 
-    # Resolve dataset splits
-    val_loader_names = []
-    if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
-        val_loader_names = sorted(cfg.datamodule.dataset.val.keys())
+    def _build_datamodule(self) -> AnnDataModule:
+        cfg = self.cfg
+        val_loader_names = []
+        if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
+            val_loader_names = sorted(cfg.datamodule.dataset.val.keys())
+        self.val_loader_names = val_loader_names
 
-    dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
-    dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
+        dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
+        dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
-    if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        paths, metadata = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
-        dataset_kwargs["train"]["split"] = {"paths": paths, "metadata": metadata}
-    if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
-        for val_name, val_kwargs in dataset_kwargs["val"].items():
-            paths, metadata = resolve_split_list(val_kwargs["split"], key="val")
-            dataset_kwargs["val"][val_name]["split"] = {"paths": paths, "metadata": metadata}
+        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
+            paths, metadata = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
+            dataset_kwargs["train"]["split"] = {"paths": paths, "metadata": metadata}
+        if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
+            for val_name, val_kwargs in dataset_kwargs["val"].items():
+                paths, metadata = resolve_split_list(val_kwargs["split"], key="val")
+                dataset_kwargs["val"][val_name]["split"] = {"paths": paths, "metadata": metadata}
 
-    datamodule = AnnDataModule(
-        panels_path=cfg.PATH.PANELS_PATH,
-        obs_keys=cfg.datamodule.obs_keys,
-        precomp_embs_key=cfg.datamodule.precomp_embs_key,
-        normalization=cfg.datamodule.normalization,
-        gene_sampling_strategy=cfg.datamodule.gene_sampling_strategy,
-        model_speed_sanity_check=cfg.datamodule.model_speed_sanity_check,
-        dataset_kwargs=dataset_kwargs,
-        dataloader_kwargs=dataloader_kwargs,
-        val_loader_names=val_loader_names,
-        tokenizer=tokenizer,
-    )
+        return AnnDataModule(
+            panels_path=cfg.PATH.PANELS_PATH,
+            obs_keys=cfg.datamodule.obs_keys,
+            precomp_embs_key=cfg.datamodule.precomp_embs_key,
+            normalization=cfg.datamodule.normalization,
+            gene_sampling_strategy=cfg.datamodule.gene_sampling_strategy,
+            model_speed_sanity_check=cfg.datamodule.model_speed_sanity_check,
+            dataset_kwargs=dataset_kwargs,
+            dataloader_kwargs=dataloader_kwargs,
+            val_loader_names=self.val_loader_names,
+            tokenizer=self.tokenizer,
+        )
 
-    # Build model and optimizer
-    model = _FabricContrastiveModel(
-        config=cfg.model,
-        pad_token_id=tokenizer.PAD_TOKEN,
-        cls_token_id=tokenizer.CLS_TOKEN,
-        vocab_sizes=tokenizer.vocab_sizes,
-        pretrained_vocabularies=pretrained_vocabularies,
-        world_size=fabric.world_size,
-        val_loader_names=val_loader_names,
-        obs_keys=cfg.datamodule.obs_keys,
-        precomp_embs_key=cfg.datamodule.precomp_embs_key,
-    )
+    def _build_model_and_optimizer(self):
+        cfg = self.cfg
+        model = _FabricContrastiveModel(
+            config=cfg.model,
+            pad_token_id=self.tokenizer.PAD_TOKEN,
+            cls_token_id=self.tokenizer.CLS_TOKEN,
+            vocab_sizes=self.tokenizer.vocab_sizes,
+            pretrained_vocabularies=self.pretrained_vocabularies,
+            world_size=self.fabric.world_size,
+            val_loader_names=self.val_loader_names,
+            obs_keys=cfg.datamodule.obs_keys,
+            precomp_embs_key=cfg.datamodule.precomp_embs_key,
+        )
 
-    if cfg.model.data_loading_speed_sanity_check:
-        model.requires_grad_(False)
+        if cfg.model.data_loading_speed_sanity_check:
+            model.requires_grad_(False)
 
+        if cfg.wandb.enabled:
+            model._fabric_logger = self.fabric.logger
+            model.log = lambda name, value, **kw: self.fabric.log(name, value, step=model._fabric_global_step)
+            model.log_dict = lambda metrics, **kw: self.fabric.log_dict(metrics, step=model._fabric_global_step)
 
-    if cfg.wandb.enabled:
-        model._fabric_logger = fabric.logger
-        model.log = lambda name, value, **kwargs: fabric.log(name, value, step=model._fabric_global_step)
-        model.log_dict = lambda metrics, **kwargs: fabric.log_dict(metrics, step=model._fabric_global_step)
+        opt_result = model.configure_optimizers()
+        if isinstance(opt_result, tuple):
+            (optimizer,), (scheduler_cfg,) = opt_result
+            scheduler = scheduler_cfg["scheduler"]
+        else:
+            optimizer = opt_result
+            scheduler = None
 
+        model, optimizer = self.fabric.setup(model, optimizer)
+        return model, optimizer, scheduler
 
-    opt_result = model.configure_optimizers()
-    if isinstance(opt_result, tuple):
-        (optimizer,), (scheduler_cfg,) = opt_result
-        scheduler = scheduler_cfg["scheduler"]
-    else:
-        optimizer = opt_result
-        scheduler = None
-
-    model, optimizer = fabric.setup(model, optimizer)
-
-    # Resume from checkpoint if requested.
-    global_step = 0
-    if cfg.initialize.resume:
+    def _resume_if_requested(self) -> None:
+        cfg = self.cfg
+        if not cfg.initialize.resume:
+            return
         checkpoint_file = os.path.join(
             cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint
         )
         if cfg.initialize.create_new_run:
-            # Load model weights only (fine-tuning / new W&B run), allow partial match.
-            fabric.load(checkpoint_file, {"model": model}, strict=False)
+            self.fabric.load(checkpoint_file, {"model": self.model}, strict=False)
             logger.info("Loaded model weights from %s (new run, strict=False)", checkpoint_file)
         else:
-            # Full resume: restore model, optimizer and the step counter.
-            remainder = fabric.load(checkpoint_file, {"model": model, "optimizer": optimizer})
-            global_step = int(remainder.get("global_step", 0))
-            logger.info("Resumed from %s at step %d", checkpoint_file, global_step)
+            remainder = self.fabric.load(checkpoint_file, {"model": self.model, "optimizer": self.optimizer})
+            self.global_step = int(remainder.get("global_step", 0))
+            logger.info("Resumed from %s at step %d", checkpoint_file, self.global_step)
 
-    # AnnDataModule already adds DistributedSamplerWrapper when dist is initialised,
-    # so we skip Fabric's built-in distributed sampler to avoid double-wrapping.
-    train_dataloader = fabric.setup_dataloaders(
-        datamodule.train_dataloader(), use_distributed_sampler=False
-    )
+    # ------------------------------------------------------------------
+    # Checkpointing
+    # ------------------------------------------------------------------
 
-    # Checkpoint intervals (mirrors _get_callbacks in utils.py):
-    #   steps/   — milestone snapshots kept forever
-    #   latest/  — rolling "latest" overwritten every 20k steps
-    max_steps = cfg.model.training.max_steps
-    milestone_interval = 100_000 if max_steps > 100_000 else 10_000
-    latest_interval = 20_000
+    def _save_checkpoint(self, label: str) -> None:
+        state = {"model": self.model, "optimizer": self.optimizer, "global_step": self.global_step}
+        path = os.path.join(self.checkpoint_path, label)
+        self.fabric.save(path, state)
 
+    def _maybe_checkpoint(self) -> None:
+        cfg = self.cfg
+        max_steps = cfg.model.training.max_steps
+        milestone_interval = 100_000 if max_steps > 100_000 else 10_000
+        latest_interval = 20_000
+
+        if self.global_step % milestone_interval == 0:
+            label = os.path.join("steps", f"step={self.global_step}.ckpt")
+            self._save_checkpoint(label)
+            logger.info("Saved milestone checkpoint at step %d", self.global_step)
+
+        if self.global_step % latest_interval == 0:
+            self._save_checkpoint(os.path.join("latest", "latest.ckpt"))
+
+    # ------------------------------------------------------------------
     # Training loop
-    model.train()
-    last_logging_step = 0
-    accumulate_grad_batches = cfg.model.training.accumulate_grad_batches
-    log_every_n_steps = cfg.model.training.log_every_n_steps
-    gradient_clip_val = cfg.model.training.gradient_clip_val
-    last_log_time = time.perf_counter()
+    # ------------------------------------------------------------------
 
-    optimizer.zero_grad()
+    def fit(self) -> None:
+        """Run the full training loop."""
 
-    for batch_idx, batch in enumerate(train_dataloader):
-        if global_step >= max_steps:
-            break
+        self.model.train()
+        last_logging_step = 0
+        last_log_time = time.perf_counter()
+        self.optimizer.zero_grad()
 
-        model._fabric_global_step = global_step
-        is_accumulating = (batch_idx + 1) % accumulate_grad_batches != 0
+        for batch_idx, batch in enumerate(self.train_dataloader):
+            if self.global_step >= self.max_steps:
+                break
 
-        with fabric.no_backward_sync(model, enabled=is_accumulating):
-            loss = model.training_step(batch, batch_idx)
-            fabric.backward(loss / accumulate_grad_batches)
+            self.model._fabric_global_step = self.global_step
+            is_accumulating = (batch_idx + 1) % self.accumulate_grad_batches != 0
 
-        if not is_accumulating:
-            if gradient_clip_val:
-                fabric.clip_gradients(model, optimizer, max_norm=gradient_clip_val)
-            optimizer.step()
-            optimizer.zero_grad()
-            if scheduler is not None:
-                scheduler.step()
-            global_step += 1
+            with self.fabric.no_backward_sync(self.model, enabled=is_accumulating):
+                loss = self.model.training_step(batch, batch_idx)
+                self.fabric.backward(loss / self.accumulate_grad_batches)
 
-            ckpt_state = {"model": model, "optimizer": optimizer, "global_step": global_step}
+            if not is_accumulating:
+                if self.gradient_clip_val:
+                    self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val)
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                self.global_step += 1
+                self._maybe_checkpoint()
 
-            # Milestone checkpoint — kept forever.
-            if global_step % milestone_interval == 0:
-                path = os.path.join(CHECKPOINT_PATH, "steps", f"step={global_step}.ckpt")
-                fabric.save(path, ckpt_state)
-                logger.info("Saved milestone checkpoint: %s", path)
+            if (
+                self.fabric.is_global_zero
+                and self.global_step % self.log_every_n_steps == 0
+                and self.global_step != last_logging_step
+            ):
+                now = time.perf_counter()
+                batches_per_sec = (self.global_step - last_logging_step) / (now - last_log_time)
+                logger.info(
+                    "step=%d  loss=%.4f  speed=%.2f batches/s",
+                    self.global_step, loss.item(), batches_per_sec,
+                )
+                self.fabric.log_dict({"train/batches_per_sec": batches_per_sec}, step=self.global_step)
+                last_logging_step = self.global_step
+                last_log_time = now
 
-            # Rolling latest checkpoint — overwrites previous.
-            if global_step % latest_interval == 0:
-                fabric.save(os.path.join(CHECKPOINT_PATH, "latest", "latest.ckpt"), ckpt_state)
-
-        if fabric.is_global_zero and global_step % log_every_n_steps == 0 and global_step != last_logging_step:
-            now = time.perf_counter()
-            batches_per_sec = (global_step - last_logging_step) / (now - last_log_time)
-            logger.info("step=%d  loss=%.4f  speed=%.2f batches/s", global_step, loss.item(), batches_per_sec)
-            last_logging_step = global_step
-            last_log_time = now
+        self._save_checkpoint(os.path.join("latest", "latest.ckpt"))
+        logger.info("Training complete at step %d. Final checkpoint saved.", self.global_step)
 
 
 if __name__ == "__main__":
@@ -273,4 +329,4 @@ if __name__ == "__main__":
     with initialize(version_base=None, config_path="./conf"):
         cfg = compose(config_name="config", overrides=sys.argv[1:])
 
-    train(cfg)
+    FabricTrainer(cfg).fit()
