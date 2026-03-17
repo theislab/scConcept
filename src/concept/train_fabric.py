@@ -81,18 +81,17 @@ class FabricTrainer:
         return None
 
     def _build_fabric(self) -> Fabric:
-        cfg = self.cfg
-        resume_logger = cfg.initialize.resume and not cfg.initialize.create_new_run
+        resume_logger = self.cfg.initialize.resume and not self.cfg.initialize.create_new_run
 
         wandb_logger = None
-        if cfg.wandb.enabled:
-            if cfg.wandb.entity is None or cfg.wandb.project is None or cfg.wandb.run_name is None:
+        if self.cfg.wandb.enabled:
+            if self.cfg.wandb.entity is None or self.cfg.wandb.project is None or self.cfg.wandb.run_name is None:
                 raise ValueError(
                     "wandb.entity, wandb.project, and wandb.run_name are required when wandb.enabled is True"
                 )
             kwargs = (
                 {
-                    "id": cfg.initialize.run_id,
+                    "id": self.cfg.initialize.run_id,
                     "resume": "allow",
                     "tags": os.environ.get("WANDB_TAGS", "").split(","),
                 }
@@ -100,19 +99,19 @@ class FabricTrainer:
                 else {}
             )
             wandb_logger = WandbLogger(
-                name=cfg.wandb.run_name,
-                entity=cfg.wandb.entity,
-                project=cfg.wandb.project,
-                save_dir=cfg.PATH.PROJECT_PATH,
+                name=self.cfg.wandb.run_name,
+                entity=self.cfg.wandb.entity,
+                project=self.cfg.wandb.project,
+                save_dir=self.cfg.PATH.PROJECT_PATH,
                 log_model=False,
                 **kwargs,
             )
 
         self._resume_logger = resume_logger
-        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", cfg.model.training.num_nodes))
+        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.cfg.model.training.num_nodes))
         return Fabric(
-            accelerator=cfg.model.training.accelerator,
-            devices=cfg.model.training.devices,
+            accelerator=self.cfg.model.training.accelerator,
+            devices=self.cfg.model.training.devices,
             num_nodes=num_nodes,
             strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
             precision="bf16-mixed",
@@ -126,49 +125,46 @@ class FabricTrainer:
             )
 
     def _resolve_checkpoint_path(self) -> str:
-        cfg = self.cfg
         run_id = (
             (
                 self.fabric.logger.experiment.id
-                if cfg.wandb.enabled
+                if self.cfg.wandb.enabled
                 else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             )
             if self.fabric.is_global_zero
             else ""
         )
         run_id = self.fabric.broadcast(run_id)
-        return os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
+        return os.path.join(self.cfg.PATH.CHECKPOINT_ROOT, run_id)
 
     def _copy_datasets_to_local(self) -> None:
         """Copy dataset files to a fast local directory (e.g. NVMe scratch) if configured."""
-        cfg = self.cfg
-        if cfg.PATH.LOCAL_DIR is None:
+        if self.cfg.PATH.LOCAL_DIR is None:
             return
-        for key, value in cfg.datamodule.items():
+        for key, value in self.cfg.datamodule.items():
             if isinstance(value, (dict, DictConfig)) and "source_name" in value and "source_path" in value:
                 source_name = value["source_name"]
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
-                if self.fabric.is_global_zero:
+                if self.fabric.local_rank == 0:
                     copy_files(
                         source_path,
-                        os.path.join(cfg.PATH.LOCAL_DIR, source_name),
+                        os.path.join(self.cfg.PATH.LOCAL_DIR, source_name),
                         files,
                         compare_files=False,
                         force_copy=False,
                     )
-                cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
+                self.cfg.datamodule[key]["source_path"] = os.path.join(self.cfg.PATH.LOCAL_DIR, source_name)
         self.fabric.barrier()
 
     def _build_datamodule(self) -> AnnDataModule:
-        cfg = self.cfg
         val_loader_names = []
-        if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
-            val_loader_names = sorted(cfg.datamodule.dataset.val.keys())
+        if "val" in self.cfg.datamodule.dataset and self.cfg.datamodule.dataset.val is not None:
+            val_loader_names = sorted(self.cfg.datamodule.dataset.val.keys())
         self.val_loader_names = val_loader_names
 
-        dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
-        dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
+        dataset_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
+        dataloader_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
         if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
             paths, metadata = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
@@ -179,12 +175,12 @@ class FabricTrainer:
                 dataset_kwargs["val"][val_name]["split"] = {"paths": paths, "metadata": metadata}
 
         return AnnDataModule(
-            panels_path=cfg.PATH.PANELS_PATH,
-            obs_keys=cfg.datamodule.obs_keys,
-            precomp_embs_key=cfg.datamodule.precomp_embs_key,
-            normalization=cfg.datamodule.normalization,
-            gene_sampling_strategy=cfg.datamodule.gene_sampling_strategy,
-            model_speed_sanity_check=cfg.datamodule.model_speed_sanity_check,
+            panels_path=self.cfg.PATH.PANELS_PATH,
+            obs_keys=self.cfg.datamodule.obs_keys,
+            precomp_embs_key=self.cfg.datamodule.precomp_embs_key,
+            normalization=self.cfg.datamodule.normalization,
+            gene_sampling_strategy=self.cfg.datamodule.gene_sampling_strategy,
+            model_speed_sanity_check=self.cfg.datamodule.model_speed_sanity_check,
             dataset_kwargs=dataset_kwargs,
             dataloader_kwargs=dataloader_kwargs,
             val_loader_names=self.val_loader_names,
@@ -192,23 +188,22 @@ class FabricTrainer:
         )
 
     def _build_model_and_optimizer(self):
-        cfg = self.cfg
         model = _FabricContrastiveModel(
-            config=cfg.model,
+            config=self.cfg.model,
             pad_token_id=self.tokenizer.PAD_TOKEN,
             cls_token_id=self.tokenizer.CLS_TOKEN,
             vocab_sizes=self.tokenizer.vocab_sizes,
             pretrained_vocabularies=self.pretrained_vocabularies,
             world_size=self.fabric.world_size,
             val_loader_names=self.val_loader_names,
-            obs_keys=cfg.datamodule.obs_keys,
-            precomp_embs_key=cfg.datamodule.precomp_embs_key,
+            obs_keys=self.cfg.datamodule.obs_keys,
+            precomp_embs_key=self.cfg.datamodule.precomp_embs_key,
         )
 
-        if cfg.model.data_loading_speed_sanity_check:
+        if self.cfg.model.data_loading_speed_sanity_check:
             model.requires_grad_(False)
 
-        if cfg.wandb.enabled:
+        if self.cfg.wandb.enabled:
             model._fabric_logger = self.fabric.logger
             model.log = lambda name, value, **kw: self.fabric.log(name, value, step=model._fabric_global_step)
             model.log_dict = lambda metrics, **kw: self.fabric.log_dict(metrics, step=model._fabric_global_step)
@@ -225,13 +220,12 @@ class FabricTrainer:
         return model, optimizer, scheduler
 
     def _resume_if_requested(self) -> None:
-        cfg = self.cfg
-        if not cfg.initialize.resume:
+        if not self.cfg.initialize.resume:
             return
         checkpoint_file = os.path.join(
-            cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint
+            self.cfg.PATH.CHECKPOINT_ROOT, self.cfg.initialize.run_id, self.cfg.initialize.checkpoint
         )
-        if cfg.initialize.create_new_run:
+        if self.cfg.initialize.create_new_run:
             self.fabric.load(checkpoint_file, {"model": self.model}, strict=False)
             logger.info("Loaded model weights from %s (new run, strict=False)", checkpoint_file)
         else:
@@ -249,8 +243,7 @@ class FabricTrainer:
         self.fabric.save(path, state)
 
     def _maybe_checkpoint(self) -> None:
-        cfg = self.cfg
-        max_steps = cfg.model.training.max_steps
+        max_steps = self.cfg.model.training.max_steps
         milestone_interval = 100_000 if max_steps > 100_000 else 10_000
         latest_interval = 20_000
 
