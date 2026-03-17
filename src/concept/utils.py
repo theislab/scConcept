@@ -5,14 +5,16 @@ import os
 import shutil
 from datetime import timedelta
 import torch
-from lamin_dataloader import GeneIdTokenizer
+from concept.dataset import MultiSpeciesTokenizer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
 
-def resolve_split_list(split_list: list, key: str | None = None) -> list:
+def resolve_split_list(
+    split_list: list, key: str | None = None
+) -> tuple[list, dict[str, list]]:
     """
     Expand split config refs and flatten to a single list.
 
@@ -27,18 +29,30 @@ def resolve_split_list(split_list: list, key: str | None = None) -> list:
           - ${datamodule.split_cellxgene_hsapiens}        # uses default key
           - source: ${datamodule.split_cellxgene_mmusculus}
             key: val                                       # override to val sublist
+
+    Returns:
+        A tuple ``(file_paths, metadata)`` where ``metadata`` is a
+        ``dict[str, list]`` ready to be passed to
+        :class:`~concept.dataset.MultiSpeciesTokenizedDataset`.  Currently
+        contains ``"species"``, whose value per file is taken from the
+        ``species`` field of the split-config dict (``None`` for plain paths).
     """
 
-    expanded = []
+    expanded: list = []
+    species_list: list[str | None] = []
     for item in split_list:
         source_path = None
         effective_key = key
+        current_species: str | None = None
 
         if isinstance(item, (dict, DictConfig)):
             # Wrapper syntax: {source: <split_config>, key: "train"|"val"}
             if "source" in item:
                 effective_key = item.get("key", key)
                 item = item["source"]
+
+            # Capture species from the split config dict before extracting the file list.
+            current_species = item.get("species", None)
 
             if "source_path" in item:
                 source_path = item["source_path"]
@@ -50,46 +64,76 @@ def resolve_split_list(split_list: list, key: str | None = None) -> list:
         if source_path:
             item = [os.path.join(source_path, file) for file in item]
         expanded.extend(item)
+        species_list.extend([current_species] * len(item))
 
-    return expanded
+    return expanded, {"species": species_list}
 
 
-def load_pretrained_vocabulary(pretrained_vocabulary_dir: str, tokenizer: GeneIdTokenizer) -> list:
+def load_pretrained_vocabulary(
+    pretrained_vocabulary_dir: str,
+    tokenizer: MultiSpeciesTokenizer,
+) -> dict[str, torch.Tensor]:
+    """Load pretrained gene embeddings and build a per-species vocabulary tensor.
+
+    All CSV files in ``pretrained_vocabulary_dir`` are merged into a single
+    gene-name → embedding mapping.  For each species registered in
+    ``tokenizer``, a ``torch.Tensor`` of shape ``(vocab_size, pretrained_dim)``
+    is produced and returned under the corresponding species key.
+
+    Args:
+        pretrained_vocabulary_dir: Directory containing ``*.csv`` files where
+            the index column is gene name and the remaining columns are the
+            embedding dimensions.
+        tokenizer: A :class:`~concept.dataset.MultiSpeciesTokenizer` covering
+            all species to embed.
+
+    Returns:
+        Dict mapping each species name to its pretrained embedding tensor.
+    """
     import pandas as pd
     import glob
 
-    # Load all CSV files from the directory
     csv_files = glob.glob(os.path.join(pretrained_vocabulary_dir, "*.csv"))
     if not csv_files:
         raise ValueError(f"No CSV files found in {pretrained_vocabulary_dir}")
 
     logger.info(f"Loading {len(csv_files)} CSV files from {pretrained_vocabulary_dir}")
 
-    # Merge all CSV files into a single dictionary
-    pretrained_dict = {}
+    pretrained_dict: dict[str, object] = {}
     for csv_file in csv_files:
         df = pd.read_csv(csv_file, index_col=0)
         for idx, row in df.iterrows():
             pretrained_dict[str(idx)] = row.values
 
+    pretrained_dim = next(iter(pretrained_dict.values())).shape[0]
     logger.info(f"Loaded {len(pretrained_dict)} gene embeddings from {len(csv_files)} files")
 
-    gene_names = tokenizer.decode(list(range(len(tokenizer.gene_mapping))))
-    not_found_embeddings = []
-    pretrained_dim = next(iter(pretrained_dict.values())).shape[0]
-    pretrained_vocabulary = torch.zeros(len(gene_names), pretrained_dim, dtype=torch.float)
-    for idx, gene_name in enumerate(gene_names):
-        if gene_name == tokenizer.CLS_VOCAB or gene_name == tokenizer.PAD_VOCAB:
-            continue
-        elif gene_name in pretrained_dict:
-            pretrained_vocabulary[idx] = torch.FloatTensor(pretrained_dict[gene_name])
+    pretrained_vocabularies: dict[str, torch.Tensor] = {}
+    for species in tokenizer.species:
+        sp_tok = tokenizer.get_tokenizer(species)
+        gene_names = sp_tok.decode(list(range(len(sp_tok.gene_mapping))))
+        vocab_size = len(gene_names)
+        pretrained_vocabulary = torch.zeros(vocab_size, pretrained_dim, dtype=torch.float)
+        not_found: list[str] = []
+
+        for idx, gene_name in enumerate(gene_names):
+            if gene_name == tokenizer.CLS_VOCAB or gene_name == tokenizer.PAD_VOCAB:
+                continue
+            elif gene_name in pretrained_dict:
+                pretrained_vocabulary[idx] = torch.FloatTensor(pretrained_dict[gene_name])
+            else:
+                not_found.append(gene_name)
+
+        if not_found:
+            logger.warning(
+                f"[{species}] Pretrained embeddings not found for {len(not_found)} / {vocab_size} genes"
+            )
         else:
-            not_found_embeddings.append(gene_name)
-    if len(not_found_embeddings) > 0:
-        logger.warning(f"Pretrained embeddings not found for {len(not_found_embeddings)} genes")
-    else:
-        logger.info(f"Pretrained embeddings found for all {len(gene_names)} genes")
-    return pretrained_vocabulary
+            logger.info(f"[{species}] Pretrained embeddings found for all {vocab_size} genes")
+
+        pretrained_vocabularies[species] = pretrained_vocabulary
+
+    return pretrained_vocabularies
 
 
 def get_start_epoch(cfg) -> int:

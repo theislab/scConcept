@@ -1,4 +1,5 @@
 source_name: cxg_raw_2025-11-08
+species: mmusculus
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
 - 6347cc90-f284-41d8-a131-db4a37bd796f.h5ad

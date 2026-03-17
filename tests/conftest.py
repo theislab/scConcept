@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 import logging
 from hydra import compose, initialize
 from lamin_dataloader import GeneIdTokenizer
+from concept.dataset import MultiSpeciesTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,6 @@ def train_config(adata, tokenizer, device, tmp_path):
                 f"PATH.PROJECT_PATH={tmp_path}",
                 f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
-                f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
                 f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
                 # Override datamodule settings
                 "datamodule.obs_keys=[]",
@@ -158,8 +158,18 @@ def train_config(adata, tokenizer, device, tmp_path):
             ],
         )
 
-    # Manually override the split to use our test file
-    cfg.datamodule.dataset.train.split = [str(adata_file)]
+    # Override GENE_MAPPING_PATHS to use only the single test species, replacing
+    # the default multi-species interpolated paths from config.yaml.
+    OmegaConf.update(cfg, "PATH.GENE_MAPPING_PATHS", {"hsapiens": str(gene_mapping_path)}, merge=False)
+
+    # Override the split with a split-config dict so that resolve_split_list can
+    # extract the species and build the metadata dict correctly.
+    OmegaConf.update(
+        cfg,
+        "datamodule.dataset.train.split",
+        [{"source_path": str(adata_dir), "species": "hsapiens", "train": ["test_data.h5ad"], "val": []}],
+        merge=False,
+    )
     logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     return cfg

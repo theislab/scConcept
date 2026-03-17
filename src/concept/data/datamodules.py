@@ -11,6 +11,8 @@ import torch
 import torch.distributed as dist
 from anndata import AnnData
 from lamin_dataloader import InMemoryCollection, TokenizedDataset, Tokenizer
+
+from concept.dataset import MultiSpeciesTokenizedDataset, MultiSpeciesTokenizer
 from torch.utils.data import DataLoader, RandomSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -51,8 +53,10 @@ class AnnDataModule(L.LightningDataModule):
             "uns_keys": ["_organism", "_tissue"],
         }
 
-        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]) > 0:
-            train_split = dataset_kwargs["train"].pop("split")
+        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]["paths"]) > 0:
+            train_split_dict = dataset_kwargs["train"].pop("split")
+            train_split = train_split_dict["paths"]
+            train_metadata = train_split_dict["metadata"]
             within_group_sampling = dataloader_kwargs["train"]["within_group_sampling"]
             if isinstance(within_group_sampling, str):
                 within_group_sampling = [within_group_sampling]
@@ -64,6 +68,8 @@ class AnnDataModule(L.LightningDataModule):
                 if self.model_speed_sanity_check:
                     train_split = random.choices(train_split, k=5)
                 assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
+                # Infer species from AnnData.uns["_organism"] for in-memory collections.
+                train_metadata = {"species": [adata.uns.get("_organism") for adata in train_split]}
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
                     adata_list=train_split,
@@ -90,16 +96,24 @@ class AnnDataModule(L.LightningDataModule):
                     uns_keys=["_organism", "_tissue"],
                 )
 
-            self.train_dataset = TokenizedDataset(
-                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"}
-            )
+            if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                self.train_dataset = MultiSpeciesTokenizedDataset(
+                    metadata=train_metadata,
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"},
+                )
+            else:
+                self.train_dataset = TokenizedDataset(
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"}
+                )
 
         if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
             self.val_datasets = {}
             for val_name, val_kwargs in dataset_kwargs["val"].items():
-                if len(val_kwargs["split"]) == 0:
+                if len(val_kwargs["split"]["paths"]) == 0:
                     continue
-                val_split = val_kwargs.pop("split")
+                val_split_dict = val_kwargs.pop("split")
+                val_split = val_split_dict["paths"]
+                val_metadata = val_split_dict["metadata"]
                 if "max_tokens" not in val_kwargs:
                     val_kwargs["max_tokens"] = self.default_max_tokens
                     logger.info(f"Setting max_tokens for {val_name} to {self.default_max_tokens}")
@@ -120,6 +134,7 @@ class AnnDataModule(L.LightningDataModule):
                     assert within_group_sampling == ["dataset"], (
                         "within_group_sampling must be dataset for AnnData objects"
                     )
+                    val_metadata = {"species": [adata.uns.get("_organism") for adata in val_split]}
                     # Use InMemoryCollection for AnnData objects
                     collection = InMemoryCollection(
                         adata_list=val_split,
@@ -146,16 +161,25 @@ class AnnDataModule(L.LightningDataModule):
                         uns_keys=["_organism", "_tissue"],
                     )
 
-                dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
+                if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                    dataset = MultiSpeciesTokenizedDataset(
+                        metadata=val_metadata,
+                        **{"collection": collection, **dataset_kwargs_shared, **val_kwargs},
+                    )
+                else:
+                    dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
                 self.val_datasets[val_name] = (dataset, val_collate_fn)
 
-        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None and len(dataset_kwargs["test"]["split"]) > 0:
-            test_split = dataset_kwargs["test"].pop("split")
+        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None and len(dataset_kwargs["test"]["split"]["paths"]) > 0:
+            test_split_dict = dataset_kwargs["test"].pop("split")
+            test_split = test_split_dict["paths"]
+            test_metadata = test_split_dict["metadata"]
             self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], stage="test", split_input=False)
 
             if isinstance(test_split[0], AnnData):
                 # Use InMemoryCollection for AnnData objects
                 assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
+                test_metadata = {"species": [adata.uns.get("_organism") for adata in test_split]}
                 collection = InMemoryCollection(
                     adata_list=test_split,
                     obs_keys=None,
@@ -179,9 +203,15 @@ class AnnDataModule(L.LightningDataModule):
                     uns_keys=None,
                 )
 
-            self.test_dataset = TokenizedDataset(
-                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]}
-            )
+            if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                self.test_dataset = MultiSpeciesTokenizedDataset(
+                    metadata=test_metadata,
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]},
+                )
+            else:
+                self.test_dataset = TokenizedDataset(
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]}
+                )
 
         self._val_dataloader = None
         self._train_dataloader = None

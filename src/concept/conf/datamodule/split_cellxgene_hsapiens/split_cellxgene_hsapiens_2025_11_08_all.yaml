@@ -1,4 +1,5 @@
 source_name: cxg_raw_2025-11-08
+species: hsapiens
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
 - d7476ae2-e320-4703-8304-da5c42627e71.h5ad

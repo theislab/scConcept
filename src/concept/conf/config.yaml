@@ -48,7 +48,13 @@ PATH:
   LOCAL_DIR: null # A fast local directory to copy datasets to for faster training
   CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
   PANELS_PATH: ${PATH.PROJECT_PATH}/panels
-  GENE_MAPPING_PATH: ${PATH.PROJECT_PATH}/references/vocabulary/gene_token_mapping_hsapiens.csv
+  #GENE_MAPPING_PATH: ${PATH.PROJECT_PATH}/references/vocabulary/gene_token_mapping_hsapiens.csv
+  GENE_MAPPING_PATHS:
+    hsapiens: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie/hsapiens.csv
+    mmusculus: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie/mmusculus.csv
+    cjacchus: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie/cjacchus.csv
+    mmulatta: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie/mmulatta.csv
+    ptroglodytes: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie/ptroglodytes.csv
   PRETRAINED_VOCABULARY: ${PATH.PROJECT_PATH}/references/embeddings/esm2_t30
 
 

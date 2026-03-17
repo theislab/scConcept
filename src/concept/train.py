@@ -6,7 +6,7 @@ import datetime
 import lightning as L
 import pandas as pd
 from hydra import compose, initialize
-from lamin_dataloader import GeneIdTokenizer
+from concept.dataset import MultiSpeciesTokenizer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities import rank_zero_only
@@ -44,12 +44,17 @@ def train(cfg: DictConfig, build_only: bool = False):
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
-    gene_mapping = pd.read_csv(cfg.PATH.GENE_MAPPING_PATH, index_col="gene_id")["token"].to_dict()
-    tokenizer = GeneIdTokenizer(gene_mapping)
+    species_gene_mappings: dict[str, dict] = {}
 
-    pretrained_vocabulary = None
+    for species, mapping_path in cfg.PATH.GENE_MAPPING_PATHS.items():
+        species_gene_mappings[species] = pd.read_csv(mapping_path, index_col="gene_id")["token"].to_dict()
+
+    tokenizer = MultiSpeciesTokenizer(species_gene_mappings)
+    vocab_sizes = tokenizer.vocab_sizes
+
+    pretrained_vocabularies = None
     if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
-        pretrained_vocabulary = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
+        pretrained_vocabularies = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
 
     if cfg.PATH.LOCAL_DIR is not None:
         for key, value in cfg.datamodule.items():
@@ -62,7 +67,7 @@ def train(cfg: DictConfig, build_only: bool = False):
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),
                         files,
-                        compare_files=True,
+                        compare_files=False,
                         force_copy=False,
                     )
                 cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
@@ -71,10 +76,12 @@ def train(cfg: DictConfig, build_only: bool = False):
     dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
     if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        dataset_kwargs["train"]["split"] = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
+        paths, metadata = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
+        dataset_kwargs["train"]["split"] = {"paths": paths, "metadata": metadata}
     if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
         for val_name, val_kwargs in dataset_kwargs["val"].items():
-            dataset_kwargs["val"][val_name]["split"] = resolve_split_list(val_kwargs["split"], key="val")
+            paths, metadata = resolve_split_list(val_kwargs["split"], key="val")
+            dataset_kwargs["val"][val_name]["split"] = {"paths": paths, "metadata": metadata}
 
     datamodule_args = {
         "panels_path": cfg.PATH.PANELS_PATH,
@@ -144,17 +151,17 @@ def train(cfg: DictConfig, build_only: bool = False):
     }
     trainer = L.Trainer(
         **trainer_kwargs,
-        strategy=DDPStrategy(),
+        strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
         precision="bf16-mixed",
         use_distributed_sampler=False,
     )
 
     model_args = {
         "config": cfg.model,
-        "pad_token_id": gene_mapping["<pad>"],
-        "cls_token_id": gene_mapping["<cls>"],
-        "vocab_size": len(gene_mapping),
-        "pretrained_vocabulary": pretrained_vocabulary,
+        "pad_token_id": tokenizer.PAD_TOKEN,
+        "cls_token_id": tokenizer.CLS_TOKEN,
+        "vocab_sizes": vocab_sizes,
+        "pretrained_vocabularies": pretrained_vocabularies,
         "world_size": trainer.world_size,
         "val_loader_names": val_loader_names,
         "obs_keys": cfg.datamodule.obs_keys,

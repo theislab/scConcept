@@ -83,14 +83,14 @@ def mock_config():
 def test_model_initialization(mock_config, device):
     """Test that the model can be initialized with mock config"""
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=[]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=[]
     )
 
     # Move model to device
     model = model.to(device)
 
     assert model is not None
-    assert model.vocab_size == 100
+    assert "hsapiens" in model.gene_token_encoders
     assert model.dim_model == 64
     assert model.num_head == 4
     assert model.device.type == device.type
@@ -118,10 +118,10 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         config=mock_config,
         cls_token_id=0,
         pad_token_id=1,
-        vocab_size=vocab_size,
+        vocab_sizes={"hsapiens": vocab_size},
         world_size=1,
         val_loader_names=["val_test"],
-        pretrained_vocabulary=pretrained_vocabulary,
+        pretrained_vocabularies={"hsapiens": pretrained_vocabulary} if pretrained_vocabulary is not None else None,
     )
 
     # Move model to device
@@ -148,7 +148,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "_organism": "hsapiens",
+        "_organism": ["hsapiens"] * batch_size,
         "_tissue": ["brain", "blood"],
     }
 
@@ -156,7 +156,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
     model.train()
     # Keep a copy of pretrained pretrained_embs tensor before backward if it is used
     if use_pretrained_vocabulary:
-        pretrained_embed_before = model.gene_token_encoder.pretrained_embs.weight.clone()
+        pretrained_embed_before = model.gene_token_encoders["hsapiens"].pretrained_embs.weight.clone()
         # Capture a deepcopy of all model parameters before training step
     params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
 
@@ -189,7 +189,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
                     assert not torch.equal(before, param), f"Parameter {name} was not updated!"
 
         if use_pretrained_vocabulary:
-            assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs.weight)
+            assert torch.equal(pretrained_embed_before, model.gene_token_encoders["hsapiens"].pretrained_embs.weight)
 
 
 @pytest.mark.parametrize("flash_attention", [False, True])
@@ -199,7 +199,7 @@ def test_validation_step(mock_config, device, flash_attention):
     mock_config["flash_attention"] = flash_attention
 
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=["test_val"]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=["test_val"]
     )
 
     # Move model to device
@@ -224,7 +224,7 @@ def test_validation_step(mock_config, device, flash_attention):
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "_organism": "hsapiens",
+        "_organism": ["hsapiens"] * batch_size,
         "_tissue": ["brain", "blood"],
     }
 
@@ -247,7 +247,7 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
     mock_config["flash_attention"] = flash_attention
 
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=["val_test"]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=["val_test"]
     )
 
     # Move model to device
@@ -264,6 +264,7 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
         "dataset": torch.randint(0, 2, (batch_size,)).to(device),
         "panel_name": "test_panel",
         "seq_lengths": [seq_len] * batch_size if seq_lengths_available else None,
+        "_organism": ["hsapiens"] * batch_size,
     }
 
     # Test predict step
@@ -314,12 +315,14 @@ def test_predict_step_with_lamin_dataloader(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
-        vocab_size=len(tokenizer.gene_mapping),
+        vocab_sizes={"hsapiens": len(tokenizer.gene_mapping)},
         world_size=1,
         val_loader_names=[],
     )
     model = model.to(device)
     model.eval()
+    # lamin_dataloader batches don't carry _organism; activate the species once upfront
+    model.set_active_species("hsapiens")
 
     # Create InMemory TokenizedDataset
     test_dataset = TokenizedDataset(collection=InMemoryCollection([adata]), tokenizer=tokenizer, normalization="raw")

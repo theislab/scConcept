@@ -103,9 +103,9 @@ class Collate(BaseCollate):
                 if re.search(panel_filter_regex, panel_file) and panel_file.endswith(".csv")
             ]
 
-            if panel_files:
+            if panel_files and organism_name in self.tokenizer.species:
                 panels = [
-                    self.tokenizer.encode(pd.read_csv(organism_dir / panel_file)["Ensembl_ID"].values)
+                    self.tokenizer.encode(pd.read_csv(organism_dir / panel_file)["Ensembl_ID"].values, organism_name)
                     for panel_file in panel_files
                 ]
                 self.panels_dict[organism_name] = panels

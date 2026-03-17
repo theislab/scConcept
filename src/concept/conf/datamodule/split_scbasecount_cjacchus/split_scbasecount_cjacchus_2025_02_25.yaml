@@ -1,4 +1,5 @@
 source_name: scbasecount-2025-02-25
+species: cjacchus
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
 - SRP431517.h5ad

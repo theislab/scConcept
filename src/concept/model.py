@@ -25,190 +25,6 @@ from torch.distributed.nn.functional import all_gather
 logger = logging.getLogger(__name__)
 
 
-class BaseTransformerModel(L.LightningModule):
-    MASK_VALUE = -1
-    CLS_VALUE = -2
-
-    def __init__(
-        self,
-        config,
-        pad_token_id: int,
-        cls_token_id: int,
-        debug: bool = False,
-    ):
-        super().__init__()
-        self.debug = debug
-        self.flash_attention = config["flash_attention"]
-        self.dim_gene_embs = config.get("dim_gene_embs", config["dim_model"])
-        self.dim_model = config["dim_model"]
-        self.dim_hid = config["dim_hid"]
-        self.num_head = config["num_head"]
-        self.nlayers = config["nlayers"]
-        self.dropout = config["dropout"]
-        self.decoder_head = config["decoder_head"]
-        self.input_encoding = config["input_encoding"]
-        self.PAD_TOKEN_ID = pad_token_id
-        self.CLS_TOKEN_ID = cls_token_id
-        self.masking_rate = config["training"]["masking_rate"]
-        self.lr = config["training"]["lr"]
-        self.weight_decay = config["training"]["weight_decay"]
-        self.optimizer_class = config["training"]["optimizer_class"]
-        self.scheduler = config["training"]["scheduler"]
-        self.warmup = config["training"]["warmup"]
-        self.max_steps = config["training"]["max_steps"]
-        self.min_lr = config["training"]["min_lr"]
-        self.log_every_n_steps = config["training"].get("log_every_n_steps", 100)
-        self.values_only_sanity_check = config["values_only_sanity_check"]
-        self.data_loading_speed_sanity_check = config["data_loading_speed_sanity_check"]
-        self.norm_scheme = config.get("norm_scheme", "post")
-        self.activation = config.get("activation", "relu")
-
-        encoder_layers = FlashTransformerEncoderLayer(
-            self.dim_model,
-            self.num_head,
-            self.dim_hid,
-            self.dropout,
-            batch_first=True,
-            use_flash_attn=self.flash_attention,
-            norm_scheme=self.norm_scheme,
-            activation=self.activation,
-        )
-        self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
-        # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
-
-        if self.decoder_head:
-            self.expression_decoder = GeneExpressionDecoder(self.dim_model)
-
-        self.cls_embedding = nn.Parameter(torch.zeros(self.dim_model))
-
-    def _encode(
-        self,
-        tokens: Tensor,
-        values: Tensor,
-        seq_lengths: List[int] = None,
-    ) -> Tensor:
-        batch_size = tokens.size(0)
-
-        src_key_padding_mask = tokens == self.PAD_TOKEN_ID
-
-        gene_embs = self._encode_gene_tokens(tokens)
-
-        # Prepend learnable CLS embedding at position 0
-        cls_emb = self.cls_embedding.view(1, 1, -1).expand(batch_size, 1, -1)
-        gene_embs = torch.cat([cls_emb, gene_embs], dim=1)
-
-        # Prepend a CLS value placeholder so value/rank encoders stay aligned
-        cls_val = torch.full((batch_size, 1), self.CLS_VALUE, dtype=values.dtype, device=values.device)
-        values = torch.cat([cls_val, values], dim=1)
-
-        # CLS position is never padding
-        cls_col = torch.zeros(batch_size, 1, dtype=torch.bool, device=gene_embs.device)
-        src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask], dim=1)
-
-        if self.flash_attention:
-            assert seq_lengths is not None, "seq_lengths must be provided for flash attention"
-            max_length = tokens.size(1) + 1  # +1 for CLS
-            seq_lengths = [l + 1 for l in seq_lengths]
-
-            gene_embs, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
-                gene_embs, ~src_key_padding_mask, seq_lengths=seq_lengths
-            )
-
-            if self.input_encoding == "rank_encoding":
-                # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
-                # Faster implementation:
-                pe = self.positional_encoder.pe[:, :max_length, :]
-                pe = pe.repeat(batch_size, 1, 1)
-                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask, seq_lengths=seq_lengths)
-                total_embs = gene_embs + pe
-            elif self.input_encoding == "value_encoding":
-                values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths)
-                values = values.squeeze(-1)
-                value_embs = self._encode_values(values)
-                total_embs = gene_embs + value_embs
-
-            embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_length)
-            embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
-            cell_embs = embs_padded[:, 0, :]
-            # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
-            # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
-        else:
-            if self.input_encoding == "rank_encoding":
-                total_embs = self.positional_encoder(gene_embs)
-            else:
-                value_embs = self._encode_values(values)
-                total_embs = gene_embs + value_embs
-
-            embs_padded = self.transformer_encoder(total_embs, key_padding_mask=src_key_padding_mask)
-            cell_embs = embs_padded[:, 0, :]
-
-        return embs_padded, cell_embs
-
-    def _encode_gene_tokens(self, tokens: Tensor) -> Tensor:
-        raise NotImplementedError("Subclasses must implement _encode_gene_tokens method.")
-
-    def _encode_values(self, values: Tensor) -> Tensor:
-        raise NotImplementedError("Subclasses must implement _encode_values method.")
-
-    def forward(self, input_tokens, input_values, seq_lengths: List[int] = None):
-        embs_padded, cell_embs = self._encode(input_tokens, input_values, seq_lengths=seq_lengths)
-        pred = self.expression_decoder(embs_padded) if self.decoder_head else None
-
-        return pred, embs_padded, cell_embs
-
-    def _step(self, batch):
-        raise NotImplementedError("Subclasses must implement _step method.")
-
-    def training_step(self, batch, batch_idx):
-        loss = self._step(batch)
-        self.log("train/loss", loss, sync_dist=False)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        loss = self._step(batch)
-        self.log("val/loss", loss, sync_dist=False)
-
-    def _get_scheduler(self, optimizer):
-        if self.scheduler == "warmup":
-            lr_scheduler = WarmupScheduler(optimizer, warmup=self.warmup)
-        elif self.scheduler == "warmup_cosine":
-            lr_scheduler = CosineWarmupScheduler(
-                optimizer, warmup=self.warmup, max_steps=self.max_steps, min_lr=self.min_lr
-            )
-        return lr_scheduler
-
-    def configure_optimizers(self):
-        if self.optimizer_class == "Adam":
-            optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)  # default Adam
-        elif self.optimizer_class == "AdamW":
-            optimizer = optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        else:
-            raise ValueError(f"Invalid optimizer class: {self.optimizer_class}, expected 'Adam' or 'AdamW'")
-
-        if self.scheduler:
-            lr_scheduler = self._get_scheduler(optimizer)
-            return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
-        else:
-            return optimizer
-
-    def mask_values(self, values: Tensor, rate: float, ignore_idxs=None) -> Tensor:
-        mask = torch.rand(values.shape) < rate
-        if ignore_idxs is not None:
-            mask[:, ignore_idxs] = False
-        masked_values = values.clone()
-        masked_values[mask] = self.MASK_VALUE
-        return masked_values, mask
-
-    def _mlm_loss(self, pred, target, mask=None):
-        if mask is not None:
-            if torch.any(mask):
-                pred = pred[mask]
-                target = target[mask]
-            else:
-                return torch.tensor(0.0, device=self.device)
-        return F.mse_loss(pred.float(), target.float())
-
-
 class GeneEncoder(nn.Module):
     def __init__(
         self,
@@ -354,14 +170,17 @@ class GeneExpressionDecoder(nn.Module):
         return self.fc(x).squeeze(-1)
 
 
-class ContrastiveModel(BaseTransformerModel):
+class ContrastiveModel(L.LightningModule):
+    MASK_VALUE = -1
+    CLS_VALUE = -2
+
     def __init__(
         self,
         config,
         pad_token_id: int,
         cls_token_id: int,
-        vocab_size: int,
-        pretrained_vocabulary: Optional[dict] = None,
+        vocab_sizes: dict[str, int],
+        pretrained_vocabularies: Optional[dict[str, Optional[object]]] = None,
         precomp_embs_key: str = None,
         world_size: int = 1,
         val_loader_names=[],
@@ -371,8 +190,32 @@ class ContrastiveModel(BaseTransformerModel):
         if config["mlm_loss_weight"] > 0:
             assert config["decoder_head"] == True, "Decoder head must be enabled for MLM loss"
 
-        super().__init__(config, pad_token_id, cls_token_id, debug=debug)
-
+        super().__init__()
+        self.debug = debug
+        self.flash_attention = config["flash_attention"]
+        self.dim_gene_embs = config.get("dim_gene_embs", config["dim_model"])
+        self.dim_model = config["dim_model"]
+        self.dim_hid = config["dim_hid"]
+        self.num_head = config["num_head"]
+        self.nlayers = config["nlayers"]
+        self.dropout = config["dropout"]
+        self.decoder_head = config["decoder_head"]
+        self.input_encoding = config["input_encoding"]
+        self.PAD_TOKEN_ID = pad_token_id
+        self.CLS_TOKEN_ID = cls_token_id
+        self.masking_rate = config["training"]["masking_rate"]
+        self.lr = config["training"]["lr"]
+        self.weight_decay = config["training"]["weight_decay"]
+        self.optimizer_class = config["training"]["optimizer_class"]
+        self.scheduler = config["training"]["scheduler"]
+        self.warmup = config["training"]["warmup"]
+        self.max_steps = config["training"]["max_steps"]
+        self.min_lr = config["training"]["min_lr"]
+        self.log_every_n_steps = config["training"].get("log_every_n_steps", 100)
+        self.values_only_sanity_check = config["values_only_sanity_check"]
+        self.data_loading_speed_sanity_check = config["data_loading_speed_sanity_check"]
+        self.norm_scheme = config.get("norm_scheme", "post")
+        self.activation = config.get("activation", "relu")
         self.mlm_loss_weight = config["mlm_loss_weight"]
         self.cont_loss_weight = config["cont_loss_weight"]
         self.contrastive_loss = config["contrastive_loss"]
@@ -381,26 +224,57 @@ class ContrastiveModel(BaseTransformerModel):
         self.projection_dim = config["projection_dim"]
         self.pe_max_len = config["pe_max_len"]
         self.precomp_embs_key = precomp_embs_key
-        self.vocab_size = vocab_size
         self.world_size = world_size
         self.val_loader_names = val_loader_names
         self.obs_keys = list(obs_keys)
         assert self.contrastive_loss in ["binary", "multiclass"]
         self.LOGGING_STEP = False
 
+
         self.use_learnable_embs_freq = config["training"]["use_learnable_embs_freq"]
-        self.gene_token_encoder = GeneEncoder(
-            self.vocab_size,
-            self.dim_gene_embs,
-            self.dim_model,
-            padding_idx=pad_token_id,
-            pretrained_vocabulary=pretrained_vocabulary,
-            freeze_pretrained_vocabulary=config["training"]["freeze_pretrained_vocabulary"],
-        )
+        freeze_pretrained = config["training"]["freeze_pretrained_vocabulary"]
+
+        self.gene_token_encoders = nn.ModuleDict()
+        for species, n_genes in vocab_sizes.items():
+            pretrained_vocab = (
+                pretrained_vocabularies.get(species)
+                if pretrained_vocabularies is not None
+                else None
+            )
+            self.gene_token_encoders[species] = GeneEncoder(
+                n_genes,
+                self.dim_gene_embs,
+                self.dim_model,
+                padding_idx=pad_token_id,
+                pretrained_vocabulary=pretrained_vocab,
+                freeze_pretrained_vocabulary=freeze_pretrained if pretrained_vocab is not None else None,
+            )
+
+        # Track which species is currently active (set at every training/val/predict step).
+        self.active_species: str | None = None
+
+        self.cls_embedding = nn.Parameter(torch.zeros(self.dim_model))
+
         if self.input_encoding == "value_encoding":
             self.value_encoder = ContinuousValueEncoder(self.dim_model, dropout=0.0)
         elif self.input_encoding == "rank_encoding":
             self.positional_encoder = PositionalEncoding(self.dim_model, max_len=self.pe_max_len)
+
+        encoder_layers = FlashTransformerEncoderLayer(
+            self.dim_model,
+            self.num_head,
+            self.dim_hid,
+            self.dropout,
+            batch_first=True,
+            use_flash_attn=self.flash_attention,
+            norm_scheme=self.norm_scheme,
+            activation=self.activation,
+        )
+        self.transformer_encoder = TransformerEncoder(encoder_layers, self.nlayers)
+        # self.transformer_encoder = torch.compile(self.transformer_encoder) #todo: check compilation
+
+        if self.decoder_head:
+            self.expression_decoder = GeneExpressionDecoder(self.dim_model)
 
         self.binarcy_accuracy = BinaryAccuracy()
         self.logit_scale = nn.Parameter(torch.tensor(float(self.logit_scale_init_value)), requires_grad=True)
@@ -410,6 +284,82 @@ class ContrastiveModel(BaseTransformerModel):
         self.sample_stats = {"train": [], "val": defaultdict(list)}
         self.logit_masks = {}
         self.stage = None
+
+    def _encode(
+        self,
+        tokens: Tensor,
+        values: Tensor,
+        seq_lengths: List[int] = None,
+    ) -> Tensor:
+        batch_size = tokens.size(0)
+
+        src_key_padding_mask = tokens == self.PAD_TOKEN_ID
+
+        gene_embs = self._encode_gene_tokens(tokens)
+
+        # Prepend learnable CLS embedding at position 0
+        cls_emb = self.cls_embedding.view(1, 1, -1).expand(batch_size, 1, -1)
+        gene_embs = torch.cat([cls_emb, gene_embs], dim=1)
+
+        # Prepend a CLS value placeholder so value/rank encoders stay aligned
+        cls_val = torch.full((batch_size, 1), self.CLS_VALUE, dtype=values.dtype, device=values.device)
+        values = torch.cat([cls_val, values], dim=1)
+
+        # CLS position is never padding
+        cls_col = torch.zeros(batch_size, 1, dtype=torch.bool, device=gene_embs.device)
+        src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask], dim=1)
+
+        if self.flash_attention:
+            assert seq_lengths is not None, "seq_lengths must be provided for flash attention"
+            max_length = tokens.size(1) + 1  # +1 for CLS
+            seq_lengths = [l + 1 for l in seq_lengths]
+
+            gene_embs, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
+                gene_embs, ~src_key_padding_mask, seq_lengths=seq_lengths
+            )
+
+            if self.input_encoding == "rank_encoding":
+                # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
+                # Faster implementation:
+                pe = self.positional_encoder.pe[:, :max_length, :]
+                pe = pe.repeat(batch_size, 1, 1)
+                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask, seq_lengths=seq_lengths)
+                total_embs = gene_embs + pe
+            elif self.input_encoding == "value_encoding":
+                values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths)
+                values = values.squeeze(-1)
+                value_embs = self._encode_values(values)
+                total_embs = gene_embs + value_embs
+
+            embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_length)
+            embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
+            cell_embs = embs_padded[:, 0, :]
+            # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
+            # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
+        else:
+            if self.input_encoding == "rank_encoding":
+                total_embs = self.positional_encoder(gene_embs)
+            else:
+                value_embs = self._encode_values(values)
+                total_embs = gene_embs + value_embs
+
+            embs_padded = self.transformer_encoder(total_embs, key_padding_mask=src_key_padding_mask)
+            cell_embs = embs_padded[:, 0, :]
+
+        return embs_padded, cell_embs
+    
+    def forward(self, input_tokens, input_values, seq_lengths: List[int] = None):
+        embs_padded, cell_embs = self._encode(input_tokens, input_values, seq_lengths=seq_lengths)
+        pred = self.expression_decoder(embs_padded) if self.decoder_head else None
+
+        return pred, embs_padded, cell_embs
+
+    # ------------------------------------------------------------------
+    # Species-routing helpers
+    # ------------------------------------------------------------------
+
+    def set_active_species(self, species: str) -> None:
+        self.active_species = species
 
     def log_metric(self, metric_name, value, **kwargs):
         kwargs = {"add_dataloader_idx": False, "sync_dist": True, **kwargs}
@@ -427,9 +377,14 @@ class ContrastiveModel(BaseTransformerModel):
             logger.warning("model.stage is not set! setting model.stage to 'predict'")
             self.stage = "predict"
 
+        assert self.active_species is not None, (
+            "active_species must be set via set_active_species() before encoding."
+        )
+        encoder = self.gene_token_encoders[self.active_species]
+
         # Deterministically add learnable_specific_embs based on use_learnable_embs_freq
         add_learnable_embs = False
-        if self.gene_token_encoder.pretrained_vocabulary_available and self.use_learnable_embs_freq is not None:
+        if encoder.pretrained_vocabulary_available and self.use_learnable_embs_freq is not None:
             if self.stage == "train" and not self.LOGGING_STEP:
                 add_learnable_embs = int((self.global_step + 1) * self.use_learnable_embs_freq) > int(
                     self.global_step * self.use_learnable_embs_freq
@@ -437,26 +392,41 @@ class ContrastiveModel(BaseTransformerModel):
             else:
                 add_learnable_embs = True
 
-        return self.gene_token_encoder(tokens, add_learnable_embs=add_learnable_embs)
+        return encoder(tokens, add_learnable_embs=add_learnable_embs)
 
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
 
+    def _get_scheduler(self, optimizer):
+        if self.scheduler == "warmup":
+            lr_scheduler = WarmupScheduler(optimizer, warmup=self.warmup)
+        elif self.scheduler == "warmup_cosine":
+            lr_scheduler = CosineWarmupScheduler(
+                optimizer, warmup=self.warmup, max_steps=self.max_steps, min_lr=self.min_lr
+            )
+        return lr_scheduler
+
+
     def configure_optimizers(self):
-        # Separate parameters into those with and without weight decay
-        # Frozen embeddings should not have weight decay applied
-        if self.gene_token_encoder.pretrained_vocabulary_available:
+        # Collect the set of learnable-embedding weight tensors that should have no
+        # weight decay (one per species that uses pretrained + learnable residual).
+        no_decay_ids = {
+            id(enc.embedding.weight)
+            for enc in self.gene_token_encoders.values()
+            if enc.pretrained_vocabulary_available
+        }
+        has_no_decay_params = len(no_decay_ids) > 0
+
+        if has_no_decay_params:
             params_with_decay = []
             params_without_decay = []
-
             for name, param in self.named_parameters():
                 if not param.requires_grad:
                     continue
-                if hasattr(self, "gene_token_encoder") and param is self.gene_token_encoder.embedding.weight:
+                if id(param) in no_decay_ids:
                     params_without_decay.append(param)
                 else:
                     params_with_decay.append(param)
-
             param_groups = [
                 {"params": params_with_decay, "weight_decay": self.weight_decay},
                 {"params": params_without_decay, "weight_decay": 0.0},
@@ -667,6 +637,7 @@ class ContrastiveModel(BaseTransformerModel):
     def training_step(self, batch, batch_idx):
         self.stage = "train"
         self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
+        self.set_active_species(batch["_organism"][0])
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -696,6 +667,7 @@ class ContrastiveModel(BaseTransformerModel):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         self.stage = "val"
         self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
+        self.set_active_species(batch["_organism"][0])
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -717,6 +689,8 @@ class ContrastiveModel(BaseTransformerModel):
     def predict_step(self, batch, batch_idx, use_learnable_embs: bool = True):
         self.stage = "predict"
         self.use_learnable_embs_freq = int(use_learnable_embs)
+        if "_organism" in batch:
+            self.set_active_species(batch["_organism"][0])
 
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
@@ -1025,6 +999,22 @@ class ContrastiveModel(BaseTransformerModel):
         r2 = (r2 * items_mask).sum() / items_mask.sum().clamp(min=1)
         return r2
 
+    def mask_values(self, values: Tensor, rate: float, ignore_idxs=None) -> Tensor:
+        mask = torch.rand(values.shape) < rate
+        if ignore_idxs is not None:
+            mask[:, ignore_idxs] = False
+        masked_values = values.clone()
+        masked_values[mask] = self.MASK_VALUE
+        return masked_values, mask
+
+    def _mlm_loss(self, pred, target, mask=None):
+        if mask is not None:
+            if torch.any(mask):
+                pred = pred[mask]
+                target = target[mask]
+            else:
+                return torch.tensor(0.0, device=self.device)
+        return F.mse_loss(pred.float(), target.float())
 
 # Cosine Scheduler for training
 class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
