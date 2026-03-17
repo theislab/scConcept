@@ -736,5 +736,22 @@ def test_train_integration(train_config):
             train(train_config)
 
 
+def test_train_fabric_integration(train_config):
+    """Integration test for train_fabric.py FabricTrainer pipeline
+
+    Tests that FabricTrainer can:
+    - Load configuration and set up Fabric
+    - Create datamodule with AnnData files
+    - Initialize model and optimizer
+    - Run training for a few steps
+    - Complete without errors
+    """
+    from concept.train_fabric import FabricTrainer
+
+    # train_config has wandb.enabled=False so no WandbLogger mock needed
+    trainer = FabricTrainer(train_config)
+    trainer.fit()
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
