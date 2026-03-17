@@ -6,6 +6,7 @@ import time
 
 import lightning as L
 import pandas as pd
+import torch
 from hydra import compose, initialize
 from lightning.fabric import Fabric
 from lightning.fabric.strategies import DDPStrategy
@@ -15,7 +16,7 @@ from wandb.integration.lightning.fabric import WandbLogger
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.dataset import MultiSpeciesTokenizer
-from concept.utils import copy_files, load_pretrained_vocabulary, resolve_split_list
+from concept.utils import copy_files, load_pretrained_vocabulary, resolve_split_list, resume_wandb_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,12 @@ class FabricTrainer:
         self.train_dataloader = self.fabric.setup_dataloaders(
             self.datamodule.train_dataloader(), use_distributed_sampler=False
         )
+        self.val_dataloaders = self._setup_val_dataloaders()
         self.max_steps = cfg.model.training.max_steps
         self.accumulate_grad_batches = cfg.model.training.accumulate_grad_batches
         self.log_every_n_steps = cfg.model.training.log_every_n_steps
         self.gradient_clip_val = cfg.model.training.gradient_clip_val
+        self.val_check_interval = cfg.model.training.val_check_interval
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -234,6 +237,63 @@ class FabricTrainer:
             logger.info("Resumed from %s at step %d", checkpoint_file, self.global_step)
 
     # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    def _setup_val_dataloaders(self) -> list:
+        """Wrap all validation dataloaders with Fabric."""
+        if not self.val_loader_names:
+            return []
+        raw_loaders = self.datamodule.val_dataloader()
+        wrapped = self.fabric.setup_dataloaders(*raw_loaders, use_distributed_sampler=False)
+        return list(wrapped) if isinstance(wrapped, (list, tuple)) else [wrapped]
+
+    def _run_validation(self) -> None:
+        """Run a full validation pass over all configured val dataloaders."""
+        if not self.val_loader_names:
+            return
+
+        self.model.eval()
+        self.model._fabric_global_step = self.global_step
+
+        def _make_collector(acc: dict) -> callable:
+            def _collect(name, value, **kw):
+                v = value.item() if hasattr(value, "item") else float(value)
+                acc.setdefault(name, []).append(v)
+            return _collect
+
+        for loader_idx, (val_name, val_loader) in enumerate(
+            zip(self.val_loader_names, self.val_dataloaders, strict=False)
+        ):
+            accumulated: dict[str, list[float]] = {}
+            self.model.log = _make_collector(accumulated)
+
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(val_loader):
+                    self.model.validation_step(batch, batch_idx, dataloader_idx=loader_idx)
+
+            if accumulated:
+                averaged = {name: sum(vals) / len(vals) for name, vals in accumulated.items()}
+                self.fabric.log_dict(averaged, step=self.global_step)
+                if self.fabric.is_global_zero:
+                    summary = {k: f"{v:.4f}" for k, v in averaged.items() if "loss" in k or "recall" in k}
+                    logger.info("val [step=%d] %s: %s", self.global_step, val_name, summary)
+
+        # Restore the original log binding
+        if self.cfg.wandb.enabled:
+            self.model.log = lambda name, value, **kw: self.fabric.log(
+                name, value, step=self.model._fabric_global_step
+            )
+        else:
+            self.model.log = lambda *args, **kwargs: None
+
+        # Flush sample-stats tables to W&B and clear the buffers
+        with torch.no_grad():
+            self.model.on_validation_epoch_end()
+
+        self.model.train()
+
+    # ------------------------------------------------------------------
     # Checkpointing
     # ------------------------------------------------------------------
 
@@ -261,6 +321,9 @@ class FabricTrainer:
 
     def fit(self) -> None:
         """Run the full training loop."""
+        if self.cfg.model.training.validate_before_training and not self.cfg.initialize.resume:
+            logger.info("Running validation before training ...")
+            self._run_validation()
 
         self.model.train()
         last_logging_step = 0
@@ -287,6 +350,8 @@ class FabricTrainer:
                     self.scheduler.step()
                 self.global_step += 1
                 self._maybe_checkpoint()
+                if self.val_check_interval and self.global_step % self.val_check_interval == 0:
+                    self._run_validation()
 
             if (
                 self.fabric.is_global_zero
@@ -319,7 +384,14 @@ if __name__ == "__main__":
     )
     L.seed_everything(42)
 
-    with initialize(version_base=None, config_path="./conf"):
-        cfg = compose(config_name="config", overrides=sys.argv[1:])
+    bash_cfg = OmegaConf.from_cli()
+
+    if "initialize" in bash_cfg and bash_cfg.initialize.resume:
+        logger.info("Resuming training run — restoring config from W&B ...")
+        cfg = resume_wandb_config(bash_cfg)
+    else:
+        logger.info("Starting new training run ...")
+        with initialize(version_base=None, config_path="./conf"):
+            cfg = compose(config_name="config", overrides=sys.argv[1:])
 
     FabricTrainer(cfg).fit()
