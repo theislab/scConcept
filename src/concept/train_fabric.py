@@ -32,11 +32,38 @@ class _FabricContrastiveModel(ContrastiveModel):
     def logger(self):
         return getattr(self, "_fabric_logger", None)
 
-    def log(self, *args, **kwargs) -> None:
-        pass
+    def log(self, name: str, value, on_step: bool = False, on_epoch: bool = True, **kwargs) -> None:
+        """Route logging based on the current stage and on_step/on_epoch flags.
 
-    def log_dict(self, *args, **kwargs) -> None:
-        pass
+        During training, ``on_step=True`` metrics are forwarded to Fabric
+        immediately; ``on_epoch=True``-only metrics are skipped (no epoch
+        aggregation in the Fabric loop).
+
+        During validation, ``on_epoch=True`` metrics are accumulated in
+        ``_val_metric_accumulator`` so they can be averaged and flushed
+        after the full pass.
+        """
+        fabric: Fabric | None = getattr(self, "_fabric_ref", None)
+        if fabric is None:
+            return
+
+        if self.stage == "train":
+            if on_step:
+                v = value.item() if hasattr(value, "item") else float(value)
+                fabric.log(name, v, step=self._fabric_global_step)
+            # on_epoch during training is skipped – no epoch aggregation in the Fabric loop
+        elif self.stage == "val":
+            if on_epoch:
+                acc: dict | None = getattr(self, "_val_metric_accumulator", None)
+                if acc is not None:
+                    v = value.item() if hasattr(value, "item") else float(value)
+                    acc.setdefault(name, []).append(v)
+            # on_step during validation is skipped
+
+    def log_dict(self, metrics: dict, on_step: bool = True, on_epoch: bool = False, **kwargs) -> None:
+        """Dispatch each metric through ``log`` so stage-routing applies."""
+        for name, value in metrics.items():
+            self.log(name, value, on_step=on_step, on_epoch=on_epoch, **kwargs)
 
 
 class FabricTrainer:
@@ -51,7 +78,6 @@ class FabricTrainer:
         self.pretrained_vocabularies = self._load_pretrained_vocabularies()
         self.fabric = self._build_fabric()
         self.fabric.launch()
-        self._upload_wandb_config()
         self.checkpoint_path = self._resolve_checkpoint_path()
         self._copy_datasets_to_local()
         self.datamodule = self._build_datamodule()
@@ -66,6 +92,7 @@ class FabricTrainer:
         self.log_every_n_steps = cfg.model.training.log_every_n_steps
         self.gradient_clip_val = cfg.model.training.gradient_clip_val
         self.val_check_interval = cfg.model.training.val_check_interval
+        self.data_loading_speed_sanity_check = cfg.model.data_loading_speed_sanity_check
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -83,7 +110,7 @@ class FabricTrainer:
             return load_pretrained_vocabulary(self.cfg.PATH.PRETRAINED_VOCABULARY, self.tokenizer)
         return None
 
-    def _build_fabric(self) -> Fabric:
+    def _get_logger(self):
         resume_logger = self.cfg.initialize.resume and not self.cfg.initialize.create_new_run
 
         wandb_logger = None
@@ -109,8 +136,15 @@ class FabricTrainer:
                 log_model=False,
                 **kwargs,
             )
+            if self.fabric.is_global_zero and not resume_logger:
+                wandb_logger.experiment.config.update(
+                    OmegaConf.to_container(self.cfg, resolve=True, throw_on_missing=True)
+                )
 
-        self._resume_logger = resume_logger
+        return wandb_logger
+
+    def _build_fabric(self) -> Fabric:
+        logger = self._get_logger()
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.cfg.model.training.num_nodes))
         return Fabric(
             accelerator=self.cfg.model.training.accelerator,
@@ -118,14 +152,9 @@ class FabricTrainer:
             num_nodes=num_nodes,
             strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
             precision="bf16-mixed",
-            loggers=wandb_logger if wandb_logger is not None else [],
+            loggers=logger,
         )
 
-    def _upload_wandb_config(self) -> None:
-        if self.cfg.wandb.enabled and self.fabric.is_global_zero and not self._resume_logger:
-            self.fabric.logger.experiment.config.update(
-                OmegaConf.to_container(self.cfg, resolve=True, throw_on_missing=True)
-            )
 
     def _resolve_checkpoint_path(self) -> str:
         run_id = (
@@ -206,10 +235,9 @@ class FabricTrainer:
         if self.cfg.model.data_loading_speed_sanity_check:
             model.requires_grad_(False)
 
+        model._fabric_ref = self.fabric
         if self.cfg.wandb.enabled:
             model._fabric_logger = self.fabric.logger
-            model.log = lambda name, value, **kw: self.fabric.log(name, value, step=model._fabric_global_step)
-            model.log_dict = lambda metrics, **kw: self.fabric.log_dict(metrics, step=model._fabric_global_step)
 
         opt_result = model.configure_optimizers()
         if isinstance(opt_result, tuple):
@@ -256,22 +284,16 @@ class FabricTrainer:
         self.model.eval()
         self.model._fabric_global_step = self.global_step
 
-        def _make_collector(acc: dict) -> callable:
-            def _collect(name, value, **kw):
-                v = value.item() if hasattr(value, "item") else float(value)
-                acc.setdefault(name, []).append(v)
-            return _collect
-
         for loader_idx, (val_name, val_loader) in enumerate(
             zip(self.val_loader_names, self.val_dataloaders, strict=False)
         ):
-            accumulated: dict[str, list[float]] = {}
-            self.model.log = _make_collector(accumulated)
+            self.model._val_metric_accumulator = {}
 
             with torch.no_grad():
                 for batch_idx, batch in enumerate(val_loader):
                     self.model.validation_step(batch, batch_idx, dataloader_idx=loader_idx)
 
+            accumulated = self.model._val_metric_accumulator
             if accumulated:
                 averaged = {name: sum(vals) / len(vals) for name, vals in accumulated.items()}
                 self.fabric.log_dict(averaged, step=self.global_step)
@@ -279,15 +301,8 @@ class FabricTrainer:
                     summary = {k: f"{v:.4f}" for k, v in averaged.items() if "loss" in k or "recall" in k}
                     logger.info("val [step=%d] %s: %s", self.global_step, val_name, summary)
 
-        # Restore the original log binding
-        if self.cfg.wandb.enabled:
-            self.model.log = lambda name, value, **kw: self.fabric.log(
-                name, value, step=self.model._fabric_global_step
-            )
-        else:
-            self.model.log = lambda *args, **kwargs: None
+        self.model._val_metric_accumulator = None
 
-        # Flush sample-stats tables to W&B and clear the buffers
         with torch.no_grad():
             self.model.on_validation_epoch_end()
 
@@ -303,8 +318,7 @@ class FabricTrainer:
         self.fabric.save(path, state)
 
     def _maybe_checkpoint(self) -> None:
-        max_steps = self.cfg.model.training.max_steps
-        milestone_interval = 100_000 if max_steps > 100_000 else 10_000
+        milestone_interval = 100_000 if self.max_steps > 100_000 else 10_000
         latest_interval = 20_000
 
         if self.global_step % milestone_interval == 0:
@@ -320,6 +334,7 @@ class FabricTrainer:
     # ------------------------------------------------------------------
 
     def fit(self) -> None:
+        self.model.on_fit_start()
         """Run the full training loop."""
         if self.cfg.model.training.validate_before_training and not self.cfg.initialize.resume:
             logger.info("Running validation before training ...")
@@ -339,11 +354,13 @@ class FabricTrainer:
 
             with self.fabric.no_backward_sync(self.model, enabled=is_accumulating):
                 loss = self.model.training_step(batch, batch_idx)
-                self.fabric.backward(loss / self.accumulate_grad_batches)
+                if not self.data_loading_speed_sanity_check:
+                    self.fabric.backward(loss / self.accumulate_grad_batches)
 
             if not is_accumulating:
                 if self.gradient_clip_val:
                     self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val)
+                self.model.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 if self.scheduler is not None:
