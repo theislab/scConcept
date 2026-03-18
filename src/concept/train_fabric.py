@@ -78,7 +78,9 @@ class FabricTrainer:
         self.pretrained_vocabularies = self._load_pretrained_vocabularies()
         self.fabric = self._build_fabric()
         self.fabric.launch()
+        self._upload_wandb_config()
         self.checkpoint_path = self._resolve_checkpoint_path()
+        self.profiler = self._build_profiler()
         self._copy_datasets_to_local()
         self.datamodule = self._build_datamodule()
         self.model, self.optimizer, self.scheduler = self._build_model_and_optimizer()
@@ -136,12 +138,37 @@ class FabricTrainer:
                 log_model=False,
                 **kwargs,
             )
-            if self.fabric.is_global_zero and not resume_logger:
-                wandb_logger.experiment.config.update(
-                    OmegaConf.to_container(self.cfg, resolve=True, throw_on_missing=True)
-                )
+        self._resume_logger = resume_logger
 
         return wandb_logger
+
+    def _upload_wandb_config(self):
+        if self.cfg.wandb.enabled and self.fabric.is_global_zero and not self._resume_logger:
+            self.fabric.logger.experiment.config.update(
+                OmegaConf.to_container(self.cfg, resolve=True, throw_on_missing=True)
+            )
+
+    def _build_profiler(self):
+        """Create a torch.profiler.profile instance when profiling is enabled."""
+        if not self.cfg.profiler.enabled:
+            return None
+        return torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            schedule=torch.profiler.schedule(
+                skip_first=100,
+                wait=10,
+                warmup=10,
+                active=20,
+                repeat=1,
+            ),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+            with_flops=True,
+        )
 
     def _build_fabric(self) -> Fabric:
         logger = self._get_logger()
@@ -345,6 +372,9 @@ class FabricTrainer:
         last_log_time = time.perf_counter()
         self.optimizer.zero_grad()
 
+        if self.profiler is not None:
+            self.profiler.start()
+
         for batch_idx, batch in enumerate(self.train_dataloader):
             if self.global_step >= self.max_steps:
                 break
@@ -359,13 +389,15 @@ class FabricTrainer:
 
             if not is_accumulating:
                 if self.gradient_clip_val:
-                    self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val)
+                    self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val, error_if_nonfinite=False)
                 self.model.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 if self.scheduler is not None:
                     self.scheduler.step()
                 self.global_step += 1
+                if self.profiler is not None:
+                    self.profiler.step()
                 self._maybe_checkpoint()
                 if self.val_check_interval and self.global_step % self.val_check_interval == 0:
                     self._run_validation()
@@ -385,8 +417,17 @@ class FabricTrainer:
                 last_logging_step = self.global_step
                 last_log_time = now
 
-        self._save_checkpoint(os.path.join("latest", "latest.ckpt"))
-        logger.info("Training complete at step %d. Final checkpoint saved.", self.global_step)
+        if self.profiler is not None:
+            self.profiler.stop()
+            trace_path = os.path.join(
+                self.checkpoint_path, "profiler",
+                f"chrome_trace_rank{self.fabric.global_rank}.json",
+            )
+            os.makedirs(os.path.dirname(trace_path), exist_ok=True)
+            self.profiler.export_chrome_trace(trace_path)
+            logger.info("Profiler chrome trace saved to %s", trace_path)
+
+        logger.info("Training complete at step %d", self.global_step)
 
 
 if __name__ == "__main__":
