@@ -764,7 +764,7 @@ class ContrastiveModel(L.LightningModule):
             self.sample_stats["val"][val_name] = []
 
     def on_before_optimizer_step(self, optimizer):
-        if self.trainer.global_step % self.log_every_n_steps == 0:
+        if self.global_step % self.log_every_n_steps == 0:
             norms = {}
             for n, layer in enumerate(self.transformer_encoder.layers):
                 for name, p in layer.named_parameters():
