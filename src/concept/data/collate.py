@@ -8,9 +8,10 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+import torch
 import torch.distributed as dist
 from lamin_dataloader import BaseCollate
-from torch.utils.data import Dataset, default_collate, default_convert, get_worker_info
+from torch.utils.data import get_worker_info
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ class Collate(BaseCollate):
             tissues = [item.pop("_tissue", None) for item in batch]
             assert organisms is not None, "_organism is None"
             assert len(set(organisms)) == 1, "Multiple organisms in the same batch is not supported"
-            organism = organisms[0]
+            organism, tissue = organisms[0], tissues[0]
 
             n_tokens = len(batch_permute[0]["tokens"])
             panel_indices = np.arange(n_tokens)
@@ -282,21 +283,25 @@ class Collate(BaseCollate):
             values_2 = [item["values"].astype(np.float32) for item in batch_2]
 
             return {
-                "tokens_1": default_collate(tokens_1),
-                "values_1": default_collate(values_1),
-                "tokens_2": default_collate(tokens_2),
-                "values_2": default_collate(values_2),
-                "panel_1": default_collate(panel_1),
-                "panel_2": default_collate(panel_2),
+                "tokens_1": torch.from_numpy(np.stack(tokens_1)),
+                "values_1": torch.from_numpy(np.stack(values_1)),
+                "tokens_2": torch.from_numpy(np.stack(tokens_2)),
+                "values_2": torch.from_numpy(np.stack(values_2)),
+                "panel_1": torch.from_numpy(np.stack(panel_1)),
+                "panel_2": torch.from_numpy(np.stack(panel_2)),
                 "panel_name_1": panel_name_1,
                 "panel_name_2": panel_name_2,
-                "seq_length_1": seq_length_1,
-                "seq_length_2": seq_length_2,
-                "items_mask": default_collate(items_mask),
-                "_organism": organisms,
-                "_tissue": tissues,
+                "seq_length_1": np.array(seq_length_1),
+                "seq_length_2": np.array(seq_length_2),
+                "items_mask": torch.from_numpy(items_mask),
+                "_organism": organism,
+                "_tissue": tissue,
                 **{
-                    key: default_collate([item[key] for item in batch])
+                    key: (
+                        np.array([item[key] for item in batch])
+                        if isinstance(batch[0][key], str)
+                        else torch.from_numpy(np.stack([item[key] for item in batch]))
+                    )
                     for key in batch[0].keys()
                     if key not in ["tokens", "values"]
                 },
@@ -317,10 +322,14 @@ class Collate(BaseCollate):
             )
 
             return {
-                "tokens": default_collate(tokens),
-                "values": default_collate(values),
+                "tokens": torch.from_numpy(np.stack(tokens)),
+                "values": torch.from_numpy(np.stack(values)),
                 **{
-                    key: default_collate([item[key] for item in batch])
+                    key: (
+                        np.array([item[key] for item in batch])
+                        if isinstance(batch[0][key], str)
+                        else torch.from_numpy(np.stack([item[key] for item in batch]))
+                    )
                     for key in batch[0].keys()
                     if key not in ["tokens", "values"]
                 },
