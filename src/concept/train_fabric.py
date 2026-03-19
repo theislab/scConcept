@@ -388,9 +388,9 @@ class FabricTrainer:
                     self.fabric.backward(loss / self.accumulate_grad_batches)
 
             if not is_accumulating:
+                self.model.on_before_optimizer_step(self.optimizer)
                 if self.gradient_clip_val:
                     self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val, error_if_nonfinite=False)
-                self.model.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 if self.scheduler is not None:
