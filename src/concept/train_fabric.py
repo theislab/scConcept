@@ -16,7 +16,7 @@ from wandb.integration.lightning.fabric import WandbLogger
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.dataset import MultiSpeciesTokenizer
-from concept.utils import copy_files, load_pretrained_vocabulary, resolve_split_list, resume_wandb_config
+from concept.utils import SLURMEnv, copy_files, load_pretrained_vocabulary, resolve_split_list, resume_wandb_config
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,7 @@ class FabricTrainer:
             strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
             precision="bf16-mixed",
             loggers=logger,
+            plugins=[SLURMEnv()],
         )
 
 
