@@ -80,6 +80,7 @@ class FabricTrainer:
         self.fabric.launch()
         self._upload_wandb_config()
         self.checkpoint_path = self._resolve_checkpoint_path()
+        self._save_config()
         self.profiler = self._build_profiler()
         self._copy_datasets_to_local()
         self.datamodule = self._build_datamodule()
@@ -180,7 +181,7 @@ class FabricTrainer:
             strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
             precision="bf16-mixed",
             loggers=logger,
-            plugins=[SLURMEnv()],
+            plugins=[SLURMEnv()] if os.environ.get("SLURM_JOB_ID", None) is not None else None,
         )
 
 
@@ -196,6 +197,15 @@ class FabricTrainer:
         )
         run_id = self.fabric.broadcast(run_id)
         return os.path.join(self.cfg.PATH.CHECKPOINT_ROOT, run_id)
+
+    def _save_config(self) -> None:
+        """Persist the resolved config as YAML to <checkpoint_path>/config/config.yaml."""
+        if not self.fabric.is_global_zero:
+            return
+        os.makedirs(self.checkpoint_path, exist_ok=True)
+        config_path = os.path.join(self.checkpoint_path, "config.yaml")
+        OmegaConf.save(self.cfg, config_path)
+        logger.info("Saved resolved config to %s", config_path)
 
     def _copy_datasets_to_local(self) -> None:
         """Copy dataset files to a fast local directory (e.g. NVMe scratch) if configured."""

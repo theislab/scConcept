@@ -192,13 +192,18 @@ def copy_files(
 
 
 def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
-    import wandb
+    config_file = bash_cfg.get("config_file", None)
+    if config_file is not None:
+        logger.info("Loading config from local file %s ...", config_file)
+        cfg = OmegaConf.load(config_file)
+    else:
+        import wandb
 
-    wandb.login()
-    api = wandb.Api()
-    run = api.run(f"{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}")
-    logger.info(f"Resuming training for {run.id} ...")
-    cfg = DictConfig(run.config)
+        wandb.login()
+        api = wandb.Api()
+        run = api.run(f"{bash_cfg.wandb.entity}/{bash_cfg.wandb.project}/{bash_cfg.initialize.run_id}")
+        logger.info(f"Resuming training for {run.id} ...")
+        cfg = DictConfig(run.config)
 
     cfg = OmegaConf.merge(cfg, bash_cfg)
 

@@ -15,6 +15,7 @@ from omegaconf import DictConfig, OmegaConf
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.utils import (
+    SLURMEnv,
     _get_callbacks,
     copy_files,
     get_profiler,
@@ -130,6 +131,10 @@ def train(cfg: DictConfig, build_only: bool = False):
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
 
+    if global_rank == 0:
+        OmegaConf.save(cfg, os.path.join(CHECKPOINT_PATH, "config.yaml"))
+        logger.info("Saved resolved config to %s", os.path.join(CHECKPOINT_PATH, "config.yaml"))
+
     profiler = get_profiler(CHECKPOINT_PATH) if cfg.profiler.enabled else None
 
     trainer_kwargs = {
@@ -148,6 +153,7 @@ def train(cfg: DictConfig, build_only: bool = False):
         "gradient_clip_val": cfg.model.training.gradient_clip_val,
         "profiler": profiler,
         "callbacks": _get_callbacks(CHECKPOINT_PATH, cfg.model.training.max_steps),
+        "plugins": [SLURMEnv()] if os.environ.get("SLURM_JOB_ID", None) is not None else None,
     }
     trainer = L.Trainer(
         **trainer_kwargs,
