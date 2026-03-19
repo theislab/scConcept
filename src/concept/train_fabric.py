@@ -365,7 +365,7 @@ class FabricTrainer:
             logger.info("Saved milestone checkpoint at step %d", self.global_step)
 
         if self.global_step % latest_interval == 0:
-            self._save_checkpoint(os.path.join("latest", "latest.ckpt"))
+            self._save_checkpoint(os.path.join("latest", "last.ckpt"))
 
     # ------------------------------------------------------------------
     # Training loop
@@ -379,7 +379,7 @@ class FabricTrainer:
             self._run_validation()
 
         self.model.train()
-        last_logging_step = 0
+        last_logging_step = self.global_step
         last_log_time = time.perf_counter()
         self.optimizer.zero_grad()
 

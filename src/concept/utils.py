@@ -192,7 +192,7 @@ def copy_files(
 
 
 def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
-    config_file = bash_cfg.get("config_file", None)
+    config_file = bash_cfg.initialize.get("config_file", None)
     if config_file is not None:
         logger.info("Loading config from local file %s ...", config_file)
         cfg = OmegaConf.load(config_file)
@@ -205,10 +205,11 @@ def resume_wandb_config(bash_cfg: DictConfig) -> DictConfig:
         logger.info(f"Resuming training for {run.id} ...")
         cfg = DictConfig(run.config)
 
+        if not cfg.initialize.create_new_run:
+            os.environ["WANDB_TAGS"] = ",".join(run.tags) + "," + os.environ.get("WANDB_TAGS", "")
+
     cfg = OmegaConf.merge(cfg, bash_cfg)
 
-    if not cfg.initialize.create_new_run:
-        os.environ["WANDB_TAGS"] = ",".join(run.tags) + "," + os.environ.get("WANDB_TAGS", "")
 
     # cfg.model.training.val_check_interval = float(cfg.model.training.val_check_interval + 0.1) # for a bug in pytorch-lightning
     val_check_interval = cfg.model.training.val_check_interval
