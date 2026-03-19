@@ -210,7 +210,7 @@ class FabricTrainer:
                         source_path,
                         os.path.join(self.cfg.PATH.LOCAL_DIR, source_name),
                         files,
-                        compare_files=False,
+                        compare_files=True,
                         force_copy=False,
                     )
                 self.cfg.datamodule[key]["source_path"] = os.path.join(self.cfg.PATH.LOCAL_DIR, source_name)

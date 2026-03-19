@@ -67,7 +67,7 @@ def train(cfg: DictConfig, build_only: bool = False):
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),
                         files,
-                        compare_files=False,
+                        compare_files=True,
                         force_copy=False,
                     )
                 cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
