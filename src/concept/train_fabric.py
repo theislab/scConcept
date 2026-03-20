@@ -373,9 +373,24 @@ class FabricTrainer:
     # Training loop
     # ------------------------------------------------------------------
 
+    def _log_parameter_summary(self) -> None:
+        """Log the number of trainable and non-trainable model parameters (rank 0 only)."""
+        if not self.fabric.is_global_zero:
+            return
+        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        non_trainable = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)
+        logger.info(
+            "Model parameters — trainable: %s | non-trainable: %s | total: %s",
+            f"{trainable:,}",
+            f"{non_trainable:,}",
+            f"{trainable + non_trainable:,}",
+        )
+
     def fit(self) -> None:
         self.model.on_fit_start()
         """Run the full training loop."""
+        self._log_parameter_summary()
+
         if self.cfg.model.training.validate_before_training and not self.cfg.initialize.resume:
             logger.info("Running validation before training ...")
             self._run_validation()
@@ -427,11 +442,18 @@ class FabricTrainer:
                 ):
                     now = time.perf_counter()
                     batches_per_sec = (self.global_step - last_logging_step) / (now - last_log_time)
+                    lr_per_group = {
+                        f"trainer/lr_pg_{i}": pg["lr"]
+                        for i, pg in enumerate(self.optimizer.param_groups)
+                    }
                     logger.info(
                         "epoch=%d, step=%d  loss=%.4f  speed=%.2f batches/s",
                         self.epoch, self.global_step, loss.item(), batches_per_sec,
                     )
-                    self.fabric.log_dict({"train/batches_per_sec": batches_per_sec}, step=self.global_step)
+                    self.fabric.log_dict(
+                        {"trainer/batches_per_sec": batches_per_sec, "trainer/epoch": self.epoch, **lr_per_group},
+                        step=self.global_step,
+                    )
                     last_logging_step = self.global_step
                     last_log_time = now
 
