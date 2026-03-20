@@ -113,8 +113,12 @@ class Collate(BaseCollate):
                 self.panel_names_dict[organism_name] = panel_files
 
                 if stage == "train":
-                    for i, panel_file in enumerate(panel_files):
-                        logger.info(f"Organism {organism_name}, Panel {panel_file} size: {len(panels[i])} genes")
+                    panel_sizes = [len(panel) for panel in panels]
+                    logger.info(
+                        f"Organism {organism_name}: loaded {len(panel_files)} panels "
+                        f"(genes per panel - min: {min(panel_sizes)}, "
+                        f"median: {int(np.median(panel_sizes))}, max: {max(panel_sizes)})"
+                    )
 
     def shared_feature_stats(self, batch):
         num_shared_featrues = []
