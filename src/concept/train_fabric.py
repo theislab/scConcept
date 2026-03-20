@@ -386,47 +386,51 @@ class FabricTrainer:
         if self.profiler is not None:
             self.profiler.start()
 
-        for batch_idx, batch in enumerate(self.train_dataloader):
+
+        while True:
             if self.global_step >= self.max_steps:
                 break
+            for batch_idx, batch in enumerate(self.train_dataloader):
+                if self.global_step >= self.max_steps:
+                    break
 
-            self.model._fabric_global_step = self.global_step
-            is_accumulating = (batch_idx + 1) % self.accumulate_grad_batches != 0
+                self.model._fabric_global_step = self.global_step
+                is_accumulating = (batch_idx + 1) % self.accumulate_grad_batches != 0
 
-            with self.fabric.no_backward_sync(self.model, enabled=is_accumulating):
-                loss = self.model.training_step(batch, batch_idx)
-                if not self.data_loading_speed_sanity_check:
-                    self.fabric.backward(loss / self.accumulate_grad_batches)
+                with self.fabric.no_backward_sync(self.model, enabled=is_accumulating):
+                    loss = self.model.training_step(batch, batch_idx)
+                    if not self.data_loading_speed_sanity_check:
+                        self.fabric.backward(loss / self.accumulate_grad_batches)
 
-            if not is_accumulating:
-                self.model.on_before_optimizer_step(self.optimizer)
-                if self.gradient_clip_val:
-                    self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val, error_if_nonfinite=False)
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                if self.scheduler is not None:
-                    self.scheduler.step()
-                self.global_step += 1
-                if self.profiler is not None:
-                    self.profiler.step()
-                self._maybe_checkpoint()
-                if self.val_check_interval and self.global_step % self.val_check_interval == 0:
-                    self._run_validation()
+                if not is_accumulating:
+                    self.model.on_before_optimizer_step(self.optimizer)
+                    if self.gradient_clip_val:
+                        self.fabric.clip_gradients(self.model, self.optimizer, max_norm=self.gradient_clip_val, error_if_nonfinite=False)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+                    self.global_step += 1
+                    if self.profiler is not None:
+                        self.profiler.step()
+                    self._maybe_checkpoint()
+                    if self.val_check_interval and self.global_step % self.val_check_interval == 0:
+                        self._run_validation()
 
-            if (
-                self.fabric.is_global_zero
-                and self.global_step % self.log_every_n_steps == 0
-                and self.global_step != last_logging_step
-            ):
-                now = time.perf_counter()
-                batches_per_sec = (self.global_step - last_logging_step) / (now - last_log_time)
-                logger.info(
-                    "step=%d  loss=%.4f  speed=%.2f batches/s",
-                    self.global_step, loss.item(), batches_per_sec,
-                )
-                self.fabric.log_dict({"train/batches_per_sec": batches_per_sec}, step=self.global_step)
-                last_logging_step = self.global_step
-                last_log_time = now
+                if (
+                    self.fabric.is_global_zero
+                    and self.global_step % self.log_every_n_steps == 0
+                    and self.global_step != last_logging_step
+                ):
+                    now = time.perf_counter()
+                    batches_per_sec = (self.global_step - last_logging_step) / (now - last_log_time)
+                    logger.info(
+                        "step=%d  loss=%.4f  speed=%.2f batches/s",
+                        self.global_step, loss.item(), batches_per_sec,
+                    )
+                    self.fabric.log_dict({"train/batches_per_sec": batches_per_sec}, step=self.global_step)
+                    last_logging_step = self.global_step
+                    last_log_time = now
 
         if self.profiler is not None:
             self.profiler.stop()
