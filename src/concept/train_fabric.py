@@ -73,6 +73,7 @@ class FabricTrainer:
         scConcept.validate_config(cfg)
         self.cfg = cfg
         self.global_step = 0
+        self.epoch = 0
 
         self.tokenizer = self._build_tokenizer()
         self.pretrained_vocabularies = self._load_pretrained_vocabularies()
@@ -390,6 +391,7 @@ class FabricTrainer:
         while True:
             if self.global_step >= self.max_steps:
                 break
+
             for batch_idx, batch in enumerate(self.train_dataloader):
                 if self.global_step >= self.max_steps:
                     break
@@ -425,12 +427,14 @@ class FabricTrainer:
                     now = time.perf_counter()
                     batches_per_sec = (self.global_step - last_logging_step) / (now - last_log_time)
                     logger.info(
-                        "step=%d  loss=%.4f  speed=%.2f batches/s",
-                        self.global_step, loss.item(), batches_per_sec,
+                        "epoch=%d, step=%d  loss=%.4f  speed=%.2f batches/s",
+                        self.epoch, self.global_step, loss.item(), batches_per_sec,
                     )
                     self.fabric.log_dict({"train/batches_per_sec": batches_per_sec}, step=self.global_step)
                     last_logging_step = self.global_step
                     last_log_time = now
+
+            self.epoch += 1
 
         if self.profiler is not None:
             self.profiler.stop()
