@@ -148,8 +148,9 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "_organism": ["hsapiens"] * batch_size,
-        "_tissue": ["brain", "blood"],
+        "species": ["hsapiens"] * batch_size,
+        "_organism": "hsapiens",
+        "_tissue": "brain",
     }
 
     # Test training step
@@ -224,8 +225,9 @@ def test_validation_step(mock_config, device, flash_attention):
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "_organism": ["hsapiens"] * batch_size,
-        "_tissue": ["brain", "blood"],
+        "species": ["hsapiens"] * batch_size,
+        "_organism": "hsapiens",
+        "_tissue": "brain",
     }
 
     # Test validation step and check model.log calls
@@ -264,7 +266,9 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
         "dataset": torch.randint(0, 2, (batch_size,)).to(device),
         "panel_name": "test_panel",
         "seq_lengths": [seq_len] * batch_size if seq_lengths_available else None,
-        "_organism": ["hsapiens"] * batch_size,
+        "species": ["hsapiens"] * batch_size,
+        "_organism": "hsapiens",
+        "_tissue": "brain",
     }
 
     # Test predict step
@@ -321,7 +325,7 @@ def test_predict_step_with_lamin_dataloader(
     )
     model = model.to(device)
     model.eval()
-    # lamin_dataloader batches don't carry _organism; activate the species once upfront
+
     model.set_active_species("hsapiens")
 
     # Create InMemory TokenizedDataset
@@ -518,9 +522,9 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path, use_store
         adata_dir.mkdir()
         adata_path = adata_dir / "test_data.h5ad"
         adata.write(adata_path)
-        split = [str(adata_path)]
+        split = {"paths": [str(adata_path)], "metadata": {"species": ["hsapiens"]}}
     else:
-        split = [adata]
+        split = {"paths": [adata], "metadata": {"species": ["hsapiens"]}}
 
     obs_keys = []  # No obs keys needed for basic test
 

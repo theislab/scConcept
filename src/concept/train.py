@@ -46,9 +46,8 @@ def train(cfg: DictConfig, build_only: bool = False):
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
     species_gene_mappings: dict[str, dict] = {}
-
-    for species, mapping_path in cfg.PATH.GENE_MAPPING_PATHS.items():
-        species_gene_mappings[species] = pd.read_csv(mapping_path, index_col="gene_id")["token"].to_dict()
+    for species in cfg.PATH.SPECIES:
+        species_gene_mappings[species] = pd.read_csv(os.path.join(cfg.PATH.GENE_MAPPINGS_PATH, f"{species}.csv"), index_col="gene_id")["token"].to_dict()
 
     tokenizer = MultiSpeciesTokenizer(species_gene_mappings)
     vocab_sizes = tokenizer.vocab_sizes
@@ -130,6 +129,7 @@ def train(cfg: DictConfig, build_only: bool = False):
         )
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
+    os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
     if global_rank == 0:
         OmegaConf.save(cfg, os.path.join(CHECKPOINT_PATH, "config.yaml"))
@@ -155,9 +155,10 @@ def train(cfg: DictConfig, build_only: bool = False):
         "callbacks": _get_callbacks(CHECKPOINT_PATH, cfg.model.training.max_steps),
         "plugins": [SLURMEnv()] if os.environ.get("SLURM_JOB_ID", None) is not None else None,
     }
+    strategy = DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True) if len(tokenizer.species) > 1 else DDPStrategy()
     trainer = L.Trainer(
         **trainer_kwargs,
-        strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
+        strategy=strategy,
         precision="bf16-mixed",
         use_distributed_sampler=False,
     )

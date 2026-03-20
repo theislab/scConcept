@@ -104,8 +104,8 @@ class FabricTrainer:
 
     def _build_tokenizer(self) -> MultiSpeciesTokenizer:
         species_gene_mappings = {
-            species: pd.read_csv(path, index_col="gene_id")["token"].to_dict()
-            for species, path in self.cfg.PATH.GENE_MAPPING_PATHS.items()
+            species: pd.read_csv(os.path.join(self.cfg.PATH.GENE_MAPPINGS_PATH, f"{species}.csv"), index_col="gene_id")["token"].to_dict()
+            for species in self.cfg.PATH.SPECIES
         }
         return MultiSpeciesTokenizer(species_gene_mappings)
 
@@ -175,11 +175,12 @@ class FabricTrainer:
     def _build_fabric(self) -> Fabric:
         logger = self._get_logger()
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", self.cfg.model.training.num_nodes))
+        strategy = DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True) if len(self.tokenizer.species) > 1 else DDPStrategy()
         return Fabric(
             accelerator=self.cfg.model.training.accelerator,
             devices=self.cfg.model.training.devices,
             num_nodes=num_nodes,
-            strategy=DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True),
+            strategy=strategy,
             precision="bf16-mixed",
             loggers=logger,
             plugins=[SLURMEnv()] if os.environ.get("SLURM_JOB_ID", None) is not None else None,

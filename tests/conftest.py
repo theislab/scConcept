@@ -100,7 +100,7 @@ def train_config(adata, tokenizer, device, tmp_path):
     # Create gene mapping pickle file
     gene_mapping = tokenizer.gene_mapping
     gene_mapping_series = pd.Series(gene_mapping, name="token")
-    gene_mapping_path = tmp_path / "gene_mapping.csv"
+    gene_mapping_path = tmp_path / "hsapiens.csv"
     gene_mapping_series.to_csv(gene_mapping_path, index_label="gene_id")
 
     pretrained_vocabulary_dir = tmp_path / "embeddings"
@@ -128,6 +128,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
                 f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
+                f"PATH.GENE_MAPPINGS_PATH={tmp_path}",
                 # Override datamodule settings
                 "datamodule.obs_keys=[]",
                 "datamodule.normalization=raw",
@@ -158,9 +159,9 @@ def train_config(adata, tokenizer, device, tmp_path):
             ],
         )
 
-    # Override GENE_MAPPING_PATHS to use only the single test species, replacing
+    # Override GENE_MAPPINGS_PATH to use only the single test species, replacing
     # the default multi-species interpolated paths from config.yaml.
-    OmegaConf.update(cfg, "PATH.GENE_MAPPING_PATHS", {"hsapiens": str(gene_mapping_path)}, merge=False)
+    OmegaConf.update(cfg, "PATH.SPECIES", ["hsapiens"], merge=False)
 
     # Override the split with a split-config dict so that resolve_split_list can
     # extract the species and build the metadata dict correctly.

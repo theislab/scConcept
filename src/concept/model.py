@@ -637,7 +637,7 @@ class ContrastiveModel(L.LightningModule):
     def training_step(self, batch, batch_idx):
         self.stage = "train"
         self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
-        self.set_active_species(batch["_organism"])
+        self.set_active_species(batch["species"][0])
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -667,7 +667,7 @@ class ContrastiveModel(L.LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         self.stage = "val"
         self.LOGGING_STEP = batch_idx % self.log_every_n_steps == 0
-        self.set_active_species(batch["_organism"])
+        self.set_active_species(batch["species"][0])
 
         if self.data_loading_speed_sanity_check:
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -689,8 +689,8 @@ class ContrastiveModel(L.LightningModule):
     def predict_step(self, batch, batch_idx, use_learnable_embs: bool = True):
         self.stage = "predict"
         self.use_learnable_embs_freq = int(use_learnable_embs)
-        if "_organism" in batch:
-            self.set_active_species(batch["_organism"])
+        if "species" in batch:
+            self.set_active_species(batch["species"][0])
 
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
@@ -806,6 +806,7 @@ class ContrastiveModel(L.LightningModule):
         batch_size = self.all_gather_concat(batch["items_mask"]).sum().detach() if "items_mask" in batch else len(batch["tokens_1"])
 
         sample_stats = {
+            "species": batch["species"][0],
             "_organism": batch["_organism"],
             "_tissue": ", ".join(list(batch["_tissue"])),
             "panel_name_1": batch["panel_name_1"],
