@@ -302,7 +302,8 @@ class FabricTrainer:
         else:
             remainder = self.fabric.load(checkpoint_file, {"model": self.model, "optimizer": self.optimizer, "datamodule": self.datamodule})
             self.global_step = int(remainder.get("global_step", 0))
-            logger.info("Resumed from %s at step %d", checkpoint_file, self.global_step)
+            self.epoch = int(remainder.get("epoch", 0))
+            logger.info("Resumed from %s at step %d, epoch %d", checkpoint_file, self.global_step, self.epoch)
 
     # ------------------------------------------------------------------
     # Validation
@@ -353,7 +354,7 @@ class FabricTrainer:
     # ------------------------------------------------------------------
 
     def _save_checkpoint(self, label: str) -> None:
-        state = {"model": self.model, "optimizer": self.optimizer, "global_step": self.global_step, "datamodule": self.datamodule}
+        state = {"model": self.model, "optimizer": self.optimizer, "global_step": self.global_step, "epoch": self.epoch, "datamodule": self.datamodule}
         path = os.path.join(self.checkpoint_path, label)
         self.fabric.save(path, state)
 
@@ -413,6 +414,7 @@ class FabricTrainer:
         while True:
             if self.global_step >= self.max_steps:
                 break
+            self.train_dataloader._num_iter_calls = self.epoch
 
             for batch_idx, batch in enumerate(self.train_dataloader):
                 if self.global_step >= self.max_steps:
