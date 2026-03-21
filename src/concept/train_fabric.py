@@ -86,11 +86,11 @@ class FabricTrainer:
         self._copy_datasets_to_local()
         self.datamodule = self._build_datamodule()
         self.model, self.optimizer, self.scheduler = self._build_model_and_optimizer()
-        self._resume_if_requested()
         self.train_dataloader = self.fabric.setup_dataloaders(
             self.datamodule.train_dataloader(), use_distributed_sampler=False
         )
         self.val_dataloaders = self._setup_val_dataloaders()
+        self._resume_if_requested()
         self.max_steps = cfg.model.training.max_steps
         self.accumulate_grad_batches = cfg.model.training.accumulate_grad_batches
         self.log_every_n_steps = cfg.model.training.log_every_n_steps
@@ -300,7 +300,7 @@ class FabricTrainer:
             self.fabric.load(checkpoint_file, {"model": self.model}, strict=False)
             logger.info("Loaded model weights from %s (new run, strict=False)", checkpoint_file)
         else:
-            remainder = self.fabric.load(checkpoint_file, {"model": self.model, "optimizer": self.optimizer})
+            remainder = self.fabric.load(checkpoint_file, {"model": self.model, "optimizer": self.optimizer, "datamodule": self.datamodule})
             self.global_step = int(remainder.get("global_step", 0))
             logger.info("Resumed from %s at step %d", checkpoint_file, self.global_step)
 
@@ -353,9 +353,15 @@ class FabricTrainer:
     # ------------------------------------------------------------------
 
     def _save_checkpoint(self, label: str) -> None:
-        state = {"model": self.model, "optimizer": self.optimizer, "global_step": self.global_step}
+        state = {"model": self.model, "optimizer": self.optimizer, "global_step": self.global_step, "datamodule": self.datamodule}
         path = os.path.join(self.checkpoint_path, label)
         self.fabric.save(path, state)
+
+    def _set_sampler_epoch(self, epoch: int) -> None:
+        """Forward the new epoch to the train dataloader's sampler so it generates fresh samples."""
+        sampler = getattr(self.train_dataloader, "sampler", None)
+        if sampler is not None and hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
 
     def _maybe_checkpoint(self) -> None:
         milestone_interval = 100_000 if self.max_steps > 100_000 else 10_000
@@ -458,6 +464,7 @@ class FabricTrainer:
                     last_log_time = now
 
             self.epoch += 1
+            self._set_sampler_epoch(self.epoch)
 
         if self.profiler is not None:
             self.profiler.stop()
