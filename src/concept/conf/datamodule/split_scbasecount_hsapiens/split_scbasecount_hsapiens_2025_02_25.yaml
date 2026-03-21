@@ -1,5 +1,6 @@
 source_name: scbasecount-2025-02-25
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: hsapiens
 train:
 - hsapiens_ERP149679.h5ad
 - hsapiens_ERP144781.h5ad

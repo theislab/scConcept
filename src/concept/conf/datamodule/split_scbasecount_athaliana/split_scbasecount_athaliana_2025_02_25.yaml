@@ -1,5 +1,6 @@
 source_name: scbasecount-2025-02-25
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: athaliana
 train:
 - athaliana_SRP394711.h5ad
 - athaliana_SRP422504.h5ad

@@ -1,5 +1,6 @@
 source_name: scbasecount-2025-02-25
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: dmelanogaster
 train:
 - dmelanogaster_SRP395105.h5ad
 - dmelanogaster_SRP375149.h5ad

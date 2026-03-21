@@ -1,5 +1,6 @@
 source_name: scbasecount-2025-02-25
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: ocuniculus
 train:
 - ocuniculus_ERP159291.h5ad
 - ocuniculus_ERP139683.h5ad
