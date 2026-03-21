@@ -1,10 +1,9 @@
 source_name: scbasecount-2025-02-25
-species: oaries
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
-- SRP440438.h5ad
-- SRP390094.h5ad
-- SRP432883.h5ad
-- SRP452042.h5ad
-- SRP453027.h5ad
+- oaries_SRP440438.h5ad
+- oaries_SRP390094.h5ad
+- oaries_SRP432883.h5ad
+- oaries_SRP452042.h5ad
+- oaries_SRP453027.h5ad
 val: []

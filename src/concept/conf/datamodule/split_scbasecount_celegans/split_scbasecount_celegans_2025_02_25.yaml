@@ -1,13 +1,12 @@
 source_name: scbasecount-2025-02-25
-species: celegans
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
-- SRP386441.h5ad
-- SRP431124.h5ad
-- SRP443901.h5ad
-- SRP502277.h5ad
-- SRP438118.h5ad
-- SRP521716.h5ad
-- SRP557019.h5ad
-- SRP279842.h5ad
+- celegans_SRP386441.h5ad
+- celegans_SRP431124.h5ad
+- celegans_SRP443901.h5ad
+- celegans_SRP502277.h5ad
+- celegans_SRP438118.h5ad
+- celegans_SRP521716.h5ad
+- celegans_SRP557019.h5ad
+- celegans_SRP279842.h5ad
 val: []

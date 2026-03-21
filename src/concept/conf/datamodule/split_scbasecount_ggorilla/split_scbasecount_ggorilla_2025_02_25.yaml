@@ -1,6 +1,5 @@
 source_name: scbasecount-2025-02-25
-species: ggorilla
 source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
 train:
-- ERP132581.h5ad
+- ggorilla_ERP132581.h5ad
 val: []
