@@ -62,7 +62,7 @@ def train(cfg: DictConfig, build_only: bool = False):
                 source_name = value["source_name"]
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
-                if local_rank == 0:
+                if (global_rank == 0) or (local_rank == 0 and 'localscratch' in cfg.PATH.LOCAL_DIR):
                     copy_files(
                         source_path,
                         os.path.join(cfg.PATH.LOCAL_DIR, source_name),

@@ -218,7 +218,7 @@ class FabricTrainer:
                 source_name = value["source_name"]
                 source_path = value["source_path"]
                 files = list(value["train"]) + list(value["val"])
-                if self.fabric.local_rank == 0:
+                if (self.fabric.is_global_zero) or (self.fabric.local_rank == 0 and 'localscratch' in self.cfg.PATH.LOCAL_DIR):
                     copy_files(
                         source_path,
                         os.path.join(self.cfg.PATH.LOCAL_DIR, source_name),
