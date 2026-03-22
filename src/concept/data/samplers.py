@@ -44,12 +44,12 @@ class WithinGroupSampler(Sampler):
         return self.batches.size
 
     def __iter__(self):
-        if self.stage == "train":
-            self._create_batches()
         yield from self.batches.ravel()
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
+        if self.stage == "train":
+            self._create_batches()
 
     def _validate_batches(self):
         if self.batches.size == 0:
