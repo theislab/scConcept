@@ -405,7 +405,6 @@ class FabricTrainer:
         self.model.train()
         last_logging_step = self.global_step
         last_log_time = time.perf_counter()
-        self.optimizer.zero_grad()
 
         if self.profiler is not None:
             self.profiler.start()
@@ -415,6 +414,7 @@ class FabricTrainer:
             if self.global_step >= self.max_steps:
                 break
             self.train_dataloader._num_iter_calls = self.epoch
+            self.optimizer.zero_grad()
 
             for batch_idx, batch in enumerate(self.train_dataloader):
                 if self.global_step >= self.max_steps:
