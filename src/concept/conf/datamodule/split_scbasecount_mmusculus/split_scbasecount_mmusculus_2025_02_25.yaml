@@ -19,7 +19,6 @@ train:
 - mmusculus_SRP361144.h5ad
 - mmusculus_SRP372831.h5ad
 - mmusculus_SRP302510.h5ad
-- mmusculus_SRP300494.h5ad
 - mmusculus_SRP316857.h5ad
 - mmusculus_SRP340226.h5ad
 - mmusculus_SRP385540.h5ad
@@ -47,7 +46,6 @@ train:
 - mmusculus_SRP248271.h5ad
 - mmusculus_SRP258589.h5ad
 - mmusculus_SRP259116.h5ad
-- mmusculus_SRP278523.h5ad
 - mmusculus_SRP286048.h5ad
 - mmusculus_SRP292214.h5ad
 - mmusculus_SRP297809.h5ad
