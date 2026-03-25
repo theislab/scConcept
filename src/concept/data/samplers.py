@@ -38,6 +38,7 @@ class WithinGroupSampler(Sampler):
         self._batches_epoch = None
         assert stage in ["train", "val", "test"], 'stage must be one of "train", "val", "test"'
         self.seed = int(os.environ.get("PL_GLOBAL_SEED", 42))
+        self._init_fixed_pool()
         self._create_batches()
 
     def __len__(self):
@@ -50,6 +51,42 @@ class WithinGroupSampler(Sampler):
         self.current_epoch = epoch
         if self.stage == "train":
             self._create_batches()
+
+    def _init_fixed_pool(self):
+        """Determine a fixed pool of indices once at init, independent of epoch."""
+        rng = np.random.default_rng(self.seed)
+
+        # Drop NaN entries, then sort by group key
+        nan_mask = pd.isnull(self.sampling_key)
+        valid_pos = np.where(~nan_mask)[0]
+        valid_keys = self.sampling_key[valid_pos]
+        sort_order = np.argsort(valid_keys, kind="stable")
+        sorted_pos = valid_pos[sort_order]
+        sorted_keys = valid_keys[sort_order]
+
+        # Group boundaries
+        boundaries = np.where(sorted_keys[1:] != sorted_keys[:-1])[0] + 1
+        group_slices = np.split(sorted_pos, boundaries)
+        n_groups = len(group_slices)
+
+        # Shuffle each group with the fixed RNG before any subsampling
+        group_slices = [rng.permutation(g) for g in group_slices]
+
+        if self.num_groups is not None and self.num_groups < n_groups:
+            chosen = rng.choice(n_groups, size=self.num_groups, replace=False)
+            group_slices = [group_slices[i] for i in chosen]
+            n_groups = self.num_groups
+            logger.info(f"Subsampled {n_groups} groups out of {len(boundaries) + 1} total groups")
+
+        if self.sample_groups_equally:
+            per_group = max(self.num_samples // n_groups, self.batch_size)
+            group_slices = [g[:per_group] for g in group_slices]
+        else:
+            total = sum(len(g) for g in group_slices)
+            if total > self.num_samples:
+                group_slices = [g[: max(int(len(g) / total * self.num_samples), self.batch_size)] for g in group_slices]
+
+        self._fixed_group_slices = [g.copy() for g in group_slices]
 
     def _validate_batches(self):
         if self.batches.size == 0:
@@ -72,31 +109,11 @@ class WithinGroupSampler(Sampler):
         else:
             rng = np.random.default_rng(self.seed)  # for validation and test
 
-        # Drop NaN entries once, then sort by group key — O(N log N) vs O(N*G)
-        nan_mask = pd.isnull(self.sampling_key)
-        valid_pos = np.where(~nan_mask)[0]
-        valid_keys = self.sampling_key[valid_pos]
-        sort_order = np.argsort(valid_keys, kind="stable")
-        sorted_pos = valid_pos[sort_order]
-        sorted_keys = valid_keys[sort_order]
-
-        # Group boundaries from a single diff pass
-        boundaries = np.where(sorted_keys[1:] != sorted_keys[:-1])[0] + 1
-        group_slices = np.split(sorted_pos, boundaries)
-        n_groups = len(group_slices)
-
-        if self.num_groups is not None and self.num_groups < n_groups:
-            chosen = rng.choice(n_groups, size=self.num_groups, replace=False)
-            group_slices = [group_slices[i] for i in chosen]
-            n_groups = self.num_groups
-            logger.info(f"Subsampled {n_groups} groups out of {len(boundaries) + 1} total groups")
-
         all_batches = []
-        for indices in group_slices:
+        for indices in self._fixed_group_slices:
+            indices = indices.copy()  # preserve fixed pool across epochs
             if self.shuffle:
                 rng.shuffle(indices)
-            if self.sample_groups_equally:
-                indices = indices[: max(self.num_samples // n_groups, self.batch_size)]
             n_full = (len(indices) // self.batch_size) * self.batch_size
             if n_full == 0:
                 continue
@@ -111,9 +128,6 @@ class WithinGroupSampler(Sampler):
         if self.shuffle:
             # Shuffling rows of a 2D array is a single vectorized permutation
             rng.shuffle(self.batches)
-
-        if self.num_samples is not None:
-            self.batches = self.batches[: self.num_samples // self.batch_size]
 
         self._validate_batches()
         self._batches_epoch = self.current_epoch if self.stage == "train" else "fixed"

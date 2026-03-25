@@ -33,8 +33,8 @@ def test_within_group_sampler():
 
 def test_within_group_sampler_sample_groups_equally():
     """With sample_groups_equally=True, each group contributes the same number of samples."""
-    # Unbalanced groups: 7 in group 0, 7 in group 1, 6 in group 2 (total 20)
-    obs_list = np.array([0] * 7 + [1] * 7 + [2] * 6)
+    # Unbalanced groups: 7 in group 0, 7 in group 1, 3 in group 2 (total 20)
+    obs_list = np.array([0] * 7 + [1] * 7 + [2] * 3)
     batch_size = 3
 
     sampler = WithinGroupSampler(
@@ -47,7 +47,6 @@ def test_within_group_sampler_sample_groups_equally():
     )
 
     indices = list(sampler)
-    # num_samples = 20, per group: 20 // 3 = 6 → 6*3 = 18 samples, 6 full batches
     assert len(indices) > 0
 
     # Each batch must still have uniform obs
