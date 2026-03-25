@@ -227,6 +227,15 @@ class FabricTrainer:
                         force_copy=False,
                     )
                 self.cfg.datamodule[key]["source_path"] = os.path.join(self.cfg.PATH.LOCAL_DIR, source_name)
+        if "train" in self.cfg.datamodule.dataset and self.cfg.datamodule.dataset.train is not None:
+            for item in self.cfg.datamodule.dataset.train.split:
+                if "source_name" in item:
+                    item["source_path"] = os.path.join(self.cfg.PATH.LOCAL_DIR, item["source_name"])
+        if "val" in self.cfg.datamodule.dataset and self.cfg.datamodule.dataset.val is not None:
+            for val_name, val_kwargs in self.cfg.datamodule.dataset.val.items():
+                for item in val_kwargs.split:
+                    if "source_name" in item:
+                        item["source_path"] = os.path.join(self.cfg.PATH.LOCAL_DIR, item["source_name"])
         self.fabric.barrier()
 
     def _build_datamodule(self) -> AnnDataModule:
@@ -380,18 +389,25 @@ class FabricTrainer:
     # Training loop
     # ------------------------------------------------------------------
 
-    def _log_parameter_summary(self) -> None:
-        """Log the number of trainable and non-trainable model parameters (rank 0 only)."""
-        if not self.fabric.is_global_zero:
-            return
-        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        non_trainable = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)
+    @staticmethod
+    def _log_module_params(name: str, module) -> None:
+        trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
+        non_trainable = sum(p.numel() for p in module.parameters() if not p.requires_grad)
         logger.info(
-            "Model parameters — trainable: %s | non-trainable: %s | total: %s",
+            "  [%s] trainable: %s | non-trainable: %s | total: %s",
+            name,
             f"{trainable:,}",
             f"{non_trainable:,}",
             f"{trainable + non_trainable:,}",
         )
+
+    def _log_parameter_summary(self) -> None:
+        """Log the number of trainable and non-trainable model parameters (rank 0 only)."""
+        if not self.fabric.is_global_zero:
+            return
+        for name, child in self.model.named_children():
+            self._log_module_params(name, child)
+        self._log_module_params("model (total)", self.model)
 
     def fit(self) -> None:
         self.model.on_fit_start()

@@ -71,6 +71,15 @@ def train(cfg: DictConfig, build_only: bool = False):
                         force_copy=False,
                     )
                 cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
+        if "train" in cfg.datamodule.dataset and cfg.datamodule.dataset.train is not None:
+            for item in cfg.datamodule.dataset.train.split:
+                if "source_name" in item:
+                    item["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, item["source_name"])
+        if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
+            for val_name, val_kwargs in cfg.datamodule.dataset.val.items():
+                for item in val_kwargs.split:
+                    if "source_name" in item:
+                        item["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, item["source_name"])
 
     dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
     dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
