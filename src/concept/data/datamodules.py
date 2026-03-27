@@ -307,7 +307,6 @@ class AnnDataModule(L.LightningDataModule):
             worker_init_fn=worker_init_fn,
             collate_fn=collate_fn,
             num_workers=num_workers,
-            persistent_workers=(num_workers > 0),
             **dataloader_kwargs,
         )
         logger.info(

@@ -77,14 +77,12 @@ class Collate(BaseCollate):
             if self.split_input:
                 worker_info = get_worker_info()
                 if worker_info:  # In case of multi-process data loading
-                    logger.debug(
-                        f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
-                    )
-                    self._rng = np.random.default_rng(seed=seed + worker_info.id)
-                else:
-                    self._rng = np.random.default_rng(seed)
-            else:
-                self._rng = np.random.default_rng(seed)
+                    if worker_info.id == 0:
+                        logger.info(
+                            f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
+                        )
+                    seed=worker_info.seed
+            self._rng = np.random.default_rng(seed)
         return self._rng
 
     def load_panels(self, panels_path, panel_filter_regex, stage="train"):
