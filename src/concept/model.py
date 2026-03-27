@@ -650,7 +650,7 @@ class ContrastiveModel(L.LightningModule):
             sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
             self.sample_stats["train"].append(sample_stats)
 
-        if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
+        if self.LOGGING_STEP and "panel_1" in batch and "panel_2" in batch:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
 
         return loss
@@ -774,17 +774,17 @@ class ContrastiveModel(L.LightningModule):
             self.log_dict(norms, on_step=True, on_epoch=False, sync_dist=True)
 
     def _validate_panels(self, panel_1, panel_2):
-        panel_1 = self.all_gather_concat(panel_1)
-        panel_2 = self.all_gather_concat(panel_2)
-        assert (panel_1[:, :5] == panel_1[0, :5]).all()
-        assert (panel_2[:, :5] == panel_2[0, :5]).all()
+        panel_1 = self.all_gather_concat(panel_1.reshape(1, -1))
+        panel_2 = self.all_gather_concat(panel_2.reshape(1, -1))
+        assert (panel_1 == panel_1[0]).all()
+        assert (panel_2 == panel_2[0]).all()
         assert (panel_2 == self.PAD_TOKEN_ID).sum() == 0
         # assert np.intersect1d(panel_1[0].cpu(), panel_2[0].cpu()).size == 0
 
     @torch.no_grad()
     def _get_sample_stats(self, batch):
-        panel_size_1 = batch["panel_1"].shape[1]
-        panel_size_2 = batch["panel_2"].shape[1]
+        panel_size_1 = len(batch["panel_1"])
+        panel_size_2 = len(batch["panel_2"])
         context_size_1 = len(batch["tokens_1"][0])
         context_size_2 = len(batch["tokens_2"][0])
         nonzero_cnt_1 = (batch["tokens_1"][0] != self.PAD_TOKEN_ID).sum().detach()
@@ -799,7 +799,7 @@ class ContrastiveModel(L.LightningModule):
         # panel_intersect = torch.isin(torch.unique(batch["panel_1"][0]), torch.unique(batch["panel_2"][0])).sum().detach()
         # token_intersect = torch.isin(torch.unique(batch["tokens_1"][0]), torch.unique(batch["tokens_2"][0])).sum().detach()
         # For some reason torch.isin is slow!
-        panel_intersect = np.intersect1d(batch["panel_1"][0].cpu().numpy(), batch["panel_2"][0].cpu().numpy()).size
+        panel_intersect = np.intersect1d(batch["panel_1"].cpu().numpy(), batch["panel_2"].cpu().numpy()).size
         token_intersect = np.intersect1d(batch["tokens_1"][0].cpu().numpy(), batch["tokens_2"][0].cpu().numpy()).size
 
 

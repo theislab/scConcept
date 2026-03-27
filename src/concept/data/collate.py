@@ -155,10 +155,8 @@ class Collate(BaseCollate):
 
         return new_batch_size
 
-    def qc_mask(self, seq_length_1, seq_length_2, panel_1, panel_2):
+    def qc_mask(self, seq_length_1, seq_length_2, panel_size_1, panel_size_2):
         seq_length_1, seq_length_2 = np.array(seq_length_1), np.array(seq_length_2)
-        panel_size_1 = np.array([len(p) for p in panel_1])
-        panel_size_2 = np.array([len(p) for p in panel_2])
         mask_1 = seq_length_1 > panel_size_1 * self.qc_threshold
         mask_2 = seq_length_2 > panel_size_2 * self.qc_threshold
         mask = mask_1 & mask_2
@@ -247,9 +245,8 @@ class Collate(BaseCollate):
                 {"tokens": item["tokens"][panel_idx_2], "values": item["values"][panel_idx_2]} for item in batch_permute
             ]
 
-            # The following can be optimized by only passing one panel per batch
-            panel_1 = [item["tokens"] for item in batch_1]
-            panel_2 = [item["tokens"] for item in batch_2]
+            panel_1 = batch_1[0]["tokens"]
+            panel_2 = batch_2[0]["tokens"]
 
             batch_1 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_1]
             batch_2 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_2]
@@ -260,7 +257,7 @@ class Collate(BaseCollate):
             items_mask = np.ones(len(batch_1), dtype=bool)
 
             if self.stage == "train" and self.qc_threshold is not None:
-                qc_mask = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
+                qc_mask = self.qc_mask(seq_length_1, seq_length_2, len(panel_1), len(panel_2))
                 items_mask &= qc_mask
                 self._apply_items_mask(items_mask, batch_1, batch_2, seq_length_1, seq_length_2)
 
@@ -291,8 +288,8 @@ class Collate(BaseCollate):
                 "values_1": torch.from_numpy(np.stack(values_1)),
                 "tokens_2": torch.from_numpy(np.stack(tokens_2)),
                 "values_2": torch.from_numpy(np.stack(values_2)),
-                "panel_1": torch.from_numpy(np.stack(panel_1)),
-                "panel_2": torch.from_numpy(np.stack(panel_2)),
+                "panel_1": torch.from_numpy(panel_1),
+                "panel_2": torch.from_numpy(panel_2),
                 "panel_name_1": panel_name_1,
                 "panel_name_2": panel_name_2,
                 "seq_length_1": np.array(seq_length_1),
