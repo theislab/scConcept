@@ -8,7 +8,7 @@ import lightning as L
 import pandas as pd
 import torch
 from hydra import compose, initialize
-from lightning.fabric import Fabric
+from lightning.fabric import Fabric, is_wrapped
 from lightning.fabric.strategies import DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from wandb.integration.lightning.fabric import WandbLogger
@@ -405,9 +405,10 @@ class FabricTrainer:
         """Log the number of trainable and non-trainable model parameters (rank 0 only)."""
         if not self.fabric.is_global_zero:
             return
-        for name, child in self.model.named_children():
+        unwrapped = self.model.module if is_wrapped(self.model) else self.model
+        for name, child in unwrapped.named_children():
             self._log_module_params(name, child)
-        self._log_module_params("model (total)", self.model)
+        self._log_module_params("model (total)", unwrapped)
 
     def fit(self) -> None:
         self.model.on_fit_start()
