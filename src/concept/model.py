@@ -148,8 +148,9 @@ class PositionalEncoding(nn.Module):
             x = x + self.pe[:, :seq_len, :].to(x.device)
         elif x.dim() == 2:
             assert seqlens is not None, "Sequence lengths must be provided for 2D input tensor."
-            arange = partial(torch.arange, device=x.device)
-            indices = torch.cat([arange(l) for l in seqlens])
+            cum = seqlens.cumsum(0)
+            offsets = torch.repeat_interleave(cum - seqlens, seqlens)
+            indices = torch.arange(x.size(0), device=x.device) - offsets
             x = x + self.pe[0, indices, :].to(x.device)
 
         return x
@@ -295,36 +296,26 @@ class ContrastiveModel(L.LightningModule):
 
         src_key_padding_mask = tokens == self.PAD_TOKEN_ID
 
-        gene_embs = self._encode_gene_tokens(tokens)
-
-        # Prepend learnable CLS embedding at position 0
-        cls_emb = self.cls_embedding.view(1, 1, -1).expand(batch_size, 1, -1)
-        gene_embs = torch.cat([cls_emb, gene_embs], dim=1)
-
-        # Prepend a CLS value placeholder so value/rank encoders stay aligned
-        cls_val = torch.full((batch_size, 1), self.CLS_VALUE, dtype=values.dtype, device=values.device)
-        values = torch.cat([cls_val, values], dim=1)
-
-        # CLS position is never padding
-        cls_col = torch.zeros(batch_size, 1, dtype=torch.bool, device=gene_embs.device)
-        src_key_padding_mask = torch.cat([cls_col, src_key_padding_mask], dim=1)
-
         if self.flash_attention:
             assert seq_lengths is not None, "seq_lengths must be provided for flash attention"
-            max_length = tokens.size(1) + 1  # +1 for CLS
-            seq_lengths = [l + 1 for l in seq_lengths]
+            max_length = tokens.size(1)
 
-            gene_embs, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
-                gene_embs, ~src_key_padding_mask, seq_lengths=seq_lengths
+            tokens, indices, cu_seqlens, max_seqlen, seqlens = unpad_input(
+                tokens.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths
             )
+            tokens = tokens.squeeze(-1)
+            
+            gene_embs = self._encode_gene_tokens(tokens)
+
+            # Set CLS embedding at the start of each sequence in the unpadded representation
+            gene_embs[cu_seqlens[:-1]] = self.cls_embedding
 
             if self.input_encoding == "rank_encoding":
-                # total_embs = self.positional_encoder(gene_embs, seqlens=list(seqlens))
-                # Faster implementation:
-                pe = self.positional_encoder.pe[:, :max_length, :]
-                pe = pe.repeat(batch_size, 1, 1)
-                pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask, seq_lengths=seq_lengths)
-                total_embs = gene_embs + pe
+                total_embs = self.positional_encoder(gene_embs, seqlens=seqlens)
+                # pe = self.positional_encoder.pe[:, :max_length, :]
+                # pe = pe.repeat(batch_size, 1, 1)
+                # pe, _, _, _, _ = unpad_input(pe, ~src_key_padding_mask, seq_lengths=seq_lengths)
+                # total_embs = gene_embs + pe
             elif self.input_encoding == "value_encoding":
                 values, _, _, _, _ = unpad_input(values.unsqueeze(-1), ~src_key_padding_mask, seq_lengths=seq_lengths)
                 values = values.squeeze(-1)
@@ -332,9 +323,10 @@ class ContrastiveModel(L.LightningModule):
                 total_embs = gene_embs + value_embs
 
             embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_length)
-            embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
-            cell_embs = embs_padded[:, 0, :]
-            # cell_embs_jagged = embs_jagged[cu_seqlens[:-1]]
+            # embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
+            # cell_embs = embs_padded[:, 0, :]
+            embs_padded = None
+            cell_embs = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
             if self.input_encoding == "rank_encoding":
@@ -473,6 +465,9 @@ class ContrastiveModel(L.LightningModule):
         if self.values_only_sanity_check:
             batch_1["values"] = batch_1["values"][:, torch.randperm(batch_1["tokens"].size(1))]
             batch_2["values"] = batch_2["values"][:, torch.randperm(batch_2["tokens"].size(1))]
+
+        batch_1 = self.add_cls_token(batch_1)
+        batch_2 = self.add_cls_token(batch_2)
 
         if self.masking_rate > 0:
             batch_1["values_masked"], batch_1["masked_positions"] = self.mask_values(
