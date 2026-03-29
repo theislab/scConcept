@@ -76,6 +76,7 @@ class MultiSpeciesTokenizedDataset(TokenizedDataset):
         dataset_idx = self.collection.storage_idx[idx]
         for key, values in self.metadata.items():
             output[key] = values[dataset_idx]
+        output["dataset_path"] = self.collection.path_list[dataset_idx]
         return output
 
     def _cache_tokenized_vars(self):

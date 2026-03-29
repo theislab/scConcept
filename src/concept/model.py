@@ -806,6 +806,7 @@ class ContrastiveModel(L.LightningModule):
         batch_size = self.all_gather_concat(batch["items_mask"]).sum().detach() if "items_mask" in batch else len(batch["tokens_1"])
 
         sample_stats = {
+            "dataset_path": batch["dataset_path"][0] if "dataset_path" in batch else "",
             "species": batch["species"][0],
             "_organism": batch["_organism"],
             "_tissue": ", ".join(list(batch["_tissue"])),
