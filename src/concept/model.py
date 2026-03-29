@@ -156,7 +156,7 @@ class PositionalEncoding(nn.Module):
         elif x.dim() == 2:
             assert seqlens is not None, "Sequence lengths must be provided for 2D input tensor."
             cum = seqlens.cumsum(0)
-            offsets = torch.repeat_interleave(cum - seqlens, seqlens)
+            offsets = torch.repeat_interleave(cum - seqlens, seqlens, output_size=x.size(0))
             indices = torch.arange(x.size(0), device=x.device) - offsets
             x = x + self.pe[0, indices, :].to(x.device)
 
