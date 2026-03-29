@@ -90,7 +90,7 @@ def test_model_initialization(mock_config, device):
     model = model.to(device)
 
     assert model is not None
-    assert "hsapiens" in model.gene_token_encoders
+    assert "hsapiens" in model.gene_token_encoder.learnable_embs
     assert model.dim_model == 64
     assert model.num_head == 4
     assert model.device.type == device.type
@@ -157,7 +157,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
     model.train()
     # Keep a copy of pretrained pretrained_embs tensor before backward if it is used
     if use_pretrained_vocabulary:
-        pretrained_embed_before = model.gene_token_encoders["hsapiens"].pretrained_embs.weight.clone()
+        pretrained_embed_before = model.gene_token_encoder.pretrained_embs["hsapiens"].weight.clone()
         # Capture a deepcopy of all model parameters before training step
     params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
 
@@ -190,7 +190,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
                     assert not torch.equal(before, param), f"Parameter {name} was not updated!"
 
         if use_pretrained_vocabulary:
-            assert torch.equal(pretrained_embed_before, model.gene_token_encoders["hsapiens"].pretrained_embs.weight)
+            assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs["hsapiens"].weight)
 
 
 @pytest.mark.parametrize("flash_attention", [False, True])

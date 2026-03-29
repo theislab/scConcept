@@ -28,61 +28,68 @@ logger = logging.getLogger(__name__)
 class GeneEncoder(nn.Module):
     def __init__(
         self,
-        n_genes: int,
+        vocab_sizes: dict,
         dim_gene_embs: int,
         dim_model: int,
         padding_idx: Optional[int] = None,
-        pretrained_vocabulary: Optional[Tensor] = None,
+        pretrained_vocabularies: Optional[dict] = None,
         freeze_pretrained_vocabulary: bool = None,
     ):
         super().__init__()
         self.dim_gene_embs = dim_gene_embs
         self.dim_model = dim_model
-        self.freeze_pretrained_vocabulary = freeze_pretrained_vocabulary
-        self.pretrained_vocabulary_available = pretrained_vocabulary is not None
+        self.pretrained_vocabulary_available = pretrained_vocabularies is not None
 
-        # If a pretrained vocabulary is provided, build custom embedding weights
+        self.learnable_embs = nn.ModuleDict()
+
+        pretrained_dim = None
         if self.pretrained_vocabulary_available:
-            assert pretrained_vocabulary.shape[0] == n_genes, (
-                f"Pretrained vocabulary must have the same length as the number of genes: {pretrained_vocabulary.shape[0]} == {n_genes}"
-            )
             assert freeze_pretrained_vocabulary is not None, (
-                "freeze_pretrained_vocabulary must be provided if pretrained_vocabulary is provided"
+                "freeze_pretrained_vocabulary must be provided if pretrained_vocabularies is provided"
             )
-
-            pretrained_dim = pretrained_vocabulary.shape[1]
-            logger.info(
-                f"Using pretrained embeddings for {len(pretrained_vocabulary)} genes of size {pretrained_dim} with dim_gene_embs={dim_gene_embs}"
-            )
-
-            self.pretrained_embs = nn.Embedding.from_pretrained(
-                pretrained_vocabulary, freeze=freeze_pretrained_vocabulary, padding_idx=padding_idx
-            )
+            self.pretrained_embs = nn.ModuleDict()
+            for species, n_genes in vocab_sizes.items():
+                pretrained_vocab = pretrained_vocabularies[species]
+                assert pretrained_vocab.shape[0] == n_genes, (
+                    f"Pretrained vocabulary must have the same length as the number of genes: "
+                    f"{pretrained_vocab.shape[0]} == {n_genes}"
+                )
+                if pretrained_dim is None:
+                    pretrained_dim = pretrained_vocab.shape[1]
+                else:
+                    assert pretrained_vocab.shape[1] == pretrained_dim, (
+                        f"All species must share the same pretrained vocabulary dimensionality for "
+                        f"the shared adapter1, but got {pretrained_vocab.shape[1]} != {pretrained_dim}"
+                    )
+                logger.info(
+                    f"Using pretrained embeddings for {species}: {n_genes} genes of size {pretrained_dim} "
+                    f"with dim_gene_embs={dim_gene_embs}"
+                )
+                self.pretrained_embs[species] = nn.Embedding.from_pretrained(
+                    pretrained_vocab, freeze=freeze_pretrained_vocabulary, padding_idx=padding_idx
+                )
+                self.learnable_embs[species] = nn.Embedding(
+                    n_genes,
+                    dim_gene_embs,
+                    padding_idx=padding_idx,
+                    _weight=torch.zeros(n_genes, dim_gene_embs, dtype=torch.float),
+                )
             self.adapter1 = nn.Linear(pretrained_dim, dim_gene_embs, bias=True)
-
-            self.embedding = nn.Embedding(
-                n_genes,
-                dim_gene_embs,
-                padding_idx=padding_idx,
-                _weight=torch.zeros(n_genes, dim_gene_embs, dtype=torch.float),
-            )
         else:
-            self.embedding = nn.Embedding(n_genes, dim_gene_embs, padding_idx=padding_idx)
+            for species, n_genes in vocab_sizes.items():
+                self.learnable_embs[species] = nn.Embedding(n_genes, dim_gene_embs, padding_idx=padding_idx)
+            self.adapter1 = None
 
         self.adapter2 = nn.Linear(dim_gene_embs, dim_model, bias=True)
         self.enc_norm = nn.LayerNorm(dim_model)
 
-    def forward(self, x: Tensor, add_learnable_embs: bool = False) -> Tensor:
-        x_learnable = self.embedding(x)
+    def forward(self, x: Tensor, species: str, add_learnable_embs: bool = False) -> Tensor:
+        x_learnable = self.learnable_embs[species](x)
         if self.pretrained_vocabulary_available:
-            x_pretrained = self.pretrained_embs(x)
-            x_pretrained = self.adapter1(x_pretrained)
-
-        if self.pretrained_vocabulary_available:
+            x_pretrained = self.adapter1(self.pretrained_embs[species](x))
             x = x_pretrained + x_learnable * int(add_learnable_embs)
         else:
             x = x_learnable
-
         x = self.adapter2(x)
         x = self.enc_norm(x)
         return x
@@ -235,21 +242,14 @@ class ContrastiveModel(L.LightningModule):
         self.use_learnable_embs_freq = config["training"]["use_learnable_embs_freq"]
         freeze_pretrained = config["training"]["freeze_pretrained_vocabulary"]
 
-        self.gene_token_encoders = nn.ModuleDict()
-        for species, n_genes in vocab_sizes.items():
-            pretrained_vocab = (
-                pretrained_vocabularies.get(species)
-                if pretrained_vocabularies is not None
-                else None
-            )
-            self.gene_token_encoders[species] = GeneEncoder(
-                n_genes,
-                self.dim_gene_embs,
-                self.dim_model,
-                padding_idx=pad_token_id,
-                pretrained_vocabulary=pretrained_vocab,
-                freeze_pretrained_vocabulary=freeze_pretrained if pretrained_vocab is not None else None,
-            )
+        self.gene_token_encoder = GeneEncoder(
+            vocab_sizes,
+            self.dim_gene_embs,
+            self.dim_model,
+            padding_idx=pad_token_id,
+            pretrained_vocabularies=pretrained_vocabularies,
+            freeze_pretrained_vocabulary=freeze_pretrained,
+        )
 
         # Track which species is currently active (set at every training/val/predict step).
         self.active_species: str | None = None
@@ -374,11 +374,11 @@ class ContrastiveModel(L.LightningModule):
         assert self.active_species is not None, (
             "active_species must be set via set_active_species() before encoding."
         )
-        encoder = self.gene_token_encoders[self.active_species]
+        species = self.active_species
 
-        # Deterministically add learnable_specific_embs based on use_learnable_embs_freq
+        # Deterministically add learnable_embs based on use_learnable_embs_freq
         add_learnable_embs = False
-        if encoder.pretrained_vocabulary_available and self.use_learnable_embs_freq is not None:
+        if self.gene_token_encoder.pretrained_vocabulary_available and self.use_learnable_embs_freq is not None:
             if self.stage == "train" and not self.LOGGING_STEP:
                 add_learnable_embs = int((self.global_step + 1) * self.use_learnable_embs_freq) > int(
                     self.global_step * self.use_learnable_embs_freq
@@ -386,7 +386,7 @@ class ContrastiveModel(L.LightningModule):
             else:
                 add_learnable_embs = True
 
-        return encoder(tokens, add_learnable_embs=add_learnable_embs)
+        return self.gene_token_encoder(tokens, species, add_learnable_embs=add_learnable_embs)
 
     def _encode_values(self, values: Tensor) -> Tensor:
         return self.value_encoder(values)
@@ -405,10 +405,14 @@ class ContrastiveModel(L.LightningModule):
         # Collect the set of learnable-embedding weight tensors that should have no
         # weight decay (one per species that uses pretrained + learnable residual).
         no_decay_ids = {
-            id(enc.embedding.weight)
-            for enc in self.gene_token_encoders.values()
-            if enc.pretrained_vocabulary_available
+            id(self.gene_token_encoder.learnable_embs[species].weight)
+            for species in self.gene_token_encoder.learnable_embs
         }
+        if self.gene_token_encoder.pretrained_vocabulary_available:
+            no_decay_ids |= {
+                id(self.gene_token_encoder.pretrained_embs[species].weight)
+                for species in self.gene_token_encoder.pretrained_embs
+            }
         has_no_decay_params = len(no_decay_ids) > 0
 
         if has_no_decay_params:
