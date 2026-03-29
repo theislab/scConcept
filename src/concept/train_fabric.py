@@ -29,6 +29,11 @@ class _FabricContrastiveModel(ContrastiveModel):
         return getattr(self, "_fabric_global_step", 0)
 
     @property
+    def global_rank(self) -> int:
+        fabric: Fabric | None = getattr(self, "_fabric_ref", None)
+        return fabric.global_rank        
+
+    @property
     def logger(self):
         return getattr(self, "_fabric_logger", None)
 
