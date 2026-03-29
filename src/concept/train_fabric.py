@@ -506,7 +506,9 @@ if __name__ == "__main__":
 
     logging.basicConfig(
         level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-        format="%(levelname)s: %(message)s",
+        format="%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
     )
     L.seed_everything(42)
 
