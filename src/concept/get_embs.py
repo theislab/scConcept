@@ -129,7 +129,6 @@ if __name__ == "__main__":
     logger.info(f"Saving embeddings to {output_emb_path}...")
     os.makedirs(output_emb_path, exist_ok=True)
     np.save(output_emb_path / "cell_embs_cls.npy", result["cls_cell_emb"])
-    np.save(output_emb_path / "cell_embs_mean.npy", result["mean_cell_emb"])
 
     if "context_sizes" in result:
         np.save(output_emb_path / "context_sizes.npy", result["context_sizes"])

@@ -337,7 +337,7 @@ class scConcept:
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
 
         Returns:
-            dict: Dictionary containing 'cls_cell_emb', 'mean_cell_emb', and optionally 'context_sizes'
+            dict: Dictionary containing 'cls_cell_emb', and optionally 'context_sizes'
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
@@ -378,7 +378,6 @@ class scConcept:
 
         # Collect embeddings
         all_cls_embs = []
-        all_mean_embs = []
         all_context_sizes = []
 
         with torch.no_grad():
@@ -395,7 +394,6 @@ class scConcept:
 
                     # Collect embeddings
                     all_cls_embs.append(output["cls_cell_emb"].cpu())
-                    all_mean_embs.append(output["mean_cell_emb"].cpu())
 
                     # Store context sizes (actual number of tokens per cell)
                     if "context_sizes" in output:
@@ -403,14 +401,13 @@ class scConcept:
 
         # Concatenate all embeddings
         cls_cell_embs = torch.cat(all_cls_embs, dim=0).cpu().detach().numpy()
-        mean_cell_embs = torch.cat(all_mean_embs, dim=0).cpu().detach().numpy()
 
-        result = {"cls_cell_emb": cls_cell_embs, "mean_cell_emb": mean_cell_embs}
+        result = {"cls_cell_emb": cls_cell_embs}
 
         if all_context_sizes:
             result["context_sizes"] = all_context_sizes
 
-        logger.info(f"Extracted embeddings with shape: cls={cls_cell_embs.shape}, mean={mean_cell_embs.shape}")
+        logger.info(f"Extracted embeddings with shape: cls={cls_cell_embs.shape}")
         logger.info(f"Total cells processed: {len(cls_cell_embs)}")
 
         return result

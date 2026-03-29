@@ -278,13 +278,12 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
             result = model.predict_step(batch, batch_idx=0)
 
     # Check that we get the expected keys
-    expected_keys = ["pred", "cls_cell_emb", "mean_cell_emb", "context_sizes"]
+    expected_keys = ["pred", "cls_cell_emb", "context_sizes"]
     for key in expected_keys:
         assert key in result
 
     # Check output shapes
     assert result["cls_cell_emb"].shape == (batch_size, mock_config["dim_model"])
-    assert result["mean_cell_emb"].shape == (batch_size, mock_config["dim_model"])
     assert isinstance(result["context_sizes"], tuple)
     assert len(result["context_sizes"]) == 2  # (context_size, nonzero_cnt)
 
@@ -293,7 +292,6 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
 
     # Check that outputs are on the correct device
     assert result["cls_cell_emb"].device.type == device.type
-    assert result["mean_cell_emb"].device.type == device.type
 
 
 @pytest.mark.parametrize(
@@ -352,14 +350,13 @@ def test_predict_step_with_lamin_dataloader(
                 all_outputs.append(output)
 
                 # Verify output structure
-                expected_keys = ["pred", "cls_cell_emb", "mean_cell_emb"]
+                expected_keys = ["pred", "cls_cell_emb"]
                 for key in expected_keys:
                     assert key in output, f"Missing key: {key}"
 
                 # Verify output shapes
                 actual_batch_size = batch["tokens"].shape[0]
                 assert output["cls_cell_emb"].shape == (actual_batch_size, mock_config["dim_model"])
-                assert output["mean_cell_emb"].shape == (actual_batch_size, mock_config["dim_model"])
 
                 # Only test first few batches to keep test fast
                 if batch_idx >= 2:
@@ -370,14 +367,11 @@ def test_predict_step_with_lamin_dataloader(
 
     # Test that we can concatenate all cell embeddings
     all_cls_embs = torch.cat([output["cls_cell_emb"] for output in all_outputs], dim=0)
-    all_mean_embs = torch.cat([output["mean_cell_emb"] for output in all_outputs], dim=0)
 
     # Verify final shapes
     total_cells = sum(batch["tokens"].shape[0] for batch in list(dataloader)[:3])
     assert all_cls_embs.shape[0] == total_cells
-    assert all_mean_embs.shape[0] == total_cells
     assert all_cls_embs.shape[1] == mock_config["dim_model"]
-    assert all_mean_embs.shape[1] == mock_config["dim_model"]
 
 
 @pytest.mark.parametrize("use_direct_paths", [False, True])
@@ -436,24 +430,20 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     )
 
     # Verify result structure
-    expected_keys = ["cls_cell_emb", "mean_cell_emb"]
+    expected_keys = ["cls_cell_emb"]
     for key in expected_keys:
         assert key in result, f"Missing key: {key}"
 
     # Verify embedding shapes
     n_cells = adata.shape[0]
     assert result["cls_cell_emb"].shape == (n_cells, sc_concept.model.dim_model)
-    assert result["mean_cell_emb"].shape == (n_cells, sc_concept.model.dim_model)
 
     # Verify embeddings are numpy arrays
     assert isinstance(result["cls_cell_emb"], np.ndarray)
-    assert isinstance(result["mean_cell_emb"], np.ndarray)
 
     # Verify embeddings are not all zeros or NaNs
     assert not np.all(result["cls_cell_emb"] == 0)
-    assert not np.all(result["mean_cell_emb"] == 0)
     assert not np.any(np.isnan(result["cls_cell_emb"]))
-    assert not np.any(np.isnan(result["mean_cell_emb"]))
 
     # Test training with pre-trained model (resuming/fine-tuning)
     # Store initial model state for comparison

@@ -329,6 +329,8 @@ class ContrastiveModel(L.LightningModule):
             cell_embs = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
+            gene_embs = self._encode_gene_tokens(tokens)
+            gene_embs[:, 0, :] = self.cls_embedding  # Set CLS embedding at the start of each sequence
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
@@ -702,8 +704,8 @@ class ContrastiveModel(L.LightningModule):
         pred, embs, cell_embs = self(batch["tokens"], batch["values"], seq_lengths=batch["seq_lengths"])
 
         # embs has CLS at position 0 (added inside _encode); skip it and average over gene positions
-        embs_mean = [embs[i, 1:][~padding_mask[i]].mean(dim=0) for i in range(len(embs))]
-        embs_mean = torch.stack(embs_mean, dim=0)
+        # embs_mean = [embs[i, 1:][~padding_mask[i]].mean(dim=0) for i in range(len(embs))]
+        # embs_mean = torch.stack(embs_mean, dim=0)
 
         if self.projection_dim:
             cell_embs = self.projection(cell_embs)
@@ -713,7 +715,6 @@ class ContrastiveModel(L.LightningModule):
         return {
             "pred": pred,
             "cls_cell_emb": cell_embs.float(),
-            "mean_cell_emb": embs_mean.float(),
             "context_sizes": (int(context_size), nonzero_cnt[random.randint(0, len(nonzero_cnt) - 1)].item()),
         }
 
