@@ -1,6 +1,8 @@
 name: ContrastiveModel
 flash_attention: True
 dim_gene_embs: 512
+# This depends on the type and version of pretrained vocabularies use. "facebook/esm2_t30_150M_UR50D" embeddings are of size 640.
+dim_pretrained_vocab: 640
 dim_model: 512
 num_head: 8
 dim_hid: 1024
@@ -26,7 +28,7 @@ training:
   lr: 1e-4
   weight_decay: 0.0
   optimizer_class: AdamW
-  scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
+  scheduler: "warmup" # 'warmup' or 'warmup_cosine'
   freeze_pretrained_vocabulary: False
   use_learnable_embs_freq: null
   warmup: 10000

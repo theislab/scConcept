@@ -69,50 +69,75 @@ def resolve_split_list(
     return expanded, {"species": species_list}
 
 
+def build_species_gene_mappings(
+    gene_mappings_dir: str,
+    species: list[str],
+) -> dict[str, dict]:
+    """Build a ``{species: {gene_id: token_id}}`` mapping from per-species CSV files.
+
+    Expects one CSV file per species at ``<gene_mappings_dir>/<species>.csv``
+    with at minimum a ``gene_id`` index column and a ``token`` column.
+
+    Args:
+        gene_mappings_dir: Directory containing ``<species>.csv`` files.
+        species: List of species names to load.
+
+    Returns:
+        Mapping suitable for passing to
+        :class:`~concept.dataset.MultiSpeciesTokenizer`.
+    """
+    import pandas as pd
+
+    return {
+        sp: pd.read_csv(os.path.join(gene_mappings_dir, f"{sp}.csv"), index_col="gene_id")["token"].to_dict()
+        for sp in species
+    }
+
+
 def load_pretrained_vocabulary(
     pretrained_vocabulary_dir: str,
     tokenizer: MultiSpeciesTokenizer,
+    pretrained_dim: int,
 ) -> dict[str, torch.Tensor]:
     """Load pretrained gene embeddings and build a per-species vocabulary tensor.
 
-    All CSV files in ``pretrained_vocabulary_dir`` are merged into a single
-    gene-name → embedding mapping.  For each species registered in
-    ``tokenizer``, a ``torch.Tensor`` of shape ``(vocab_size, pretrained_dim)``
-    is produced and returned under the corresponding species key.
+    For each species registered in ``tokenizer``, the file
+    ``<pretrained_vocabulary_dir>/<species>.csv`` is loaded (index column is
+    gene name, remaining columns are embedding dimensions).  If no file exists
+    for a species the returned tensor is all zeros.
 
     Args:
-        pretrained_vocabulary_dir: Directory containing ``*.csv`` files where
-            the index column is gene name and the remaining columns are the
-            embedding dimensions.
+        pretrained_vocabulary_dir: Directory containing ``<species>.csv`` files
+            where the index column is gene name and the remaining columns are
+            the embedding dimensions.
         tokenizer: A :class:`~concept.dataset.MultiSpeciesTokenizer` covering
             all species to embed.
+        pretrained_dim: Dimensionality of the pretrained embeddings
+            (``model.dim_pretrained_vocab`` in the config).
 
     Returns:
-        Dict mapping each species name to its pretrained embedding tensor.
+        Dict mapping each species name to its pretrained embedding tensor of
+        shape ``(vocab_size, pretrained_dim)``.
     """
     import pandas as pd
-    import glob
-
-    csv_files = glob.glob(os.path.join(pretrained_vocabulary_dir, "*.csv"))
-    if not csv_files:
-        raise ValueError(f"No CSV files found in {pretrained_vocabulary_dir}")
-
-    logger.info(f"Loading {len(csv_files)} CSV files from {pretrained_vocabulary_dir}")
-
-    pretrained_dict: dict[str, object] = {}
-    for csv_file in csv_files:
-        df = pd.read_csv(csv_file, index_col=0)
-        for idx, row in df.iterrows():
-            pretrained_dict[str(idx)] = row.values
-
-    pretrained_dim = next(iter(pretrained_dict.values())).shape[0]
-    logger.info(f"Loaded {len(pretrained_dict)} gene embeddings from {len(csv_files)} files")
 
     pretrained_vocabularies: dict[str, torch.Tensor] = {}
+
     for species in tokenizer.species:
         sp_tok = tokenizer.get_tokenizer(species)
         gene_names = sp_tok.decode(list(range(len(sp_tok.gene_mapping))))
         vocab_size = len(gene_names)
+
+        csv_path = os.path.join(pretrained_vocabulary_dir, f"{species}.csv")
+        if not os.path.exists(csv_path):
+            logger.warning(f"[{species}] Pretrained vocabulary file not found: {csv_path}. Using zeros tensor. If you are using pretrained model, ignore this warning, as the pretrained vocabulary is included in model weights.")
+            pretrained_vocabularies[species] = torch.zeros(vocab_size, pretrained_dim, dtype=torch.float)
+            continue
+
+        logger.info(f"[{species}] Loading pretrained embeddings from {csv_path}")
+        df = pd.read_csv(csv_path, index_col=0)
+        pretrained_dict: dict[str, object] = {str(idx): row.values for idx, row in df.iterrows()}
+
         pretrained_vocabulary = torch.zeros(vocab_size, pretrained_dim, dtype=torch.float)
         not_found: list[str] = []
 
@@ -134,6 +159,40 @@ def load_pretrained_vocabulary(
         pretrained_vocabularies[species] = pretrained_vocabulary
 
     return pretrained_vocabularies
+
+
+def infer_species(gene_ids: set[str], tokenizer: "MultiSpeciesTokenizer") -> str:
+    """Infer the species of a set of gene IDs by overlap with tokenizer vocabularies.
+
+    Args:
+        gene_ids: Set of gene identifiers (e.g. Ensembl IDs) from the dataset.
+        tokenizer: A :class:`~concept.dataset.MultiSpeciesTokenizer`.
+
+    Returns:
+        The species name with the highest unique overlap.
+
+    Raises:
+        ValueError: If no overlap is found, or if the overlap is tied between
+            multiple species.
+    """
+    special_tokens = {tokenizer.CLS_VOCAB, tokenizer.PAD_VOCAB}
+    overlaps = {
+        sp: len(gene_ids & (set(tok.gene_mapping.keys()) - special_tokens))
+        for sp, tok in tokenizer._tokenizers.items()
+    }
+    best_overlap = max(overlaps.values())
+    if best_overlap == 0:
+        raise ValueError(
+            f"Cannot infer species: no overlap between the provided genes and any species vocabulary. "
+            f"Overlaps: {overlaps}. Please specify the 'species' argument explicitly."
+        )
+    tied = [s for s, v in overlaps.items() if v == best_overlap]
+    if len(tied) > 1:
+        raise ValueError(
+            f"Cannot infer species: ambiguous overlap between the provided genes and multiple species {tied}. "
+            f"Overlaps: {overlaps}. Please specify the 'species' argument explicitly."
+        )
+    return tied[0]
 
 
 def get_start_epoch(cfg) -> int:

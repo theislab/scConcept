@@ -15,8 +15,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .data import AnnDataModule
+from .dataset import MultiSpeciesTokenizedDataset, MultiSpeciesTokenizer
 from .model import ContrastiveModel
-from .utils import load_pretrained_vocabulary
+from .utils import build_species_gene_mappings, infer_species, load_pretrained_vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,9 @@ class scConcept:
             model_name: Model name to download from HuggingFace (e.g., 'Corpus-30M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
             config: Configuration - can be a path to config file (.yaml) as string, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
-            gene_mapping_path: Path to gene mapping file (.pkl) - if provided, bypasses HuggingFace download
+            gene_mapping_path: Path to gene mapping. For multi-species models, a directory containing
+                ``{species}.csv`` files (one per species). For single-species models, a ``.pkl`` or
+                ``.csv`` file. If provided, bypasses HuggingFace download
             panels_dir: Path to panels directory - if provided, bypasses HuggingFace download
             pretrained_vocabulary_path: Path to pretrained vocabulary directory (containing .csv files) - if provided, overrides config PATH.PRETRAINED_VOCABULARY
         """
@@ -221,31 +224,32 @@ class scConcept:
         if self.cfg is None:
             self.cfg = self.load_config(config)
 
-        # Load gene mapping
-        if str(gene_mapping_path).endswith(".pkl"):
-            gene_mapping = pd.read_pickle(gene_mapping_path).to_dict()
-        elif str(gene_mapping_path).endswith(".csv"):
-            gene_mapping = pd.read_csv(gene_mapping_path, index_col="gene_id")["token"].to_dict()
-        else:
-            raise ValueError(f"Invalid gene mapping path: {gene_mapping_path}")
+        # Load gene mapping and build tokenizer
+        gene_mapping_path = Path(str(gene_mapping_path))
+        # Multi-species: load one {species}.csv per species listed in cfg.PATH.SPECIES
+        self.tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(str(gene_mapping_path), self.cfg.PATH.SPECIES))
 
-        # Create tokenizer
-        self.tokenizer = GeneIdTokenizer(gene_mapping)
-
-        pretrained_vocabulary = None
+        pretrained_vocabularies = None
         if pretrained_vocabulary_path is not None:
-            pretrained_vocabulary = load_pretrained_vocabulary(pretrained_vocabulary_path, self.tokenizer)
-
+            pretrained_vocabularies = load_pretrained_vocabulary(pretrained_vocabulary_path, self.tokenizer, self.cfg.model.dim_pretrained_vocab)
 
         # Load model
         model_args = {
             "config": self.cfg.model,
-            "pad_token_id": gene_mapping["<pad>"],
-            "cls_token_id": gene_mapping["<cls>"],
-            "vocab_size": len(gene_mapping),
-            "pretrained_vocabulary": pretrained_vocabulary,
+            "pad_token_id": self.tokenizer.PAD_TOKEN,
+            "cls_token_id": self.tokenizer.CLS_TOKEN,
+            "vocab_sizes": self.tokenizer.vocab_sizes,
+            "pretrained_vocabularies": pretrained_vocabularies,
         }
-        self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=True)
+        try:
+            self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=True)
+        except Exception:
+            logger.info("load_from_checkpoint failed; retrying with Fabric loader...")
+            from lightning.fabric import Fabric
+
+            fabric = Fabric(accelerator="cuda" if torch.cuda.is_available() else "cpu", devices=1)
+            self.model = ContrastiveModel(**model_args)
+            fabric.load(str(model_path), {"model": self.model})
 
         # Get device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -325,6 +329,7 @@ class scConcept:
         batch_size: int = 32,
         max_tokens: int = None,
         gene_sampling_strategy: str = None,
+        species: str = None,
     ):
         """
         Extract embeddings from AnnData using the loaded model.
@@ -335,6 +340,7 @@ class scConcept:
             batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
+            species: Species identifier (e.g. 'hsapiens'). If not provided, will be inferred from gene IDs using the tokenizer's gene mappings if possible.
 
         Returns:
             dict: Dictionary containing 'cls_cell_emb', and optionally 'context_sizes'
@@ -355,11 +361,18 @@ class scConcept:
             f"Parameters: max_tokens={max_tokens}, batch_size={batch_size}, gene_sampling_strategy={gene_sampling_strategy}"
         )
 
-        # Create In memory TokenizedDataset
+        # Resolve species
+        if species is None:
+            adata_genes = set(adata.var[gene_id_column] if gene_id_column is not None else adata.var_names)
+            species = infer_species(adata_genes, self.tokenizer)
+            logger.info(f"Inferred species '{species}' from gene overlap.")
+
+        # Create In memory MultiSpeciesTokenizedDataset
         collection = InMemoryCollection([adata], var_column=gene_id_column)
-        dataset = TokenizedDataset(
-            collection,
-            self.tokenizer,
+        dataset = MultiSpeciesTokenizedDataset(
+            metadata={"species": [species]},
+            collection=collection,
+            tokenizer=self.tokenizer,
             normalization=self.cfg.datamodule.normalization,
         )
 

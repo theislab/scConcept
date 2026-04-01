@@ -16,7 +16,7 @@ from wandb.integration.lightning.fabric import WandbLogger
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.dataset import MultiSpeciesTokenizer
-from concept.utils import SLURMEnv, copy_files, load_pretrained_vocabulary, resolve_split_list, resume_wandb_config
+from concept.utils import SLURMEnv, build_species_gene_mappings, copy_files, load_pretrained_vocabulary, resolve_split_list, resume_wandb_config
 
 logger = logging.getLogger(__name__)
 
@@ -108,15 +108,11 @@ class FabricTrainer:
     # ------------------------------------------------------------------
 
     def _build_tokenizer(self) -> MultiSpeciesTokenizer:
-        species_gene_mappings = {
-            species: pd.read_csv(os.path.join(self.cfg.PATH.GENE_MAPPINGS_PATH, f"{species}.csv"), index_col="gene_id")["token"].to_dict()
-            for species in self.cfg.PATH.SPECIES
-        }
-        return MultiSpeciesTokenizer(species_gene_mappings)
+        return MultiSpeciesTokenizer(build_species_gene_mappings(self.cfg.PATH.GENE_MAPPINGS_PATH, self.cfg.PATH.SPECIES))
 
     def _load_pretrained_vocabularies(self):
         if "PRETRAINED_VOCABULARY" in self.cfg.PATH and self.cfg.PATH.PRETRAINED_VOCABULARY is not None:
-            return load_pretrained_vocabulary(self.cfg.PATH.PRETRAINED_VOCABULARY, self.tokenizer)
+            return load_pretrained_vocabulary(self.cfg.PATH.PRETRAINED_VOCABULARY, self.tokenizer, self.cfg.model.dim_pretrained_vocab)
         return None
 
     def _get_logger(self):

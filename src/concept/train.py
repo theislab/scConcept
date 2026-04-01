@@ -17,6 +17,7 @@ from concept.data import AnnDataModule
 from concept.utils import (
     SLURMEnv,
     _get_callbacks,
+    build_species_gene_mappings,
     copy_files,
     get_profiler,
     resume_wandb_config,
@@ -45,16 +46,12 @@ def train(cfg: DictConfig, build_only: bool = False):
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
-    species_gene_mappings: dict[str, dict] = {}
-    for species in cfg.PATH.SPECIES:
-        species_gene_mappings[species] = pd.read_csv(os.path.join(cfg.PATH.GENE_MAPPINGS_PATH, f"{species}.csv"), index_col="gene_id")["token"].to_dict()
-
-    tokenizer = MultiSpeciesTokenizer(species_gene_mappings)
+    tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(cfg.PATH.GENE_MAPPINGS_PATH, cfg.PATH.SPECIES))
     vocab_sizes = tokenizer.vocab_sizes
 
     pretrained_vocabularies = None
     if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
-        pretrained_vocabularies = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
+        pretrained_vocabularies = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer, cfg.model.dim_pretrained_vocab)
 
     if cfg.PATH.LOCAL_DIR is not None:
         for key, value in cfg.datamodule.items():
