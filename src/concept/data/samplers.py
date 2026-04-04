@@ -73,7 +73,8 @@ class WithinGroupSampler(Sampler):
         group_slices = [rng.permutation(g) for g in group_slices]
 
         if self.num_groups is not None and self.num_groups < n_groups:
-            chosen = rng.choice(n_groups, size=self.num_groups, replace=False)
+            perm = rng.permutation(n_groups)
+            chosen = perm[:self.num_groups]
             group_slices = [group_slices[i] for i in chosen]
             n_groups = self.num_groups
             logger.info(f"Subsampled {n_groups} groups out of {len(boundaries) + 1} total groups")
