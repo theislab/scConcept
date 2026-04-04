@@ -98,3 +98,41 @@ def test_num_groups_subset_when_increased():
     assert groups_3.issubset(groups_4), (
         f"num_groups=3 selected {groups_3}, but num_groups=4 selected {groups_4} — smaller set is not a subset"
     )
+
+
+def test_num_samples_proportional_without_equal_groups():
+    """With sample_groups_equally=False, num_samples caps the total and groups are trimmed proportionally.
+
+    Larger groups must contribute more (or equal) samples than smaller ones, and the
+    total yielded must not exceed num_samples (up to batch-rounding per group).
+    """
+    # Unbalanced groups: group 0 has 40 samples, group 1 has 20, group 2 has 10
+    obs_list = np.array([0] * 40 + [1] * 20 + [2] * 10)
+    batch_size = 4
+    num_samples = 30
+
+    sampler = WithinGroupSampler(
+        sampling_key=obs_list,
+        batch_size=batch_size,
+        num_samples=num_samples,
+        sample_groups_equally=False,
+        shuffle=False,
+        drop_last=True,
+        stage="train",
+    )
+
+    indices = list(sampler)
+    assert len(indices) > 0
+
+    # Total must not exceed num_samples by more than one full batch per group (drop_last rounding)
+    n_groups = 3
+    max_allowed = num_samples + n_groups * batch_size
+    assert len(indices) <= max_allowed, (
+        f"Total samples {len(indices)} exceeds num_samples={num_samples} by more than rounding allows"
+    )
+
+    # Proportional trimming: larger groups must contribute >= samples than smaller groups
+    counts = {g: int(np.sum(obs_list[indices] == g)) for g in range(3)}
+    assert counts[0] >= counts[1] >= counts[2], (
+        f"Expected proportional counts (group 0 >= 1 >= 2), got {counts}"
+    )
