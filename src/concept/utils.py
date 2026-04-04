@@ -128,11 +128,11 @@ def load_pretrained_vocabulary(
         gene_names = sp_tok.decode(list(range(len(sp_tok.gene_mapping))))
         vocab_size = len(gene_names)
 
-        csv_path = os.path.join(pretrained_vocabulary_dir, f"{species}.csv")
+        csv_path = os.path.join(pretrained_vocabulary_dir, f"{species}_pc_embeddings.csv")
         if not os.path.exists(csv_path):
-            logger.warning(f"[{species}] Pretrained vocabulary file not found: {csv_path}. Using zeros tensor. If you are using pretrained model, ignore this warning, as the pretrained vocabulary is included in model weights.")
-            pretrained_vocabularies[species] = torch.zeros(vocab_size, pretrained_dim, dtype=torch.float)
-            continue
+            raise FileNotFoundError(
+                f"[{species}] Pretrained vocabulary file not found: {csv_path}."
+            )
 
         logger.info(f"[{species}] Loading pretrained embeddings from {csv_path}")
         df = pd.read_csv(csv_path, index_col=0)
