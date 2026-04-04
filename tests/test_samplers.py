@@ -65,3 +65,36 @@ def test_within_group_sampler_sample_groups_equally():
     assert len(set(counts)) == 1, (
         f"sample_groups_equally=True should balance groups; got counts {counts}"
     )
+
+
+def test_num_groups_subset_when_increased():
+    """Increasing num_groups must extend the previous selection, not replace it.
+
+    Groups selected with num_groups=k must all be present when num_groups=k+1.
+    """
+    # 5 distinct groups, each with enough samples for at least one batch
+    obs_list = np.array([g for g in range(5) for _ in range(10)])
+    batch_size = 4
+
+    def selected_groups(num_groups):
+        sampler = WithinGroupSampler(
+            sampling_key=obs_list,
+            batch_size=batch_size,
+            num_groups=num_groups,
+            shuffle=False,
+            drop_last=True,
+            stage="train",
+        )
+        indices = list(sampler)
+        return set(obs_list[indices].tolist())
+
+    groups_2 = selected_groups(2)
+    groups_3 = selected_groups(3)
+    groups_4 = selected_groups(4)
+
+    assert groups_2.issubset(groups_3), (
+        f"num_groups=2 selected {groups_2}, but num_groups=3 selected {groups_3} — smaller set is not a subset"
+    )
+    assert groups_3.issubset(groups_4), (
+        f"num_groups=3 selected {groups_3}, but num_groups=4 selected {groups_4} — smaller set is not a subset"
+    )
