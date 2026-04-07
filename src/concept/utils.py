@@ -128,7 +128,7 @@ def load_pretrained_vocabulary(
         gene_names = sp_tok.decode(list(range(len(sp_tok.gene_mapping))))
         vocab_size = len(gene_names)
 
-        csv_path = os.path.join(pretrained_vocabulary_dir, f"{species}_pc_embeddings.csv")
+        csv_path = os.path.join(pretrained_vocabulary_dir, f"{species}.csv")
         if not os.path.exists(csv_path):
             raise FileNotFoundError(
                 f"[{species}] Pretrained vocabulary file not found: {csv_path}."

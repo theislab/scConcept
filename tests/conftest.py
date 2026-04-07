@@ -105,7 +105,7 @@ def train_config(adata, tokenizer, device, tmp_path):
 
     pretrained_vocabulary_dir = tmp_path / "embeddings"
     pretrained_vocabulary_dir.mkdir()
-    pretrained_vocabulary_path = pretrained_vocabulary_dir / "pretrained_vocabulary.csv"
+    pretrained_vocabulary_path = pretrained_vocabulary_dir / "hsapiens.csv"
     gene_names = list(tokenizer.gene_mapping.keys())[2:]  # skip <pad> and <cls>
     vectors = [np.random.rand(10) for _ in gene_names]
     df = pd.DataFrame(vectors, index=gene_names)
@@ -141,6 +141,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 "datamodule.dataloader.train.num_workers=2",
                 "datamodule.dataloader.val=null",
                 # Override model settings for faster testing
+                "model.dim_pretrained_vocab=10",
                 "model.dim_model=16",
                 "model.num_head=2",
                 "model.dim_hid=32",
