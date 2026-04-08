@@ -306,14 +306,15 @@ class FabricTrainer:
         checkpoint_file = os.path.join(
             self.cfg.PATH.CHECKPOINT_ROOT, self.cfg.initialize.run_id, self.cfg.initialize.checkpoint
         )
-        if self.cfg.initialize.create_new_run:
-            self.fabric.load(checkpoint_file, {"model": self.model}, strict=False)
-            logger.info("Loaded model weights from %s (new run, strict=False)", checkpoint_file)
-        else:
-            remainder = self.fabric.load(checkpoint_file, {"model": self.model, "optimizer": self.optimizer, "datamodule": self.datamodule})
-            self.global_step = int(remainder.get("global_step", 0))
-            self.epoch = int(remainder.get("epoch", 0))
-            logger.info("Resumed from %s at step %d, epoch %d", checkpoint_file, self.global_step, self.epoch)
+        full_checkpoint = self.fabric.load(checkpoint_file)
+        self.model.load_state_dict(full_checkpoint["model"])
+        self.optimizer.load_state_dict(full_checkpoint["optimizer"])
+        if not self.cfg.initialize.create_new_run:
+            self.datamodule.load_state_dict(full_checkpoint["datamodule"])
+        if not self.cfg.initialize.fresh_training:
+            self.global_step = int(full_checkpoint.get("global_step", 0))
+            self.epoch = int(full_checkpoint.get("epoch", 0))
+        logger.info("Resumed training from checkpoint %s (step %d, epoch %d)", checkpoint_file, self.global_step, self.epoch)
 
     # ------------------------------------------------------------------
     # Validation

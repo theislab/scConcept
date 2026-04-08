@@ -39,6 +39,7 @@ initialize:
   run_id: null
   checkpoint: null
   create_new_run: False
+  fresh_training: False
 
 profiler:
   enabled: False # Use profiler only for debugging
