@@ -31,6 +31,7 @@ training:
   scheduler: "warmup" # 'warmup' or 'warmup_cosine'
   freeze_pretrained_vocabulary: False
   use_learnable_embs_freq: null
+  train_vocab_only: False
   warmup: 10000
   max_steps: 10000000
   min_lr: 0.0

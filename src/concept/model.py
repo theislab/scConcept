@@ -286,6 +286,15 @@ class ContrastiveModel(L.LightningModule):
         self.logit_masks = {}
         self.stage = None
 
+        if config["training"].get("train_vocab_only", None):
+            self.requires_grad_(False)
+            for learnbale_embs in self.gene_token_encoder.learnable_embs.values():
+                learnbale_embs.weight.requires_grad_(True)
+            self.use_learnable_embs_freq = 1.0
+            logger.info("Training with train_vocab_only=True: entire model frozen except learnable embeddings, "
+                        "use_learnable_embs_freq set to 1.0")
+
+
     def _encode(
         self,
         tokens: Tensor,
