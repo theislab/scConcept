@@ -108,7 +108,7 @@ class FabricTrainer:
     # ------------------------------------------------------------------
 
     def _build_tokenizer(self) -> MultiSpeciesTokenizer:
-        return MultiSpeciesTokenizer(build_species_gene_mappings(self.cfg.PATH.GENE_MAPPINGS_PATH, self.cfg.PATH.SPECIES))
+        return MultiSpeciesTokenizer(build_species_gene_mappings(self.cfg.PATH.GENE_MAPPINGS_PATH, self.cfg.datamodule.species))
 
     def _load_pretrained_vocabularies(self):
         if "PRETRAINED_VOCABULARY" in self.cfg.PATH and self.cfg.PATH.PRETRAINED_VOCABULARY is not None:

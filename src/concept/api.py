@@ -6,10 +6,9 @@ from pathlib import Path
 
 import anndata as ad
 import lightning as L
-import pandas as pd
 import torch
 from huggingface_hub import HfApi, hf_hub_download
-from lamin_dataloader import BaseCollate, GeneIdTokenizer, InMemoryCollection, TokenizedDataset
+from lamin_dataloader import BaseCollate, InMemoryCollection
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -26,12 +25,6 @@ class scConcept:
     """
     A class for loading scConcept models and extracting embeddings from single-cell data.
     """
-
-    # Valid organism identifiers
-    ORGANISMS = [
-        "hsapiens",  # Homo sapiens (Human)
-        "mmusculus",  # Mus musculus (Mouse)
-    ]
 
     def __init__(self, cfg: DictConfig = None, repo_id: str = "theislab/scConcept", cache_dir: str = "./cache/"):
         """
@@ -51,14 +44,14 @@ class scConcept:
 
     def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
-        Download model checkpoint, config, gene mapping, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
+        Download model checkpoint, config, per-species gene mapping CSVs, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
 
         Args:
-            model_name: Model name (e.g., 'Corpus-30M')
+            model_name: Model name (e.g., 'Corpus39M-Model29M')
             model_dir: Directory to cache downloaded files
         """
         model_path = model_dir / "model.ckpt"
-        gene_mapping_path = model_dir / "pc_gene_token_mapping.pkl"
+        gene_mappings_path = model_dir / "gene_mappings"
         config_path = model_dir / "config.yaml"
         panels_dir = model_dir / "panels"
         pretrained_vocabulary_dir = model_dir / "pretrained_vocabulary"
@@ -80,22 +73,32 @@ class scConcept:
         else:
             logger.info(f"Checkpoint already exists at {model_path}")
 
-        # Download gene mapping if needed
-        if not gene_mapping_path.exists():
-            logger.info(
-                f"Downloading pc_gene_token_mapping.pkl from HuggingFace Hub ({self.repo_id}/{model_name}/pc_gene_token_mapping.pkl)..."
-            )
-            downloaded_path = hf_hub_download(
-                repo_id=self.repo_id,
-                filename=f"{model_name}/pc_gene_token_mapping.pkl",
-                cache_dir=str(model_dir.parent),
-            )
-            # Move downloaded file to expected location
-            if downloaded_path != str(gene_mapping_path):
-                shutil.copy2(downloaded_path, str(gene_mapping_path))
-            logger.info(f"Gene mapping saved to {gene_mapping_path}")
-        else:
-            logger.info(f"Gene mapping already exists at {gene_mapping_path}")
+        # Download gene mappings directory if needed
+        api = HfApi()
+        gene_mappings_path.mkdir(parents=True, exist_ok=True)
+        try:
+            repo_files = api.list_repo_files(repo_id=self.repo_id, repo_type="model")
+            gm_files = [f for f in repo_files if f.startswith(f"{model_name}/gene_mappings/") and f.endswith(".csv")]
+            if gm_files:
+                logger.info(
+                    f"Downloading gene_mappings directory from HuggingFace Hub ({self.repo_id}/{model_name}/gene_mappings/)..."
+                )
+                for gm_file in gm_files:
+                    gm_filename = os.path.basename(gm_file)
+                    gm_path = gene_mappings_path / gm_filename
+                    if not gm_path.exists():
+                        downloaded_path = hf_hub_download(
+                            repo_id=self.repo_id,
+                            filename=gm_file,
+                            cache_dir=str(model_dir.parent),
+                        )
+                        if downloaded_path != str(gm_path):
+                            shutil.copy2(downloaded_path, str(gm_path))
+                logger.info(f"Gene mappings saved to {gene_mappings_path}")
+            else:
+                logger.warning(f"No gene mapping CSV files found in HuggingFace Hub ({self.repo_id}/{model_name}/gene_mappings/)")
+        except Exception as e:
+            logger.warning(f"Could not download gene mappings directory: {e}")
 
         # Download config if needed
         if not config_path.exists():
@@ -114,7 +117,6 @@ class scConcept:
 
         # Download panels directory if needed
         panels_dir.mkdir(parents=True, exist_ok=True)
-        api = HfApi()
         try:
             # List all files in the panels directory on HuggingFace
             repo_files = api.list_repo_files(repo_id=self.repo_id, repo_type="model")
@@ -177,14 +179,14 @@ class scConcept:
         except Exception as e:
             logger.warning(f"Could not download pretrained vocabulary directory: {e}")
 
-        return model_path, gene_mapping_path, config_path, panels_dir, pretrained_vocabulary_dir_resolved
+        return model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_dir_resolved
 
     def load_config_and_model(
         self,
         model_name: str = None,
         config: str | dict | DictConfig = None,
         model_path: str = None,
-        gene_mapping_path: str = None,
+        gene_mappings_path: str = None,
         panels_dir: str = None,
         pretrained_vocabulary_path: str = None,
     ):
@@ -192,10 +194,10 @@ class scConcept:
         Load configuration and initialize the model.
 
         Args:
-            model_name: Model name to download from HuggingFace (e.g., 'Corpus-30M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
+            model_name: Model name to download from HuggingFace (e.g., 'Corpus39M-Model29M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
             config: Configuration - can be a path to config file (.yaml) as string, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
-            gene_mapping_path: Path to gene mapping. For multi-species models, a directory containing
+            gene_mappings_path: Path to gene mappings. For multi-species models, a directory containing
                 ``{species}.csv`` files (one per species). For single-species models, a ``.pkl`` or
                 ``.csv`` file. If provided, bypasses HuggingFace download
             panels_dir: Path to panels directory - if provided, bypasses HuggingFace download
@@ -210,12 +212,12 @@ class scConcept:
             logger.info(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
 
             # Download files if they don't exist
-            model_path, gene_mapping_path, config, panels_dir, pretrained_vocabulary_path = self._download_files_if_needed(
+            model_path, gene_mappings_path, config, panels_dir, pretrained_vocabulary_path = self._download_files_if_needed(
                 model_name, model_dir
             )
         else:
-            if not all([config, model_path, gene_mapping_path]):
-                raise ValueError("If using direct paths config, model_path and gene_mapping_path must be provided")
+            if not all([config, model_path, gene_mappings_path]):
+                raise ValueError("If using direct paths config, model_path and gene_mappings_path must be provided")
 
         self.model_name = model_name
         self.panels_dir = panels_dir
@@ -225,9 +227,9 @@ class scConcept:
             self.cfg = self.load_config(config)
 
         # Load gene mapping and build tokenizer
-        gene_mapping_path = Path(str(gene_mapping_path))
-        # Multi-species: load one {species}.csv per species listed in cfg.PATH.SPECIES
-        self.tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(str(gene_mapping_path), self.cfg.PATH.SPECIES))
+        gene_mappings_path = Path(str(gene_mappings_path))
+        # Multi-species: load one {species}.csv per species listed in cfg.datamodule.species
+        self.tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(str(gene_mappings_path), self.cfg.datamodule.species))
 
         pretrained_vocabularies = None
         if pretrained_vocabulary_path is not None:
@@ -314,8 +316,8 @@ class scConcept:
             cfg.model.pe_max_len = 5000
         if "loss_switch_step" not in cfg.model:
             cfg.model.loss_switch_step = 2000
-        if "PATH" in cfg and "GENE_MAPPING_PATH" not in cfg.PATH and "gene_mapping_path" in cfg.PATH:
-            cfg.PATH.GENE_MAPPING_PATH = cfg.PATH.gene_mapping_path
+        if "PATH" in cfg and "GENE_MAPPINGS_PATH" not in cfg.PATH and "gene_mapping_path" in cfg.PATH:
+            cfg.PATH.GENE_MAPPINGS_PATH = cfg.PATH.gene_mapping_path
         if "freeze_pretrained_vocabulary" not in cfg.model.training:
             cfg.model.training.freeze_pretrained_vocabulary = None
         if "use_learnable_embs_freq" not in cfg.model.training:
@@ -325,22 +327,22 @@ class scConcept:
     def extract_embeddings(
         self,
         adata: ad.AnnData,
+        species: str = None,
         gene_id_column: str = None,
         batch_size: int = 32,
         max_tokens: int = None,
         gene_sampling_strategy: str = None,
-        species: str = None,
     ):
         """
         Extract embeddings from AnnData using the loaded model.
 
         Args:
             adata: AnnData object containing single-cell data
+            species: Species identifier (e.g. 'hsapiens'). If not provided, will be inferred from gene IDs using the tokenizer's gene mappings if possible.
             gene_id_column: Column name in adata.var to use as gene IDs: ENSGXXXXXXXXXXX (default: None, uses index)
             batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
-            species: Species identifier (e.g. 'hsapiens'). If not provided, will be inferred from gene IDs using the tokenizer's gene mappings if possible.
 
         Returns:
             dict: Dictionary containing 'cls_cell_emb', and optionally 'context_sizes'
@@ -425,24 +427,46 @@ class scConcept:
 
         return result
 
-    def train(self, adata_list, organism=None, max_steps=None, batch_size=None):
+    def train(self, adata_list, species=None, max_steps=None, batch_size=None):
         """Train a new model using the configuration in self.cfg.
 
         Uses self.model if it exists, otherwise initializes a new model.
         Assumes single GPU device with num_nodes=1.
 
         Args:
-            adata_list: Optional AnnData object or list of AnnData objects to use for training.
-                       If provided, will be used instead of loading from file paths.
-            organism: Organism identifier. Must be one of: {', '.join(scConcept.ORGANISMS)}.
+            adata_list: A single AnnData object or file path string, or a list of these.
+            species: Species identifier(s). A single string when adata_list is a single item, or
+                a list of strings with the same length as adata_list when it is a list. If None
+                (or a list containing None entries), species will be inferred from gene ID overlap
+                with the tokenizer vocabularies — inference is only possible for AnnData items,
+                not file path strings.
             max_steps: Optional maximum number of training steps. If provided, overrides config value.
             batch_size: Optional batch size for training. If provided, overrides config value.
+
+        Examples::
+
+            # Single AnnData — species inferred automatically
+            model.train(adata)
+
+            # Single AnnData — species provided explicitly
+            model.train(adata, species="hsapiens")
+
+            # List of AnnData — all species inferred
+            model.train([adata1, adata2])
+
+            # List of AnnData — all species provided explicitly
+            model.train([adata1, adata2], species=["hsapiens", "mmusculus"])
+
+            # List of AnnData — mixed: first inferred, second explicit
+            model.train([adata1, adata2], species=[None, "mmusculus"])
+
+            # File path strings — species must always be provided explicitly
+            model.train("path/to/data.h5ad", species="hsapiens")
+            model.train(["path/to/a.h5ad", "path/to/b.h5ad"], species=["hsapiens", "mmusculus"])
         """
         if self.cfg is None:
             raise ValueError("Configuration not loaded. Set self.cfg or call load_config_and_model() first.")
 
-        if organism is not None and organism not in self.ORGANISMS:
-            raise ValueError(f"Invalid organism '{organism}'. Must be one of: {', '.join(self.ORGANISMS)}")
 
         logger.info("Starting training...")
 
@@ -461,30 +485,55 @@ class scConcept:
         dataset_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
         dataloader_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
-
-        if isinstance(adata_list, ad.AnnData):
-            # Convert single AnnData to list
-            adata_list = [adata_list]
-        elif isinstance(adata_list, list):
-            # Validate list
-            if len(adata_list) == 0:
-                raise ValueError("adata_list cannot be empty")
-            if not all(isinstance(adata, ad.AnnData) for adata in adata_list):
-                raise ValueError("All items in adata_list must be AnnData objects")
-        else:
-            raise ValueError("adata_list must be an AnnData object or a list of AnnData objects")
-        # Use provided AnnData objects
-        dataset_kwargs["train"]["split"] = adata_list
-        for adata in adata_list:
-            adata.uns["_organism"] = organism
-
-
+        # Build tokenizer before species inference (inference requires vocabulary lookups)
         if adaptaion:
             assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."
         else:
-            # Load gene mapping
-            gene_mapping = pd.read_pickle(self.cfg.PATH.GENE_MAPPING_PATH).to_dict()
-            self.tokenizer = GeneIdTokenizer(gene_mapping)
+            self.tokenizer = MultiSpeciesTokenizer(
+                build_species_gene_mappings(self.cfg.PATH.GENE_MAPPINGS_PATH, self.cfg.datamodule.species)
+            )
+
+        # Normalize adata_list and species to parallel lists
+        if isinstance(adata_list, (ad.AnnData, str)):
+            adata_list = [adata_list]
+            species = [species]
+        elif isinstance(adata_list, list):
+            if len(adata_list) == 0:
+                raise ValueError("adata_list cannot be empty")
+            if not all(isinstance(a, (ad.AnnData, str)) for a in adata_list):
+                raise ValueError("All items in adata_list must be AnnData objects or file path strings")
+            if species is None:
+                species = [None] * len(adata_list)
+            elif isinstance(species, str):
+                raise ValueError("When adata_list is a list, species must also be a list.")
+            elif len(species) != len(adata_list):
+                raise ValueError(
+                    f"species list length ({len(species)}) must match adata_list length ({len(adata_list)})"
+                )
+        else:
+            raise ValueError("adata_list must be an AnnData object, a file path string, or a list of these")
+
+        # Infer species where not provided (only possible for AnnData items, not file paths)
+        species_list = []
+        for item, sp in zip(adata_list, species):
+            if sp is None:
+                if isinstance(item, str):
+                    raise ValueError(
+                        "Cannot infer species for file path entries. Please provide species explicitly."
+                    )
+                adata_genes = set(item.var_names)
+                sp = infer_species(adata_genes, self.tokenizer)
+                logger.info(f"Inferred species '{sp}' from gene overlap.")
+            species_list.append(sp)
+
+        if adaptaion:
+            assert set(species_list).issubset(set(self.cfg.datamodule.species)), (
+                f"species {species_list} must be a subset of cfg.datamodule.species {self.cfg.datamodule.species}"
+            )
+        dataset_kwargs["train"]["split"] = {
+            "paths": adata_list,
+            "metadata": {"species": species_list},
+        }
 
         # Create datamodule
         datamodule_args = {
@@ -523,12 +572,11 @@ class scConcept:
         else:
             model_args = {
                 "config": self.cfg.model,
-                "pad_token_id": gene_mapping["<pad>"],
-                "cls_token_id": gene_mapping["<cls>"],
-                "vocab_size": len(gene_mapping),
-                "world_size": 1,  # Single GPU
-                "val_loader_names": [],  # No validation
-                "precomp_embs_key": self.cfg.datamodule.precomp_embs_key,
+                "pad_token_id": self.tokenizer.PAD_TOKEN,
+                "cls_token_id": self.tokenizer.CLS_TOKEN,
+                "vocab_sizes": self.tokenizer.vocab_sizes,
+                "world_size": 1,
+                "val_loader_names": [],
             }
             self.model = ContrastiveModel(**model_args)
 

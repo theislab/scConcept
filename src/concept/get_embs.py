@@ -47,7 +47,7 @@ def get_embs(
     concept.load_config_and_model(
         config=cfg,
         model_path=ckpt_path,
-        gene_mapping_path=cfg.PATH.GENE_MAPPINGS_PATH,
+        gene_mappings_path=cfg.PATH.GENE_MAPPINGS_PATH,
         pretrained_vocabulary_path=cfg.PATH.PRETRAINED_VOCABULARY,
         panels_dir=cfg.PATH.PANELS_PATH,
     )

@@ -23,6 +23,23 @@ defaults:
   - split_scbasecount_sscrofa: split_scbasecount_sscrofa_2025_02_25
 
 name: DataModule
+species:
+  - hsapiens
+  - mmusculus
+  - cjacchus
+  - mmulatta
+  - ptroglodytes
+  - btaurus
+  - celegans
+  - drerio
+  - dmelanogaster
+  - ecaballus
+  - ggallus
+  - ggorilla
+  - hgfemale
+  - ocuniculus
+  - oaries
+  - sscrofa
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero

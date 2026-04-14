@@ -10,6 +10,12 @@ defaults:
 
 
 name: DataModule
+species:
+  - hsapiens
+  - mmusculus
+  - cjacchus
+  - mmulatta
+  - ptroglodytes
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero

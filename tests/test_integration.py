@@ -393,27 +393,27 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     # Test model loading with either method
     if use_direct_paths:
         # Download model files to get paths for direct path testing
-        model_name = "Corpus-30M"
+        model_name = "Corpus39M-Model29M"
         model_dir = Path(sc_concept.cache_dir) / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
 
         # Download files
-        model_path, gene_mapping_path, config_path, panels_dir = sc_concept._download_files_if_needed(
+        model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_path = sc_concept._download_files_if_needed(
             model_name, model_dir
         )
 
         # Load using direct paths
         sc_concept = scConcept()
-        logger.info(f"Loading model from {model_path}, {gene_mapping_path}, {config_path}, {panels_dir}")
+        logger.info(f"Loading model from {model_path}, {gene_mappings_path}, {config_path}, {panels_dir}")
         sc_concept.load_config_and_model(
             config=str(config_path),
             model_path=str(model_path),
-            gene_mapping_path=str(gene_mapping_path),
+            gene_mappings_path=str(gene_mappings_path),
             panels_dir=str(panels_dir),
         )
     else:
         # Load using model_name (original method)
-        sc_concept.load_config_and_model(model_name="Corpus-30M")
+        sc_concept.load_config_and_model(model_name="Corpus39M-Model29M")
 
     # Verify model is loaded correctly
     assert sc_concept.model is not None
@@ -462,7 +462,7 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
 
     # Run training
     sc_concept.train(
-        adata_list=adata, organism="hsapiens", max_steps=training_max_steps, batch_size=training_batch_size
+        adata_list=adata, species="hsapiens", max_steps=training_max_steps, batch_size=training_batch_size
     )
 
     # Verify model is still valid after training

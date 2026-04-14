@@ -10,6 +10,8 @@ defaults:
 
 
 name: DataModule
+species:
+  - mmusculus
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero

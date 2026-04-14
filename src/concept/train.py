@@ -46,7 +46,7 @@ def train(cfg: DictConfig, build_only: bool = False):
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
-    tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(cfg.PATH.GENE_MAPPINGS_PATH, cfg.PATH.SPECIES))
+    tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(cfg.PATH.GENE_MAPPINGS_PATH, cfg.datamodule.species))
     vocab_sizes = tokenizer.vocab_sizes
 
     pretrained_vocabularies = None

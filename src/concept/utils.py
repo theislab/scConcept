@@ -70,16 +70,16 @@ def resolve_split_list(
 
 
 def build_species_gene_mappings(
-    gene_mappings_dir: str,
+    gene_mappings_path: str,
     species: list[str],
 ) -> dict[str, dict]:
     """Build a ``{species: {gene_id: token_id}}`` mapping from per-species CSV files.
 
-    Expects one CSV file per species at ``<gene_mappings_dir>/<species>.csv``
+    Expects one CSV file per species at ``<gene_mappings_path>/<species>.csv``
     with at minimum a ``gene_id`` index column and a ``token`` column.
 
     Args:
-        gene_mappings_dir: Directory containing ``<species>.csv`` files.
+        gene_mappings_path: Directory containing ``<species>.csv`` files.
         species: List of species names to load.
 
     Returns:
@@ -89,7 +89,7 @@ def build_species_gene_mappings(
     import pandas as pd
 
     return {
-        sp: pd.read_csv(os.path.join(gene_mappings_dir, f"{sp}.csv"), index_col="gene_id")["token"].to_dict()
+        sp: pd.read_csv(os.path.join(gene_mappings_path, f"{sp}.csv"), index_col="gene_id")["token"].to_dict()
         for sp in species
     }
 

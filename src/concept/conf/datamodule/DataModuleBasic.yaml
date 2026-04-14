@@ -2,6 +2,8 @@ defaults:
   - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
 
 name: DataModule
+species:
+  - hsapiens
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
