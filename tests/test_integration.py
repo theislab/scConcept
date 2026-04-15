@@ -374,8 +374,9 @@ def test_predict_step_with_lamin_dataloader(
     assert all_cls_embs.shape[1] == mock_config["dim_model"]
 
 
+@pytest.mark.parametrize("model_name", ["corpus40M-model30M", "corpus230M[human]-model170M"])
 @pytest.mark.parametrize("use_direct_paths", [False, True])
-def test_api_integration(adata, use_direct_paths, tmp_path):
+def test_api_integration(adata, model_name, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
 
     Tests both loading methods:
@@ -393,7 +394,6 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     # Test model loading with either method
     if use_direct_paths:
         # Download model files to get paths for direct path testing
-        model_name = "Corpus39M-Model29M"
         model_dir = Path(sc_concept.cache_dir) / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -406,14 +406,15 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
         sc_concept = scConcept()
         logger.info(f"Loading model from {model_path}, {gene_mappings_path}, {config_path}, {panels_dir}")
         sc_concept.load_config_and_model(
-            config=str(config_path),
-            model_path=str(model_path),
-            gene_mappings_path=str(gene_mappings_path),
-            panels_dir=str(panels_dir),
+            config=config_path,
+            model_path=model_path,
+            gene_mappings_path=gene_mappings_path,
+            panels_dir=panels_dir,
+            pretrained_vocabulary_path = pretrained_vocabulary_path
         )
     else:
         # Load using model_name (original method)
-        sc_concept.load_config_and_model(model_name="Corpus39M-Model29M")
+        sc_concept.load_config_and_model(model_name)
 
     # Verify model is loaded correctly
     assert sc_concept.model is not None
@@ -456,6 +457,7 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     # Use small max_steps and batch_size to keep test fast
     training_max_steps = 3
     training_batch_size = 8
+    sc_concept.cfg.datamodule.dataset.train.panel_size_min = len(adata.var) // 2
 
     # Verify model is in eval mode before training
     assert not sc_concept.model.training, "Model should be in eval mode after loading"

@@ -81,7 +81,7 @@ class Collate(BaseCollate):
                         logger.info(
                             f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
                         )
-                    seed=worker_info.seed
+                    seed = worker_info.seed
             self._rng = np.random.default_rng(seed)
         return self._rng
 

@@ -188,18 +188,18 @@ class scConcept:
     def load_config_and_model(
         self,
         model_name: str = None,
-        config: str | dict | DictConfig = None,
-        model_path: str = None,
-        gene_mappings_path: str = None,
-        panels_dir: str = None,
-        pretrained_vocabulary_path: str = None,
+        config: str | Path | dict | DictConfig = None,
+        model_path: str | Path = None,
+        gene_mappings_path: str | Path = None,
+        panels_dir: str | Path = None,
+        pretrained_vocabulary_path: str | Path = None,
     ):
         """
         Load configuration and initialize the model.
 
         Args:
             model_name: Model name to download from HuggingFace (e.g., 'Corpus39M-Model29M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
-            config: Configuration - can be a path to config file (.yaml) as string, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
+            config: Configuration - can be a path to config file (.yaml) as str, Path, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
             gene_mappings_path: Path to gene mappings. For multi-species models, a directory containing
                 ``{species}.csv`` files (one per species). For single-species models, a ``.pkl`` or
