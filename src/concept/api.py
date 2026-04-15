@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 
 class scConcept:
     """
-    A class for loading scConcept models and extracting embeddings from single-cell data.
+    High-level interface for loading, adapting, and applying scConcept models.
+
+    This wrapper handles model/config loading from Hugging Face or local paths,
+    gene-tokenizer setup across species, embedding extraction from ``AnnData``,
+    and optional lightweight fine-tuning on user-provided datasets.
     """
 
     def __init__(self, cfg: DictConfig = None, repo_id: str = "theislab/scConcept", cache_dir: str = "./cache/"):

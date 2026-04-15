@@ -179,6 +179,12 @@ class GeneExpressionDecoder(nn.Module):
 
 
 class ContrastiveModel(L.LightningModule):
+    """Lightning module implementing scConcept pretraining and adaptation workflows.
+
+    The model combines gene/value encoders with a transformer backbone and supports
+    contrastive and MLM-style objectives used for single-cell representation learning.
+    """
+
     MASK_VALUE = -1
     CLS_VALUE = -2
 
