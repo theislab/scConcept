@@ -25,6 +25,9 @@ __pycache__/
 /docs/_build/
 
 
+.codex/
+.cursor/
+
 # Custom files and directories
 lightning_logs/
 cache/
