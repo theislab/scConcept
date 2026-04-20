@@ -20,7 +20,7 @@ If you don't have Python installed, we recommend installing [uv][].
 scConcept also uses [Flash Attention][] which requires CUDA.
 
 ### Create env from scratch:
-`cd` to the root of project directory and the run [`./scripts/setup_env.sh`](scripts/setup_env.sh) which installs uv if not available and creates the whole virtual environment in one go!
+`cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates the virtual environment in one go.
 
 ### Install manually:
 
@@ -64,7 +64,7 @@ adata = sc.read_h5ad("your_data.h5ad")
 concept = scConcept(cache_dir='./cache/')
 
 # Option 1: Load a model directly from HuggingFace
-concept.load_config_and_model(model_name='Corpus39M-Model29M') 
+concept.load_config_and_model(model_name='corpus40M-model30M') 
 
 # Option 2: Load any local model
 concept.load_config_and_model(

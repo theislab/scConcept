@@ -51,7 +51,7 @@ class scConcept:
         Download model checkpoint, config, per-species gene mapping CSVs, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
 
         Args:
-            model_name: Model name (e.g., 'Corpus39M-Model29M')
+            model_name: Model name (e.g., 'corpus40M-model30M')
             model_dir: Directory to cache downloaded files
         """
         model_path = model_dir / "model.ckpt"
@@ -198,7 +198,7 @@ class scConcept:
         Load configuration and initialize the model.
 
         Args:
-            model_name: Model name to download from HuggingFace (e.g., 'Corpus39M-Model29M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
+            model_name: Model name to download from HuggingFace (e.g., 'corpus40M-model30M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
             config: Configuration - can be a path to config file (.yaml) as str, Path, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
             gene_mappings_path: Path to gene mappings. For multi-species models, a directory containing
