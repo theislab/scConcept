@@ -302,6 +302,10 @@ class scConcept:
             cfg.model.data_loading_speed_sanity_check = False
         if "decoder_head" not in cfg.model:
             cfg.model.decoder_head = True
+        if "mask_value" not in cfg.model:
+            cfg.model.mask_value = -1
+        if "cls_value" not in cfg.model:
+            cfg.model.cls_value = -2
         if "gene_sampling_strategy" in cfg.datamodule.dataset.train:
             cfg.datamodule.gene_sampling_strategy = cfg.datamodule.dataset.train.gene_sampling_strategy
         if "gene_sampling_strategy" not in cfg.datamodule:

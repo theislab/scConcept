@@ -185,9 +185,6 @@ class ContrastiveModel(L.LightningModule):
     contrastive and MLM-style objectives used for single-cell representation learning.
     """
 
-    MASK_VALUE = -1
-    CLS_VALUE = -2
-
     def __init__(
         self,
         config,
@@ -215,6 +212,8 @@ class ContrastiveModel(L.LightningModule):
         self.dropout = config["dropout"]
         self.decoder_head = config["decoder_head"]
         self.input_encoding = config["input_encoding"]
+        self.MASK_VALUE = config["mask_value"]
+        self.CLS_VALUE = config["cls_value"]
         self.PAD_TOKEN_ID = pad_token_id
         self.CLS_TOKEN_ID = cls_token_id
         self.masking_rate = config["training"]["masking_rate"]

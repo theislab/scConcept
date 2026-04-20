@@ -10,6 +10,8 @@ projection_dim: null
 nlayers: 8
 dropout: 0.1
 decoder_head: False
+mask_value: -1
+cls_value: -2
 norm_scheme: pre # pre or post
 activation: gelu # relu or gelu
 values_only_sanity_check: False

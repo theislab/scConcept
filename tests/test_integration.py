@@ -52,6 +52,8 @@ def mock_config():
         "nlayers": 2,
         "dropout": 0.1,
         "decoder_head": False,
+        "mask_value": -1,
+        "cls_value": -2,
         "mask_padding": False,
         "input_encoding": "rank_encoding",
         "pe_max_len": 1000,
