@@ -1,21 +1,10 @@
 defaults:
-  # - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_old
   - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
-
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15_primary
-
-  - split_cellxgene_cjacchus: split_cellxgene_cjacchus_2025_11_08_primary
-  - split_cellxgene_mmulatta: split_cellxgene_mmulatta_2025_11_08_primary
-  - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes_2025_11_08_primary
 
 
 name: DataModule
 species:
   - hsapiens
-  - mmusculus
-  - cjacchus
-  - mmulatta
-  - ptroglodytes
 obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
@@ -85,20 +74,6 @@ dataset:
       panel_size_min: 100000
       panel_size_max: 100000
       panel_overlap: True
-    within_P6400_B256_mmusculus:
-      split: 
-        - ${datamodule.split_cellxgene_mmusculus}
-      panel_selection: random
-      panel_size_min: 6400
-      panel_size_max: 6400
-    within_P6400_B256_other_species:
-      split: 
-        - ${datamodule.split_cellxgene_cjacchus}
-        - ${datamodule.split_cellxgene_mmulatta}
-        - ${datamodule.split_cellxgene_ptroglodytes}
-      panel_selection: random
-      panel_size_min: 6400
-      panel_size_max: 6400
     within_tissue_P6400_B256:
       split: 
         - source: ${datamodule.split_cellxgene_hsapiens}
@@ -186,26 +161,6 @@ dataloader:
       num_groups: null
       sample_groups_equally: True
     within_Preselected_vs_all_overlap_B256:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      num_groups: null
-      sample_groups_equally: True
-    within_P6400_B256_mmusculus:
-      within_group_sampling: "dataset"
-      batch_size: 256
-      shuffle: True
-      num_workers: 2
-      pin_memory: False
-      drop_last: True
-      num_samples: 100000
-      num_groups: null
-      sample_groups_equally: True
-    within_P6400_B256_other_species:
       within_group_sampling: "dataset"
       batch_size: 256
       shuffle: True
