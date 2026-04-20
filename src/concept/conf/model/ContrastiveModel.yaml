@@ -1,19 +1,25 @@
 name: ContrastiveModel
 flash_attention: True
+dim_gene_embs: 512
+# This depends on the type and version of pretrained vocabularies use. "facebook/esm2_t30_150M_UR50D" embeddings are of size 640.
+dim_pretrained_vocab: 640
 dim_model: 512
 num_head: 8
 dim_hid: 1024
 projection_dim: null
 nlayers: 8
-dropout: 0.2
+dropout: 0.1
 decoder_head: False
+mask_value: -1
+cls_value: -2
+norm_scheme: pre # pre or post
+activation: gelu # relu or gelu
 values_only_sanity_check: False
 data_loading_speed_sanity_check: False
 mlm_loss_weight: 0.0
 cont_loss_weight: 1.0
 contrastive_loss: multiclass # multiclass or binary
 logit_scale_init_value: 3.0
-mask_padding: True
 pe_max_len: 5000
 input_encoding: "rank_encoding" # "value_encoding"
 loss_switch_step: 10000
@@ -24,7 +30,10 @@ training:
   lr: 1e-4
   weight_decay: 0.0
   optimizer_class: AdamW
-  scheduler: 'warmup' # 'warmup' or 'warmup_cosine'
+  scheduler: "warmup" # 'warmup' or 'warmup_cosine'
+  freeze_pretrained_vocabulary: False
+  use_learnable_embs_freq: null
+  train_vocab_only: False
   warmup: 10000
   max_steps: 10000000
   min_lr: 0.0
@@ -32,7 +41,8 @@ training:
   devices: -1
   num_nodes: 1
   limit_train_batches: 1.0
-  val_check_interval: 1.0
-  check_val_every_n_epoch: 1
+  val_check_interval: 100000
+  check_val_every_n_epoch: null
   accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
   log_every_n_steps: 100

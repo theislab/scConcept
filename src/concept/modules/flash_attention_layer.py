@@ -117,22 +117,17 @@ class FlashTransformerEncoderLayer(nn.Module):
         if src_mask is not None:
             raise ValueError("FlashTransformerEncoderLayer does not support src_mask")
 
-        if key_padding_mask is not None:        
+        if key_padding_mask is not None:
             key_padding_mask = ~key_padding_mask
 
         if self.norm_scheme == "pre":
-            src = self.norm1(src)
-            src2 = self.self_attn(src, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=key_padding_mask)
+            src2 = self.self_attn(self.norm1(src), cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=key_padding_mask)
             src = src + self.dropout1(src2)
-            src = self.norm2(src)
-            src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+            src2 = self.linear2(self.dropout(self.activation(self.linear1(self.norm2(src)))))
             src = src + self.dropout2(src2)
         else:
             src2 = self.self_attn(src, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=key_padding_mask)
-            src = src + self.dropout1(src2)
-            src = self.norm1(src)
+            src = self.norm1(src + self.dropout1(src2))
             src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-            src = src + self.dropout2(src2)
-            src = self.norm2(src)
-
+            src = self.norm2(src + self.dropout2(src2))
         return src

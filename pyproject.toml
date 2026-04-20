@@ -21,6 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "anndata",
@@ -28,91 +29,91 @@ dependencies = [
   "session-info2",
   "numpy",
   "pandas",
-  "torch==2.6.0",
+  "torch==2.9",
   "torchvision",
-  "lightning",
+  "lightning<=2.5.1",
   "scanpy>=1.10.0",
   "hydra-core",
-  "wandb==0.20",
+  "wandb>=0.20",
   "anndata",
   "torchmetrics",
   "h5py",
   "tqdm",
   "einops",
   "ninja",
-  "huggingface-hub>=1.0.1",
-]
-optional-dependencies.dev = [
-  "pre-commit",
-  "twine>=4.0.2",
-  "torch-tb-profiler>=0.4.3",
-  "jupyterlab>=4.5.0",
-]
-optional-dependencies.doc = [
-  "docutils>=0.8,!=0.18.*,!=0.19.*",
-  "ipykernel",
-  "ipython",
-  "myst-nb>=1.1",
-  "pandas",
-  # Until pybtex >0.24.0 releases: https://bitbucket.org/pybtex-devs/pybtex/issues/169/
-  "setuptools",
-  "sphinx>=8.1",
-  "sphinx-autodoc-typehints",
-  "sphinx-book-theme>=1",
-  "sphinx-copybutton",
-  "sphinx-tabs",
-  "sphinxcontrib-bibtex>=1",
-  "sphinxext-opengraph",
-]
-optional-dependencies.test = [
-  "coverage>=7.10",
-  "pytest",
+  "huggingface-hub>=0.34.0,<1.0",
+  "torchdata>=0.11.0",
+  "lamin-dataloader @ git+https://github.com/theislab/lamin_dataloader.git",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://scConcept.readthedocs.io/"
 urls.Homepage = "https://github.com/theislab/scConcept"
 urls.Source = "https://github.com/theislab/scConcept"
 
-[tool.hatch.build.targets.wheel]
-packages = [ "src/concept" ]
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "twine>=4.0.2",
+  "torch-tb-profiler>=0.4.3",
+  "jupyterlab>=4.5.0",
+]
+test = [
+  "coverage>=7.10",
+  "pytest",
+]
+doc = [
+  "ipykernel",
+  "ipython",
+  "myst-nb>=1.1",
+  "pandas",
+  "sphinx>=8.1",
+  "sphinx-autodoc-typehints",
+  "sphinx-book-theme>=1",
+  "sphinx-copybutton",
+  "sphinx-design",
+  "sphinxcontrib-bibtex>=1",
+  "sphinxcontrib-katex",
+  "sphinxext-opengraph",
+]
 
-[tool.hatch.envs.default]
-installer = "uv"
-features = [ "dev" ]
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
-[tool.hatch.envs.docs]
-features = [ "doc" ]
-scripts.build = "sphinx-build -M html docs docs/_build -W {args}"
-scripts.open = "python -m webbrowser -t docs/_build/html/index.html"
-scripts.clean = "git clean -fdX -- {args:docs}"
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch]
+envs.default.installer = "uv"
+envs.default.dependency-groups = [ "dev" ]
+envs.docs.dependency-groups = [ "doc" ]
+envs.docs.scripts.build = "sphinx-build -M html docs docs/_build -W {args}"
+envs.docs.scripts.open = "python -m webbrowser -t docs/_build/html/index.html"
+envs.docs.scripts.clean = "git clean -fdX -- {args:docs}"
+envs.hatch-test.dependency-groups = [ "dev", "test" ]
+envs.hatch-test.matrix = [
 # Test the lowest and highest supported Python versions with normal deps
-[[tool.hatch.envs.hatch-test.matrix]]
-deps = [ "stable" ]
-python = [ "3.10", "3.13" ]
-
+  { deps = [ "stable" ], python = [ "3.10", "3.14" ] },
 # Test the newest supported Python version also with pre-release deps
-[[tool.hatch.envs.hatch-test.matrix]]
-deps = [ "pre" ]
-python = [ "3.13" ]
-
-[tool.hatch.envs.hatch-test]
-features = [ "dev", "test" ]
-
-[tool.hatch.envs.hatch-test.overrides]
+  { deps = [ "pre" ], python = [ "3.14" ] },
+]
 # If the matrix variable `deps` is set to "pre",
 # set the environment variable `UV_PRERELEASE` to "allow".
-matrix.deps.env-vars = [
+envs.hatch-test.overrides.matrix.deps.env-vars = [
   { key = "UV_PRERELEASE", value = "allow", if = [ "pre" ] },
 ]
+build.targets.wheel.packages = [ "src/concept" ]
 
 [tool.ruff]
 line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
-
 format.docstring-code-format = true
-
 lint.select = [
   "B",      # flake8-bugbear
   "BLE",    # flake8-blind-except
@@ -146,25 +147,24 @@ lint.per-file-ignores."docs/*" = [ "I" ]
 lint.per-file-ignores."tests/*" = [ "D" ]
 lint.pydocstyle.convention = "numpy"
 
-[tool.pytest.ini_options]
+[tool.pytest]
+strict = true
 testpaths = [ "tests" ]
-xfail_strict = true
 addopts = [
   "--import-mode=importlib", # allow using test files with same name
   "--cache-clear", # clear cache before running tests
 ]
-# SLURM-compatible cache settings
-cache_dir = "/tmp/.pytest_cache"
 
-[tool.coverage.run]
-source = [ "concept" ]
-patch = [ "subprocess" ]
-omit = [
+[tool.coverage]
+run.omit = [
   "**/test_*.py",
 ]
+run.patch = [ "subprocess" ]
+run.source = [ "concept" ]
 
 [tool.cruft]
 skip = [
+  ".git",
   "tests",
   "src/**/__init__.py",
   "src/**/basic.py",

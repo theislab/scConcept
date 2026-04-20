@@ -17,8 +17,12 @@ in particular, the [API documentation][]. -->
 
 You need to have Python 3.10 or newer installed on your system.
 If you don't have Python installed, we recommend installing [uv][].
+scConcept also uses [Flash Attention][] which requires CUDA.
 
-scConcept also uses [Flash Attention][] which requires CUDA
+### Create env from scratch:
+`cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates the virtual environment in one go.
+
+### Install manually:
 
 <!-- There are several alternative options to install scConcept: -->
 
@@ -35,18 +39,15 @@ pip install scConcept
 ```bash
 pip install git+https://github.com/theislab/scConcept.git@main
 ```
+Make sure a cuda version of Pytorch is installed. More information [here](https://pytorch.org/get-started/previous-versions/).
 
 2. [Flash Attention][] (required) - CUDA is required for installing flash-attn:
 
 ```bash
-pip install flash-attn==2.7.* --no-build-isolation
+MAX_JOBS=4 pip install flash-attn>=2.7 --no-build-isolation
 ```
+This can take up to an hour depending on the system specifications and if a pre-built releases of flash-attn is available for your exact verions of Python, Pytorch, and CUDA. If this takes long we highly recommend installing with the script in previous section!
 
-3. Install lamin-dataloader from GitHub (required):
-
-```bash
-pip install git+https://github.com/theislab/lamin_dataloader.git
-```
 
 ## How to use
 
@@ -63,13 +64,13 @@ adata = sc.read_h5ad("your_data.h5ad")
 concept = scConcept(cache_dir='./cache/')
 
 # Option 1: Load a model directly from HuggingFace
-concept.load_config_and_model(model_name='Corpus-30M') 
+concept.load_config_and_model(model_name='corpus40M-model30M') 
 
 # Option 2: Load any local model
 concept.load_config_and_model(
     config='<path-to-config.yaml>',
     model_path='<path-to-model.ckpt>',
-    gene_mapping_path='<path-to-gene-mapping.pkl>',
+    gene_mappings_path='<path-to-gene-mapping.pkl>',
 )
 
 # Extract embeddings --> adata.var['gene_id']: ENSGXXXXXXXXXXX
@@ -92,7 +93,7 @@ adata.obsm['X_scConcept_adapted'] = result['cls_cell_emb']
 
 ## Large-scale pre-training from scratch
 
-`scConcept.train()` is only light adaptation of pretrained models or small trainings on the fly. Use [train.py](https://github.com/theislab/scConcept/blob/main/src/concept/train.py) for distributed model pre-training from scratch over large corpus of data.
+`scConcept.train()` is only for light adaptation of pretrained models or small trainings on the fly. Use [train.py](https://github.com/theislab/scConcept/blob/main/src/concept/train.py) for distributed model pre-training from scratch over large corpus of data.
 
 Before using `train.py` follow the instructions on [lamindb](https://github.com/laminlabs/lamindb) for setting up a lamin instance.
 

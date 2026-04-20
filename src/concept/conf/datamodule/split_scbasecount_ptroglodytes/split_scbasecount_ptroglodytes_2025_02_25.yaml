@@ -1,0 +1,11 @@
+source_name: scbasecount-2025-02-25
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: ptroglodytes
+train:
+- ptroglodytes_SRP372276.h5ad
+- ptroglodytes_SRP453619.h5ad
+- ptroglodytes_SRP514963.h5ad
+- ptroglodytes_ERP125682.h5ad
+- ptroglodytes_ERP132583.h5ad
+- ptroglodytes_SRP408430.h5ad
+val: []

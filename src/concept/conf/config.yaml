@@ -1,34 +1,3 @@
-defaults:
-  - model: ContrastiveModel
-  - datamodule: DataModuleBasic
-  - split: split_v1_large
-  - _self_
-
-wandb:
-  enabled: False
-  run_name: null # Required if enabled=True
-  entity: null  # Required if enabled=True
-  project: null  # Required if enabled=True
-
-initialize:  
-  resume: False
-  run_id: null
-  checkpoint: null
-
-profiler:
-  enabled: False # Use profiler only for debugging
-  
-PATH:
-  PROJECT_PATH: ???
-  PROJECT_DATA_PATH: ${PATH.PROJECT_PATH}/data
-  CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
-  DATASET_PATH: ${PATH.PROJECT_DATA_PATH}/cxg_raw_2023-12-15
-  ADATA_PATH: ${PATH.DATASET_PATH}/h5ads
-  PANELS_PATH: ${PATH.PROJECT_PATH}/panels/human
-  SPLIT: ${split}
-  gene_mapping_path: ${PATH.DATASET_PATH}/pc_gene_token_mapping.pkl
-
-
 
 # Project directory structure:
 # PROJECT_PATH/
@@ -41,7 +10,51 @@ PATH:
 # │           └── ...
 # ├── model_checkpoints/
 # └── panels/
-#     └── <panel_name>/
-#         ├── panel_1.csv
-#         ├── panel_2.csv
-#         └── ...
+# |   └── <panel_name>/
+# |       ├── panel_1.csv
+# |       ├── panel_2.csv
+# |       └── ...
+# └── references/
+# |   └── embeddings/
+# |       └── <embedding_name>/
+# |           └── <human_gene_embeddings>.csv
+# |           └── <mouse_gene_embeddings>.csv
+# |           └── ...
+# |   └── vocabulary/
+# |       └── <gene_token_mapping>.csv
+
+defaults:
+  - model: ContrastiveModel
+  - datamodule: DataModuleBasic
+  - _self_
+
+wandb:
+  enabled: False
+  run_name: null # Required if enabled=True
+  entity: null  # Required if enabled=True
+  project: null  # Required if enabled=True
+
+initialize:  
+  resume: False
+  run_id: null
+  checkpoint: null
+  create_new_run: False
+  fresh_training: False
+
+profiler:
+  enabled: False # Use profiler only for debugging
+  
+PATH:
+  PROJECT_PATH: ???
+  LOCAL_DIR: null # A fast local directory to copy datasets to for faster training
+  CHECKPOINT_ROOT: ${PATH.PROJECT_PATH}/model_checkpoints
+  PANELS_PATH: ${PATH.PROJECT_PATH}/panels
+  GENE_MAPPINGS_PATH: ${PATH.PROJECT_PATH}/references/vocabulary/token_mappings_per_specie
+  PRETRAINED_VOCABULARY: ${PATH.PROJECT_PATH}/references/embeddings/esm2_t30
+  SPECIES:
+    - hsapiens
+    - mmusculus
+    - cjacchus
+    - mmulatta
+    - ptroglodytes
+
