@@ -52,6 +52,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autosummary",
+    "sphinx.ext.doctest",
     "sphinx.ext.napoleon",
     "sphinxcontrib.bibtex",
     "sphinx_autodoc_typehints",
@@ -98,6 +99,15 @@ intersphinx_mapping = {
     "anndata": ("https://anndata.readthedocs.io/en/stable/", None),
     "scanpy": ("https://scanpy.readthedocs.io/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    ## General
+    "matplotlib": ("https://matplotlib.org/stable/", None),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    ## Deep learning
+    "torch": ("https://docs.pytorch.org/docs/stable", None),
+    "lightning": ("https://lightning.ai/docs/pytorch/stable/", None),
+    ## Special
+    "scvi-tools": ("https://docs.scvi-tools.org/en/stable/", None),
 }
 
 # List of patterns, relative to source directory, that match files and
