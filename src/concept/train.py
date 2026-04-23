@@ -20,9 +20,10 @@ from concept.utils import (
     build_species_gene_mappings,
     copy_files,
     get_profiler,
-    resume_wandb_config,
     load_pretrained_vocabulary,
     resolve_split_list,
+    resume_wandb_config,
+    setup_logging,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,12 +207,7 @@ if __name__ == "__main__":
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (65536, hard))
 
-    logging.basicConfig(
-        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        force=True,
-    )
+    setup_logging()
     L.seed_everything(42)
 
     bash_cfg = OmegaConf.from_cli()

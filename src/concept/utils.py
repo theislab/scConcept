@@ -7,9 +7,45 @@ from datetime import timedelta
 import torch
 from concept.dataset import MultiSpeciesTokenizer
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.utilities import rank_zero_only
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
+
+
+class _GlobalRankZeroLoggingFilter(logging.Filter):
+    """Allow log records only from global rank zero."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return rank_zero_only.rank == 0
+
+
+def setup_logging() -> None:
+    """Configure package logging and restrict emission to global rank zero."""
+
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
+    configure_global_rank_zero_logging()
+
+
+def configure_global_rank_zero_logging() -> None:
+    """Attach a filter so only global rank zero emits Python log records."""
+
+    rank_zero_filter = _GlobalRankZeroLoggingFilter()
+    root_logger = logging.getLogger()
+
+    if not root_logger.handlers:
+        root_logger.addFilter(rank_zero_filter)
+        return
+
+    for handler in root_logger.handlers:
+        if any(isinstance(existing_filter, _GlobalRankZeroLoggingFilter) for existing_filter in handler.filters):
+            continue
+        handler.addFilter(rank_zero_filter)
 
 
 def resolve_split_list(
