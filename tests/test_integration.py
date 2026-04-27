@@ -8,6 +8,7 @@ and the training workflow.
 
 import importlib.util
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -22,6 +23,7 @@ from concept import ContrastiveModel
 logger = logging.getLogger(__name__)
 
 FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
+IS_GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 FLASH_ATTENTION_PARAMS = [
     False,
     pytest.param(
@@ -387,7 +389,19 @@ def test_predict_step_with_lamin_dataloader(
     assert all_cls_embs.shape[1] == mock_config["dim_model"]
 
 
-@pytest.mark.parametrize("model_name", ["corpus40M-model30M", "corpus230M[human]-model170M"])
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "corpus40M-model30M",
+        pytest.param(
+            "corpus230M[human]-model170M",
+            marks=pytest.mark.skipif(
+                IS_GITHUB_ACTIONS,
+                reason="large API integration model is too heavy for GitHub Actions",
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize("use_direct_paths", [False, True])
 def test_api_integration(adata, model_name, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
