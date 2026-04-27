@@ -1,10 +1,10 @@
 # scConcept
 
-<!-- [![Tests][badge-tests]][tests]
+[![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
 
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/scConcept/test.yaml?branch=main
-[badge-docs]: https://img.shields.io/readthedocs/scConcept -->
+[badge-docs]: https://img.shields.io/readthedocs/scConcept
 
 This repository contains the python package to train and use scConcept (Single-cell contrastive cell pre-training) method for single-cell transcriptomics.
 
@@ -18,32 +18,35 @@ in particular, the [API documentation][]. -->
 You need to have Python 3.12 or newer installed on your system.
 If you don't have Python installed, we recommend installing [uv][].
 
-### Create env from scratch:
-`cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates the virtual environment in one go.
+### Default installation
 
-### Install manually:
-
-There are several alternative options to install scConcept:
-
-1. Install the latest release of `sc-concept` from [PyPI][]:
+Install the latest release of `sc-concept` from [PyPI][]:
 
 ```bash
 pip install sc-concept
 ```
 
-2. Install the latest development version:
+### Latest development version
+
+To install the latest development version directly from GitHub:
 
 ```bash
 pip install git+https://github.com/theislab/scConcept.git@main
 ```
-Make sure a cuda version of Pytorch is installed. More information [here](https://pytorch.org/get-started/previous-versions/).
 
-3. Optional: install [Flash Attention][] for efficient large-scale training. CUDA is required for installing flash-attn:
+### Training from scratch with Flash Attention
+
+The standard installation is enough for loading pretrained models, extracting embeddings, and light adaptation. If you want to train scConcept from scratch with [Flash Attention][], use one of the following options.
+
+1. Recommended: `cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates a virtual environment with the training dependencies.
+
+2. Manual: make sure a CUDA-enabled version of PyTorch is installed. More information is available in the [PyTorch installation guide](https://pytorch.org/get-started/locally/). Then install Flash Attention:
 
 ```bash
-MAX_JOBS=4 pip install flash-attn>=2.7 --no-build-isolation
+MAX_JOBS=4 pip install "flash-attn>=2.7" --no-build-isolation
 ```
-This can take up to an hour depending on the system specifications and whether a pre-built release of flash-attn is available for your exact versions of Python, Pytorch, and CUDA. If this takes long, we highly recommend installing with the script in the previous section.
+
+This can take up to an hour depending on the system specifications and whether a pre-built release of `flash-attn` is available for your exact versions of Python, PyTorch, and CUDA. If this takes long, we recommend using the setup script instead.
 
 
 ## How to use
