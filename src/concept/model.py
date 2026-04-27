@@ -331,7 +331,7 @@ class ContrastiveModel(L.LightningModule):
             gene_embs = self._encode_gene_tokens(tokens)
 
             # Set CLS embedding at the start of each sequence in the unpadded representation
-            gene_embs[cu_seqlens[:-1]] = self.cls_embedding
+            gene_embs[cu_seqlens[:-1]] = self.cls_embedding.to(dtype=gene_embs.dtype)
 
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs, seqlens=seqlens)
@@ -353,7 +353,7 @@ class ContrastiveModel(L.LightningModule):
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
             gene_embs = self._encode_gene_tokens(tokens)
-            gene_embs[:, 0, :] = self.cls_embedding  # Set CLS embedding at the start of each sequence
+            gene_embs[:, 0, :] = self.cls_embedding.to(dtype=gene_embs.dtype)
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
