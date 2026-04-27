@@ -1,10 +1,22 @@
-import torch
-from torch import Tensor
 from typing import Optional
-from flash_attn.modules.mha import MHA # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
+
+from concept.modules.mha import FallbackMHA
+
+
+def _resolve_mha_cls(use_flash_attn):
+    if use_flash_attn:
+        from flash_attn.modules.mha import (
+            MHA,
+        )  # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/modules/mha.py
+
+        return MHA
+    return FallbackMHA
+
 
 class FlashTransformerEncoderLayer(nn.Module):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
@@ -31,6 +43,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         >>> src = torch.rand(32, 10, 512)
         >>> out = encoder_layer(src)
     """
+
     __constants__ = ["batch_first"]
 
     def __init__(
@@ -49,19 +62,11 @@ class FlashTransformerEncoderLayer(nn.Module):
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        # self.self_attn = FlashMHA(
-        #     embed_dim=d_model,
-        #     num_heads=nhead,
-        #     batch_first=batch_first,
-        #     attention_dropout=dropout,
-        #     **factory_kwargs,
-        # )
-        self.self_attn = MHA(
-            embed_dim=d_model,
-            num_heads=nhead,
-            dropout=dropout,
-            use_flash_attn=use_flash_attn,
-            **factory_kwargs,
+
+        mha_cls = _resolve_mha_cls(use_flash_attn)
+        self.use_flash_attn = use_flash_attn
+        self.self_attn = mha_cls(
+            embed_dim=d_model, num_heads=nhead, dropout=dropout, use_flash_attn=use_flash_attn, **factory_kwargs
         )
         # Version compatibility workaround
         if not hasattr(self.self_attn, "batch_first"):
@@ -117,17 +122,42 @@ class FlashTransformerEncoderLayer(nn.Module):
         if src_mask is not None:
             raise ValueError("FlashTransformerEncoderLayer does not support src_mask")
 
-        if key_padding_mask is not None:
-            key_padding_mask = ~key_padding_mask
-
         if self.norm_scheme == "pre":
-            src2 = self.self_attn(self.norm1(src), cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=key_padding_mask)
+            attn_src = self.norm1(src)
+            src2 = self._self_attention(
+                attn_src,
+                key_padding_mask=key_padding_mask,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
             src = src + self.dropout1(src2)
             src2 = self.linear2(self.dropout(self.activation(self.linear1(self.norm2(src)))))
             src = src + self.dropout2(src2)
         else:
-            src2 = self.self_attn(src, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=key_padding_mask)
+            src2 = self._self_attention(
+                src,
+                key_padding_mask=key_padding_mask,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
             src = self.norm1(src + self.dropout1(src2))
             src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
             src = self.norm2(src + self.dropout2(src2))
         return src
+
+    def _self_attention(
+        self,
+        src: Tensor,
+        key_padding_mask: Optional[Tensor] = None,
+        cu_seqlens: Optional[Tensor] = None,
+        max_seqlen: Optional[Tensor] = None,
+    ) -> Tensor:
+        if self.use_flash_attn:
+            flash_key_padding_mask = None if key_padding_mask is None else ~key_padding_mask
+            return self.self_attn(
+                src,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                key_padding_mask=flash_key_padding_mask,
+            )
+        return self.self_attn(src, key_padding_mask=key_padding_mask)

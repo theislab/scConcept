@@ -4,20 +4,15 @@ Integration tests for the training pipeline and model.
 This test suite provides comprehensive testing of the ContrastiveModel
 and the training workflow.
 
-Note: flash_attn and _encode are conditionally mocked:
-- If flash-attn is installed: Uses real implementation
-- If flash-attn is not installed: Uses mocked implementation
-- Log method is always mocked to avoid trainer reference errors
 """
 
+import importlib.util
 import logging
-import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
-import flash_attn
 
 from lamin_dataloader import BaseCollate, InMemoryCollection, TokenizedDataset
 from torch.utils.data import DataLoader
@@ -26,7 +21,23 @@ from concept import ContrastiveModel
 
 logger = logging.getLogger(__name__)
 
-def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=None):
+FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
+FLASH_ATTENTION_PARAMS = [
+    False,
+    pytest.param(
+        True,
+        marks=pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_attn is not installed"),
+    ),
+]
+
+def _mock_encode(
+    self,
+    tokens,
+    values,
+    src_key_padding_mask=None,
+    seq_lengths=None,
+    return_padded_embeddings=False,
+):
     """
     Mock the _encode function to avoid complex transformer computations.
     Returns mock embeddings and cell embeddings with correct shapes.
@@ -98,7 +109,7 @@ def test_model_initialization(mock_config, device):
     assert model.device.type == device.type
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("use_pretrained_vocabulary", [False, True])
 def test_training_step(mock_config, device, flash_attention, use_pretrained_vocabulary):
     """Test that the model can perform a training step"""
@@ -195,7 +206,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
             assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs["hsapiens"].weight)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 def test_validation_step(mock_config, device, flash_attention):
     """Test that the model can perform a validation step and calls model.log appropriately"""
     # Update mock_config with parameterized flash_attention value
@@ -243,7 +254,7 @@ def test_validation_step(mock_config, device, flash_attention):
         assert any(call == "val/test_val/loss_cont" for call in call_args_list)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("seq_lengths_available", [True, False])
 def test_predict_step(mock_config, device, flash_attention, seq_lengths_available):
     """Test that the model can perform a predict step"""
