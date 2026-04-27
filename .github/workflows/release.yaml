@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/sc_concept
+      url: https://pypi.org/project/sc-concept/
     permissions:
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
     steps:

@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 requires = [ "hatchling" ]
 
 [project]
-name = "scConcept"
+name = "sc-concept"
 version = "0.2.0"
 description = "code for scConcept"
 readme = "README.md"
