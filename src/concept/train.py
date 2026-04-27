@@ -188,6 +188,8 @@ def train(cfg: DictConfig, build_only: bool = False):
         checkpoint_file = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
         if cfg.initialize.create_new_run:
             model = ContrastiveModel.load_from_checkpoint(checkpoint_file, **model_args, strict=False)
+            if cfg.model.training.validate_before_training:
+                trainer.validate(model=model, datamodule=datamodule)
         else:
             model = ContrastiveModel(**model_args)
             ckpt_path = checkpoint_file
