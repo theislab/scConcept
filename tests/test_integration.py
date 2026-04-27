@@ -728,9 +728,15 @@ def test_train_integration(train_config):
     - Run training for a few steps
     - Complete without errors
     """
+    from contextlib import nullcontext
     from unittest.mock import MagicMock, patch
 
     from concept.train import train
+
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train.DDPStrategy", return_value="auto")
 
     # Mock wandb logger to avoid needing real credentials
     mock_logger = MagicMock()
@@ -739,10 +745,11 @@ def test_train_integration(train_config):
     mock_logger.experiment.config = MagicMock()
 
     # Mock rank_zero_only to always return 0 (single process)
-    with patch("concept.train.rank_zero_only.rank", 0):
-        with patch("concept.train.WandbLogger", return_value=mock_logger):
-            # Run training
-            train(train_config)
+    with strategy_patch:
+        with patch("concept.train.rank_zero_only.rank", 0):
+            with patch("concept.train.WandbLogger", return_value=mock_logger):
+                # Run training
+                train(train_config)
 
 
 def test_train_fabric_integration(train_config):
@@ -755,11 +762,20 @@ def test_train_fabric_integration(train_config):
     - Run training for a few steps
     - Complete without errors
     """
+    from contextlib import nullcontext
+    from unittest.mock import patch
+
     from concept.train_fabric import FabricTrainer
 
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train_fabric.DDPStrategy", return_value="auto")
+
     # train_config has wandb.enabled=False so no WandbLogger mock needed
-    trainer = FabricTrainer(train_config)
-    trainer.fit()
+    with strategy_patch:
+        trainer = FabricTrainer(train_config)
+        trainer.fit()
 
 
 if __name__ == "__main__":
