@@ -720,6 +720,8 @@ class ContrastiveModel(L.LightningModule):
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
         # logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
 
+        batch = self.add_cls_token(batch)
+
         if self.debug and batch_idx % 20 == 0:
             logger.debug(f"batch tokens: {batch['tokens'][0]}")
             logger.debug(f"batch values: {batch['values'][0]}")
