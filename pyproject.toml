@@ -43,7 +43,7 @@ dependencies = [
   "ninja",
   "huggingface-hub>=0.34.0,<1.0",
   "torchdata>=0.11.0",
-  "lamin-dataloader @ git+https://github.com/theislab/lamin_dataloader.git",
+  "lamin-dataloader>=0.2.0",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://scConcept.readthedocs.io/"
