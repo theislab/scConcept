@@ -129,4 +129,4 @@ If you found a bug, please use the [issue tracker][]. -->
 [documentation]: https://scConcept.readthedocs.io
 [changelog]: https://scConcept.readthedocs.io/en/latest/changelog.html
 [api documentation]: https://scConcept.readthedocs.io/en/latest/api.html
-[pypi]: https://pypi.org/project/scConcept
+[pypi]: https://pypi.org/project/sc-concept
