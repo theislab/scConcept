@@ -17,36 +17,33 @@ in particular, the [API documentation][]. -->
 
 You need to have Python 3.10 or newer installed on your system.
 If you don't have Python installed, we recommend installing [uv][].
-scConcept also uses [Flash Attention][] which requires CUDA.
 
 ### Create env from scratch:
 `cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates the virtual environment in one go.
 
 ### Install manually:
 
-<!-- There are several alternative options to install scConcept: -->
+There are several alternative options to install scConcept:
 
-<!--
-1) Install the latest release of `scConcept` from [PyPI][]:
+1. Install the latest release of `sc-concept` from [PyPI][]:
 
 ```bash
-pip install scConcept
+pip install sc-concept
 ```
--->
 
-1. Install the latest development version:
+2. Install the latest development version:
 
 ```bash
 pip install git+https://github.com/theislab/scConcept.git@main
 ```
 Make sure a cuda version of Pytorch is installed. More information [here](https://pytorch.org/get-started/previous-versions/).
 
-2. [Flash Attention][] (required) - CUDA is required for installing flash-attn:
+3. Optional: install [Flash Attention][] for efficient large-scale training. CUDA is required for installing flash-attn:
 
 ```bash
 MAX_JOBS=4 pip install flash-attn>=2.7 --no-build-isolation
 ```
-This can take up to an hour depending on the system specifications and if a pre-built releases of flash-attn is available for your exact verions of Python, Pytorch, and CUDA. If this takes long we highly recommend installing with the script in previous section!
+This can take up to an hour depending on the system specifications and whether a pre-built release of flash-attn is available for your exact versions of Python, Pytorch, and CUDA. If this takes long, we highly recommend installing with the script in the previous section.
 
 
 ## How to use
