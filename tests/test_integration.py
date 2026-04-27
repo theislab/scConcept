@@ -4,20 +4,16 @@ Integration tests for the training pipeline and model.
 This test suite provides comprehensive testing of the ContrastiveModel
 and the training workflow.
 
-Note: flash_attn and _encode are conditionally mocked:
-- If flash-attn is installed: Uses real implementation
-- If flash-attn is not installed: Uses mocked implementation
-- Log method is always mocked to avoid trainer reference errors
 """
 
+import importlib.util
 import logging
-import sys
+import os
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
-import flash_attn
 
 from lamin_dataloader import BaseCollate, InMemoryCollection, TokenizedDataset
 from torch.utils.data import DataLoader
@@ -26,7 +22,24 @@ from concept import ContrastiveModel
 
 logger = logging.getLogger(__name__)
 
-def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=None):
+FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
+IS_GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+FLASH_ATTENTION_PARAMS = [
+    False,
+    pytest.param(
+        True,
+        marks=pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_attn is not installed"),
+    ),
+]
+
+def _mock_encode(
+    self,
+    tokens,
+    values,
+    src_key_padding_mask=None,
+    seq_lengths=None,
+    return_padded_embeddings=False,
+):
     """
     Mock the _encode function to avoid complex transformer computations.
     Returns mock embeddings and cell embeddings with correct shapes.
@@ -98,7 +111,7 @@ def test_model_initialization(mock_config, device):
     assert model.device.type == device.type
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("use_pretrained_vocabulary", [False, True])
 def test_training_step(mock_config, device, flash_attention, use_pretrained_vocabulary):
     """Test that the model can perform a training step"""
@@ -195,7 +208,7 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
             assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs["hsapiens"].weight)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 def test_validation_step(mock_config, device, flash_attention):
     """Test that the model can perform a validation step and calls model.log appropriately"""
     # Update mock_config with parameterized flash_attention value
@@ -243,7 +256,7 @@ def test_validation_step(mock_config, device, flash_attention):
         assert any(call == "val/test_val/loss_cont" for call in call_args_list)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("seq_lengths_available", [True, False])
 def test_predict_step(mock_config, device, flash_attention, seq_lengths_available):
     """Test that the model can perform a predict step"""
@@ -376,7 +389,19 @@ def test_predict_step_with_lamin_dataloader(
     assert all_cls_embs.shape[1] == mock_config["dim_model"]
 
 
-@pytest.mark.parametrize("model_name", ["corpus40M-model30M", "corpus230M[human]-model170M"])
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "corpus40M-model30M",
+        pytest.param(
+            "corpus230M[human]-model170M",
+            marks=pytest.mark.skipif(
+                IS_GITHUB_ACTIONS,
+                reason="large API integration model is too heavy for GitHub Actions",
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize("use_direct_paths", [False, True])
 def test_api_integration(adata, model_name, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
@@ -717,9 +742,15 @@ def test_train_integration(train_config):
     - Run training for a few steps
     - Complete without errors
     """
+    from contextlib import nullcontext
     from unittest.mock import MagicMock, patch
 
     from concept.train import train
+
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train.DDPStrategy", return_value="auto")
 
     # Mock wandb logger to avoid needing real credentials
     mock_logger = MagicMock()
@@ -728,10 +759,11 @@ def test_train_integration(train_config):
     mock_logger.experiment.config = MagicMock()
 
     # Mock rank_zero_only to always return 0 (single process)
-    with patch("concept.train.rank_zero_only.rank", 0):
-        with patch("concept.train.WandbLogger", return_value=mock_logger):
-            # Run training
-            train(train_config)
+    with strategy_patch:
+        with patch("concept.train.rank_zero_only.rank", 0):
+            with patch("concept.train.WandbLogger", return_value=mock_logger):
+                # Run training
+                train(train_config)
 
 
 def test_train_fabric_integration(train_config):
@@ -744,11 +776,20 @@ def test_train_fabric_integration(train_config):
     - Run training for a few steps
     - Complete without errors
     """
+    from contextlib import nullcontext
+    from unittest.mock import patch
+
     from concept.train_fabric import FabricTrainer
 
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train_fabric.DDPStrategy", return_value="auto")
+
     # train_config has wandb.enabled=False so no WandbLogger mock needed
-    trainer = FabricTrainer(train_config)
-    trainer.fit()
+    with strategy_patch:
+        trainer = FabricTrainer(train_config)
+        trainer.fit()
 
 
 if __name__ == "__main__":

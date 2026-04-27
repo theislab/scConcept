@@ -557,12 +557,11 @@ class scConcept:
         }
         datamodule = AnnDataModule(**datamodule_args)
 
-        # Create trainer for single GPU (no validation)
         trainer = L.Trainer(
             max_steps=self.cfg.model.training.max_steps,
             logger=False,
-            accelerator="gpu",
-            devices=1,
+            accelerator="auto",
+            devices="auto",
             num_nodes=1,
             limit_train_batches=float(self.cfg.model.training.limit_train_batches),
             precision="bf16-mixed",

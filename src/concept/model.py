@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import random
+import importlib.util
 from collections import defaultdict
 from functools import partial
 from itertools import combinations
@@ -23,6 +24,8 @@ from .modules.transformer import TransformerEncoder
 from torch.distributed.nn.functional import all_gather
 
 logger = logging.getLogger(__name__)
+
+FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
 
 
 class GeneEncoder(nn.Module):
@@ -204,6 +207,11 @@ class ContrastiveModel(L.LightningModule):
         super().__init__()
         self.debug = debug
         self.flash_attention = config["flash_attention"]
+        if self.flash_attention and not FLASH_ATTN_AVAILABLE:
+            logger.warning(
+                "flash_attention=True requires the optional 'flash_attn' package to be installed. Falling back to non flash implementation."
+            )
+            self.flash_attention = False
         self.dim_gene_embs = config.get("dim_gene_embs", config["dim_model"])
         self.dim_model = config["dim_model"]
         self.dim_hid = config["dim_hid"]
@@ -305,6 +313,7 @@ class ContrastiveModel(L.LightningModule):
         tokens: Tensor,
         values: Tensor,
         seq_lengths: List[int] = None,
+        return_padded_embeddings: bool = False,
     ) -> Tensor:
         batch_size = tokens.size(0)
 
@@ -322,7 +331,7 @@ class ContrastiveModel(L.LightningModule):
             gene_embs = self._encode_gene_tokens(tokens)
 
             # Set CLS embedding at the start of each sequence in the unpadded representation
-            gene_embs[cu_seqlens[:-1]] = self.cls_embedding
+            gene_embs[cu_seqlens[:-1]] = self.cls_embedding.to(dtype=gene_embs.dtype)
 
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs, seqlens=seqlens)
@@ -337,14 +346,14 @@ class ContrastiveModel(L.LightningModule):
                 total_embs = gene_embs + value_embs
 
             embs_jagged = self.transformer_encoder(total_embs, cu_seqlens=cu_seqlens, max_seqlen=max_length)
-            # embs_padded = pad_input(embs_jagged, indices, batch_size, max_length)
-            # cell_embs = embs_padded[:, 0, :]
-            embs_padded = None
+            embs_padded = (
+                pad_input(embs_jagged, indices, batch_size, max_length) if return_padded_embeddings else None
+            )
             cell_embs = embs_jagged[cu_seqlens[:-1]]
             # assert torch.equal(cell_embs_jagged, cell_embs), "cell_embs_jagged and cell_embs are not the same"
         else:
             gene_embs = self._encode_gene_tokens(tokens)
-            gene_embs[:, 0, :] = self.cls_embedding  # Set CLS embedding at the start of each sequence
+            gene_embs[:, 0, :] = self.cls_embedding.to(dtype=gene_embs.dtype)
             if self.input_encoding == "rank_encoding":
                 total_embs = self.positional_encoder(gene_embs)
             else:
@@ -357,7 +366,7 @@ class ContrastiveModel(L.LightningModule):
         return embs_padded, cell_embs
     
     def forward(self, input_tokens, input_values, seq_lengths: List[int] = None):
-        embs_padded, cell_embs = self._encode(input_tokens, input_values, seq_lengths=seq_lengths)
+        embs_padded, cell_embs = self._encode(input_tokens, input_values, seq_lengths, return_padded_embeddings = self.decoder_head is True)
         pred = self.expression_decoder(embs_padded) if self.decoder_head else None
 
         return pred, embs_padded, cell_embs
