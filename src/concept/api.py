@@ -16,7 +16,12 @@ from tqdm import tqdm
 from .data import AnnDataModule
 from .dataset import MultiSpeciesTokenizedDataset, MultiSpeciesTokenizer
 from .model import ContrastiveModel
-from .utils import build_species_gene_mappings, infer_species, load_pretrained_vocabulary
+from .utils import (
+    build_species_gene_mappings,
+    infer_species,
+    load_gene_name_to_id_mapping,
+    load_pretrained_vocabulary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,7 @@ class scConcept:
         self.model = None
         self.tokenizer = None
         self.device = None
+        self.gene_mappings_path = None
 
     def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
@@ -232,6 +238,7 @@ class scConcept:
 
         # Load gene mapping and build tokenizer
         gene_mappings_path = Path(str(gene_mappings_path))
+        self.gene_mappings_path = gene_mappings_path
         # Multi-species: load one {species}.csv per species listed in cfg.datamodule.species
         self.tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(str(gene_mappings_path), self.cfg.datamodule.species))
 
@@ -278,6 +285,29 @@ class scConcept:
             raise ValueError("Config must be a string path, dict, or DictConfig")
         cfg = scConcept.apply_compatibility_changes(cfg)
         return cfg
+
+    def _check_model_loaded(self):
+        if self.model is None or self.cfg is None or self.gene_mappings_path is None:
+            raise ValueError("Model not loaded. Call load_config_and_model() first.")
+
+    @property
+    def species(self) -> list[str]:
+        """Return species names supported by the loaded model."""
+        self._check_model_loaded()
+        return list(self.cfg.datamodule.species)
+
+    def get_gene_name_to_id_mapping(self, species: str) -> dict[str, str]:
+        """Return a ``{gene_name: gene_id}`` mapping for one species."""
+        self._check_model_loaded()
+        return load_gene_name_to_id_mapping(str(self.gene_mappings_path), species)
+
+    def map_gene_names_to_ids(self, species: str, gene_names: list[str]) -> list[object]:
+        """Map gene names to gene IDs, using ``nan`` for unavailable gene names."""
+        import numpy as np
+
+        self._check_model_loaded()
+        gene_name_to_id = self.get_gene_name_to_id_mapping(species)
+        return [gene_name_to_id.get(gene_name, np.nan) for gene_name in gene_names]
 
     @staticmethod
     def validate_config(cfg: DictConfig):
@@ -497,6 +527,7 @@ class scConcept:
         if adaptaion:
             assert self.tokenizer is not None, "Tokenizer not found. Please load the model first."
         else:
+            self.gene_mappings_path = Path(str(self.cfg.PATH.GENE_MAPPINGS_PATH))
             self.tokenizer = MultiSpeciesTokenizer(
                 build_species_gene_mappings(self.cfg.PATH.GENE_MAPPINGS_PATH, self.cfg.datamodule.species)
             )
