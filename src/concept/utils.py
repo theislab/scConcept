@@ -130,6 +130,43 @@ def build_species_gene_mappings(
     }
 
 
+def load_gene_name_to_id_mapping(
+    gene_mappings_path: str,
+    species: str,
+) -> dict[str, str]:
+    """Load a ``{gene_name: gene_id}`` mapping for a species.
+
+    Expects ``<gene_mappings_path>/<species>.csv`` to contain ``gene_id`` and
+    ``gene_name`` columns. The ``token`` column may also be present but is not
+    used for this conversion.
+    """
+    import pandas as pd
+
+    csv_path = os.path.join(os.fspath(gene_mappings_path), f"{species}.csv")
+    if not os.path.exists(csv_path):
+        raise ValueError(f"No gene mapping file found for species '{species}' at {csv_path}.")
+
+    df = pd.read_csv(csv_path, dtype={"gene_id": "string", "gene_name": "string"})
+    required_columns = {"gene_id", "gene_name"}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Gene mapping file for species '{species}' is missing required columns "
+            f"{sorted(missing_columns)}: {csv_path}"
+        )
+
+    df = df.dropna(subset=["gene_id", "gene_name"])
+    duplicated_gene_names = df.loc[df["gene_name"].duplicated(keep=False), "gene_name"].unique().tolist()
+    if duplicated_gene_names:
+        sample = duplicated_gene_names[:5]
+        raise ValueError(
+            f"Gene mapping file for species '{species}' contains duplicate gene_name values "
+            f"and cannot be represented as a one-to-one dictionary. Examples: {sample}"
+        )
+
+    return dict(zip(df["gene_name"].astype(str), df["gene_id"].astype(str), strict=False))
+
+
 def load_pretrained_vocabulary(
     pretrained_vocabulary_dir: str,
     tokenizer: MultiSpeciesTokenizer,
