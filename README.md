@@ -70,7 +70,13 @@ concept.load_config_and_model(model_name='corpus40M-model30M')
 concept.load_config_and_model(
     config='<path-to-config.yaml>',
     model_path='<path-to-model.ckpt>',
-    gene_mappings_path='<path-to-gene-mapping.pkl>',
+    gene_mappings_path='<path-to-gene-mappings-directory>',
+)
+
+# scConcept accepts Gene Ensemble IDs as input. You can use built-in helper methods to do the mapping if needed:
+adata.var['gene_id'] = concept.map_gene_names_to_ids(
+    species='hsapiens', # see concept.species for available species names
+    gene_names=adata.var_names.tolist(),
 )
 
 # Extract embeddings --> adata.var['gene_id']: ENSGXXXXXXXXXXX
@@ -78,7 +84,11 @@ result = concept.extract_embeddings(adata=adata, gene_id_column='gene_id')
 
 # Use embeddings for downstream analysis
 adata.obsm['X_scConcept'] = result['cls_cell_emb']
+```
 
+### Model adaptation
+
+```python
 # Adapt a pre-trained model on your own data
 concept.train(adata, max_steps=10000, batch_size=128) 
 
