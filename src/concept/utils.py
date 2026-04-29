@@ -156,13 +156,8 @@ def load_gene_name_to_id_mapping(
         )
 
     df = df.dropna(subset=["gene_id", "gene_name"])
-    duplicated_gene_names = df.loc[df["gene_name"].duplicated(keep=False), "gene_name"].unique().tolist()
-    if duplicated_gene_names:
-        sample = duplicated_gene_names[:5]
-        raise ValueError(
-            f"Gene mapping file for species '{species}' contains duplicate gene_name values "
-            f"and cannot be represented as a one-to-one dictionary. Examples: {sample}"
-        )
+    gene_name_keys = df["gene_name"].astype(str).str.casefold()
+    df = df.loc[~gene_name_keys.duplicated(keep="first")]
 
     return dict(zip(df["gene_name"].astype(str), df["gene_id"].astype(str), strict=False))
 
