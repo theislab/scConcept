@@ -302,12 +302,16 @@ class scConcept:
         return load_gene_name_to_id_mapping(str(self.gene_mappings_path), species)
 
     def map_gene_names_to_ids(self, species: str, gene_names: list[str]) -> list[object]:
-        """Map gene names to gene IDs, using ``nan`` for unavailable gene names."""
+        """Map gene names to gene IDs case-insensitively, using ``nan`` for unavailable gene names."""
         import numpy as np
 
         self._check_model_loaded()
         gene_name_to_id = self.get_gene_name_to_id_mapping(species)
-        return [gene_name_to_id.get(gene_name, np.nan) for gene_name in gene_names]
+        casefolded_gene_name_to_id: dict[str, str] = {}
+        for gene_name, gene_id in gene_name_to_id.items():
+            casefolded_gene_name_to_id.setdefault(gene_name.casefold(), gene_id)
+
+        return [casefolded_gene_name_to_id.get(gene_name.casefold(), np.nan) for gene_name in gene_names]
 
     @staticmethod
     def validate_config(cfg: DictConfig):
