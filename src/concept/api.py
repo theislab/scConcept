@@ -3,10 +3,13 @@ import multiprocessing
 import os
 import shutil
 from pathlib import Path
+from typing import Sequence
 
 import anndata as ad
 import lightning as L
+import numpy as np
 import torch
+import torch.nn.functional as F
 from huggingface_hub import HfApi, hf_hub_download
 from lamin_dataloader import BaseCollate, InMemoryCollection
 from omegaconf import DictConfig, OmegaConf
@@ -374,6 +377,7 @@ class scConcept:
         batch_size: int = 32,
         max_tokens: int = None,
         gene_sampling_strategy: str = None,
+        return_type: str = "numpy",
     ):
         """
         Extract embeddings from AnnData using the loaded model.
@@ -385,12 +389,15 @@ class scConcept:
             batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
+            return_type: Output type for embeddings: ``"numpy"`` (default) or ``"torch"``.
 
         Returns:
             dict: Dictionary containing 'cls_cell_emb', and optionally 'context_sizes'
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
+        if return_type not in {"numpy", "torch"}:
+            raise ValueError("return_type must be either 'numpy' or 'torch'")
 
         self.model.eval()
 
@@ -450,14 +457,16 @@ class scConcept:
                     output = self.model.predict_step(batch, batch_idx)
 
                     # Collect embeddings
-                    all_cls_embs.append(output["cls_cell_emb"].cpu())
+                    all_cls_embs.append(output["cls_cell_emb"].detach())
 
                     # Store context sizes (actual number of tokens per cell)
                     if "context_sizes" in output:
                         all_context_sizes.extend(output["context_sizes"])
 
         # Concatenate all embeddings
-        cls_cell_embs = torch.cat(all_cls_embs, dim=0).cpu().detach().numpy()
+        cls_cell_embs = torch.cat(all_cls_embs, dim=0)
+        if return_type == "numpy":
+            cls_cell_embs = cls_cell_embs.cpu().detach().numpy()
 
         result = {"cls_cell_emb": cls_cell_embs}
 
@@ -468,6 +477,148 @@ class scConcept:
         logger.info(f"Total cells processed: {len(cls_cell_embs)}")
 
         return result
+
+    @staticmethod
+    def _normalize_panel_features(panel: Sequence[str] | np.ndarray | str) -> np.ndarray | None:
+        """Return panel features as string IDs; ``"all_genes"`` is resolved after adata feature IDs are known."""
+        if isinstance(panel, str):
+            if panel != "all_genes":
+                raise ValueError("Panel strings are only supported for 'all_genes'. Pass gene IDs as a sequence.")
+            return None
+
+        features = np.asarray(panel, dtype=str)
+        if features.ndim != 1:
+            raise ValueError("panel must be a one-dimensional sequence of gene IDs")
+        return features
+
+    @staticmethod
+    def _subset_adata_to_panel(
+        adata: ad.AnnData,
+        panel: Sequence[str] | np.ndarray | str,
+        gene_id_column: str = None,
+    ) -> tuple[ad.AnnData, np.ndarray, int]:
+        """Subset ``adata`` to genes present in ``panel`` and return matched features plus original panel size."""
+        if gene_id_column is None:
+            adata_features = adata.var_names.to_numpy(dtype=str)
+        else:
+            if gene_id_column not in adata.var:
+                raise ValueError(f"gene_id_column '{gene_id_column}' is not present in adata.var")
+            adata_features = adata.var[gene_id_column].to_numpy(dtype=str)
+
+        panel_features = scConcept._normalize_panel_features(panel)
+        if panel_features is None:
+            panel_features = adata_features
+
+        panel_size = int(len(panel_features))
+        if panel_size == 0:
+            raise ValueError("panel must contain at least one feature")
+
+        panel_feature_set = set(panel_features)
+        feature_mask = np.asarray([feature in panel_feature_set for feature in adata_features], dtype=bool)
+        matched_features = adata_features[feature_mask]
+        if len(matched_features) == 0:
+            raise ValueError("panel has no features in common with adata")
+
+        return adata[:, feature_mask], matched_features, panel_size
+
+    def estimate_mutual_information(
+        self,
+        adata: ad.AnnData,
+        panel_1: Sequence[str] | np.ndarray | str,
+        panel_2: Sequence[str] | np.ndarray | str,
+        species: str = None,
+        gene_id_column: str = None,
+        batch_size: int = 32,
+        estimate_size: int = None,
+        random_seed: int = 42,
+    ) -> dict[str, object]:
+        """
+        Estimate mutual information between two gene panels over the same cells.
+
+        The estimate follows the contrastive objective used by scConcept:
+        ``log(n_cells) - cross_entropy(normalized_embs_1 @ normalized_embs_2.T * logit_scale, arange(n_cells))``.
+
+        Args:
+            adata: AnnData object containing the cells to compare.
+            panel_1: First panel as gene IDs matching ``adata.var_names`` (or ``gene_id_column``), or ``"all_genes"``.
+            panel_2: Second panel as gene IDs matching ``adata.var_names`` (or ``gene_id_column``), or ``"all_genes"``.
+            species: Species identifier. If None, inferred separately by ``extract_embeddings``.
+            gene_id_column: Column in ``adata.var`` used as gene IDs. If None, uses ``adata.var_names``.
+            batch_size: Batch size for embedding extraction.
+            estimate_size: Optional number of cells randomly sampled before embedding extraction.
+            random_seed: Seed for estimate-size cell subsampling.
+
+        Returns:
+            dict: Dictionary with the following entries:
+
+                - ``mutual_info``: Estimated mutual information, computed as
+                  ``log(n_cells) - contrastive_loss``.
+                - ``contrastive_loss``: Cross-entropy loss over the panel-pair logits, using each cell's
+                  matching cell in the other panel view as the positive target.
+                - ``n_cells``: Number of cells used for the estimate. This equals ``estimate_size`` when
+                  provided, otherwise ``adata.n_obs``.
+                - ``panel_size_1``: Number of input features requested in ``panel_1`` before intersecting
+                  with ``adata``.
+                - ``panel_size_2``: Number of input features requested in ``panel_2`` before intersecting
+                  with ``adata``.
+                - ``features_size_1``: Number of ``panel_1`` features found in ``adata`` and used for
+                  embedding extraction.
+                - ``features_size_2``: Number of ``panel_2`` features found in ``adata`` and used for
+                  embedding extraction.
+                - ``features_1``: Feature IDs from ``panel_1`` that were present in ``adata``, ordered as
+                  in ``adata.var``.
+                - ``features_2``: Feature IDs from ``panel_2`` that were present in ``adata``, ordered as
+                  in ``adata.var``.
+        """
+        self._check_model_loaded()
+        if adata.n_obs < 1:
+            raise ValueError("adata must contain at least one cell")
+
+        if estimate_size is not None:
+            if estimate_size < 1:
+                raise ValueError("estimate_size must be a positive integer")
+            if estimate_size > adata.n_obs:
+                raise ValueError(f"estimate_size ({estimate_size}) cannot exceed adata.n_obs ({adata.n_obs})")
+            rng = np.random.default_rng(seed=random_seed)
+            adata = adata[rng.choice(adata.n_obs, estimate_size, replace=False)].copy()
+
+        adata_1, features_1, panel_size_1 = self._subset_adata_to_panel(adata, panel_1, gene_id_column)
+        adata_2, features_2, panel_size_2 = self._subset_adata_to_panel(adata, panel_2, gene_id_column)
+
+        embedding_kwargs = {
+            "species": species,
+            "gene_id_column": gene_id_column,
+            "batch_size": batch_size,
+            "return_type": "torch",
+        }
+        cell_embs_1 = self.extract_embeddings(adata_1, **embedding_kwargs)["cls_cell_emb"]
+        cell_embs_2 = self.extract_embeddings(adata_2, **embedding_kwargs)["cls_cell_emb"]
+
+        if len(cell_embs_1) != len(cell_embs_2):
+            raise ValueError("Panel embeddings must contain the same number of cells")
+
+        n_cells = len(cell_embs_1)
+        logit_scale = self.model.logit_scale.exp().to(self.device)
+
+        with torch.no_grad():
+            logits = torch.mm(cell_embs_1, cell_embs_2.t()) * logit_scale
+            targets = torch.arange(n_cells, device=self.device)
+            loss = F.cross_entropy(logits, targets)
+
+        contrastive_loss = float(loss.cpu().item())
+        mutual_info = float(np.log(n_cells) - contrastive_loss)
+
+        return {
+            "mutual_info": mutual_info,
+            "contrastive_loss": contrastive_loss,
+            "n_cells": n_cells,
+            "panel_size_1": panel_size_1,
+            "panel_size_2": panel_size_2,
+            "features_size_1": int(len(features_1)),
+            "features_size_2": int(len(features_2)),
+            "features_1": features_1,
+            "features_2": features_2,
+        }
 
     def train(self, adata_list, species=None, max_steps=None, batch_size=None):
         """Train a new model using the configuration in self.cfg.
