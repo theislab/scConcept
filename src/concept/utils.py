@@ -229,6 +229,32 @@ def load_pretrained_vocabulary(
     return pretrained_vocabularies
 
 
+def create_placeholder_vocabulary(
+    tokenizer: MultiSpeciesTokenizer,
+    pretrained_dim: int,
+) -> dict[str, torch.Tensor]:
+    """Create zero-filled per-species vocabulary tensors.
+
+    Args:
+        tokenizer: A :class:`~concept.dataset.MultiSpeciesTokenizer` covering
+            all species to embed.
+        pretrained_dim: Dimensionality of the placeholder embeddings
+            (``model.dim_pretrained_vocab`` in the config).
+
+    Returns:
+        Dict mapping each species name to a zero tensor of shape
+        ``(vocab_size, pretrained_dim)``.
+    """
+    placeholder_vocabularies: dict[str, torch.Tensor] = {}
+
+    for species in tokenizer.species:
+        sp_tok = tokenizer.get_tokenizer(species)
+        vocab_size = len(sp_tok.gene_mapping)
+        placeholder_vocabularies[species] = torch.zeros(vocab_size, pretrained_dim, dtype=torch.float)
+
+    return placeholder_vocabularies
+
+
 def infer_species(gene_ids: set[str], tokenizer: "MultiSpeciesTokenizer") -> str:
     """Infer the species of a set of gene IDs by overlap with tokenizer vocabularies.
 

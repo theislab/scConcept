@@ -20,7 +20,7 @@ from .utils import (
     build_species_gene_mappings,
     infer_species,
     load_gene_name_to_id_mapping,
-    load_pretrained_vocabulary,
+    create_placeholder_vocabulary,
 )
 
 logger = logging.getLogger(__name__)
@@ -226,14 +226,14 @@ class scConcept:
                 model_name, model_dir
             )
         else:
-            if not all([config, model_path, gene_mappings_path]):
-                raise ValueError("If using direct paths config, model_path and gene_mappings_path must be provided")
+            if not all([config, model_path, gene_mappings_path, pretrained_vocabulary_path]):
+                raise ValueError("If using direct paths config, model_path, gene_mappings_path, and pretrained_vocabulary_path must be provided")
 
         self.model_name = model_name
         self.panels_dir = panels_dir
 
         # Load config from file or use provided dict
-        if self.cfg is None:
+        if config is not None:
             self.cfg = self.load_config(config)
 
         # Load gene mapping and build tokenizer
@@ -244,7 +244,7 @@ class scConcept:
 
         pretrained_vocabularies = None
         if pretrained_vocabulary_path is not None:
-            pretrained_vocabularies = load_pretrained_vocabulary(pretrained_vocabulary_path, self.tokenizer, self.cfg.model.dim_pretrained_vocab)
+            pretrained_vocabularies = create_placeholder_vocabulary(self.tokenizer, self.cfg.model.dim_pretrained_vocab)
 
         # Load model
         model_args = {
