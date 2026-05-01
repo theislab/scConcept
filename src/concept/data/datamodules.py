@@ -50,7 +50,6 @@ class AnnDataModule(L.LightningDataModule):
             "obsm_key": precomp_embs_key,
             "tokenizer": tokenizer,
             "normalization": normalization,
-            "uns_keys": ["_organism", "_tissue"],
         }
 
         if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]["paths"]) > 0:
@@ -68,8 +67,6 @@ class AnnDataModule(L.LightningDataModule):
                 if self.model_speed_sanity_check:
                     train_split = random.choices(train_split, k=5)
                 assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
-                # Infer species from AnnData.uns["_organism"] for in-memory collections.
-                train_metadata = {"species": [adata.uns.get("_organism") for adata in train_split]}
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
                     adata_list=train_split,
@@ -77,7 +74,6 @@ class AnnDataModule(L.LightningDataModule):
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
                     keys_to_cache=within_group_sampling,
-                    uns_keys=["_organism", "_tissue"],
                 )
             else:
                 # Use LaminDiskCollection for file paths
@@ -93,7 +89,6 @@ class AnnDataModule(L.LightningDataModule):
                     encode_labels=True,
                     parallel=True,
                     obsm_keys=precomp_embs_key,
-                    uns_keys=["_organism", "_tissue"],
                 )
 
             if isinstance(self.tokenizer, MultiSpeciesTokenizer):
@@ -134,7 +129,6 @@ class AnnDataModule(L.LightningDataModule):
                     assert within_group_sampling == ["dataset"], (
                         "within_group_sampling must be dataset for AnnData objects"
                     )
-                    val_metadata = {"species": [adata.uns.get("_organism") for adata in val_split]}
                     # Use InMemoryCollection for AnnData objects
                     collection = InMemoryCollection(
                         adata_list=val_split,
@@ -142,7 +136,6 @@ class AnnDataModule(L.LightningDataModule):
                         layers_keys=["X"],
                         obsm_keys=precomp_embs_key,
                         keys_to_cache=within_group_sampling,
-                        uns_keys=["_organism", "_tissue"],
                     )
                 else:
                     # Use LaminDiskCollection for file paths
@@ -158,7 +151,6 @@ class AnnDataModule(L.LightningDataModule):
                         encode_labels=True,
                         parallel=True,
                         obsm_keys=precomp_embs_key,
-                        uns_keys=["_organism", "_tissue"],
                     )
 
                 if isinstance(self.tokenizer, MultiSpeciesTokenizer):
@@ -179,7 +171,6 @@ class AnnDataModule(L.LightningDataModule):
             if isinstance(test_split[0], AnnData):
                 # Use InMemoryCollection for AnnData objects
                 assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
-                test_metadata = {"species": [adata.uns.get("_organism") for adata in test_split]}
                 collection = InMemoryCollection(
                     adata_list=test_split,
                     obs_keys=None,

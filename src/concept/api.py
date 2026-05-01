@@ -226,8 +226,8 @@ class scConcept:
                 model_name, model_dir
             )
         else:
-            if not all([config, model_path, gene_mappings_path, pretrained_vocabulary_path]):
-                raise ValueError("If using direct paths config, model_path, gene_mappings_path, and pretrained_vocabulary_path must be provided")
+            if not all([config, model_path, gene_mappings_path]):
+                raise ValueError("If using direct paths config, model_path, and gene_mappings_path must be provided")
 
         self.model_name = model_name
         self.panels_dir = panels_dir
@@ -392,6 +392,7 @@ class scConcept:
         if self.model is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
 
+        self.model = self.model.to(self.device)
         self.model.eval()
 
         # Determine parameters with defaults from config

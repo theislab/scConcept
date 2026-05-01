@@ -164,8 +164,6 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
         "species": ["hsapiens"] * batch_size,
-        "_organism": "hsapiens",
-        "_tissue": "brain",
     }
 
     # Test training step
@@ -241,8 +239,6 @@ def test_validation_step(mock_config, device, flash_attention):
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
         "species": ["hsapiens"] * batch_size,
-        "_organism": "hsapiens",
-        "_tissue": "brain",
     }
 
     # Test validation step and check model.log calls
@@ -282,8 +278,6 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
         "panel_name": "test_panel",
         "seq_lengths": [seq_len] * batch_size if seq_lengths_available else None,
         "species": ["hsapiens"] * batch_size,
-        "_organism": "hsapiens",
-        "_tissue": "brain",
     }
 
     # Test predict step

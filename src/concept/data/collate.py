@@ -168,10 +168,10 @@ class Collate(BaseCollate):
                 seq_length_1[i] = 0
                 seq_length_2[i] = 0
 
-    def _get_predesigned_panel(self, batch, organism, tissues):
-        # Randomly select a panel from that organism
-        panels = self.panels_dict[organism]
-        panel_names = self.panel_names_dict[organism]
+    def _get_predesigned_panel(self, batch, species):
+        # Randomly select a panel from that species
+        panels = self.panels_dict[species]
+        panel_names = self.panel_names_dict[species]
         i = self.rng.integers(0, len(panels))
 
         panel = panels[i]
@@ -179,7 +179,7 @@ class Collate(BaseCollate):
             panel_max_drop_rate = self.rng.uniform(0, self.panel_max_drop_rate)
             drop_mask = self.rng.uniform(size=len(panel)) > panel_max_drop_rate
             panel = panel[drop_mask]
-        return panel, f"{organism}/{panel_names[i]}"
+        return panel, f"{species}/{panel_names[i]}"
 
     def __call__(self, batch):
         n_tokens = len(batch[0]["tokens"])
@@ -193,11 +193,10 @@ class Collate(BaseCollate):
         ]
 
         if self.split_input:
-            organisms = [item.pop("_organism", None) for item in batch]
-            tissues = [item.pop("_tissue", None) for item in batch]
-            assert organisms is not None, "_organism is None"
-            assert len(set(organisms)) == 1, "Multiple organisms in the same batch is not supported"
-            organism, tissue = organisms[0], tissues[0]
+            species = [item.get("species", None) for item in batch]
+            assert species is not None, "species is None"
+            assert len(set(species)) == 1, "Multiple species in the same batch is not supported"
+            species = species[0]
 
             n_tokens = len(batch_permute[0]["tokens"])
             panel_indices = np.arange(n_tokens)
@@ -210,7 +209,7 @@ class Collate(BaseCollate):
                 self.panel_selection == "random"
                 or (self.panel_selection == "mixed" and self.rng.uniform() <= self.panel_selection_mixed_prob)
                 or is_targetted_assay
-                or organism not in self.panels_dict
+                or species not in self.panels_dict
             ):
                 n_tokens_available = n_tokens if panel_overlap else max((n_tokens - self.panel_size_min), 0)
                 panel_size_1 = self.log_int_samping(
@@ -218,7 +217,7 @@ class Collate(BaseCollate):
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
             else:
-                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, organism, tissues)
+                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, species)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]["tokens"], panel))[0]
                 panel_size_1 = len(panel_idx_1)
 
@@ -293,8 +292,6 @@ class Collate(BaseCollate):
                 "seq_length_1": np.array(seq_length_1),
                 "seq_length_2": np.array(seq_length_2),
                 "items_mask": torch.from_numpy(items_mask),
-                "_organism": organism,
-                "_tissue": tissue,
                 **{
                     key: (
                         np.array([item[key] for item in batch])

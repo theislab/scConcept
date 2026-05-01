@@ -833,8 +833,6 @@ class ContrastiveModel(L.LightningModule):
         sample_stats = {
             "dataset_path": batch["dataset_path"][0] if "dataset_path" in batch else "",
             "species": batch["species"][0],
-            "_organism": batch["_organism"],
-            "_tissue": ", ".join(list(batch["_tissue"])),
             "panel_name_1": batch["panel_name_1"],
             "panel_name_2": batch["panel_name_2"],
             "panel_size_1": int(panel_size_1),

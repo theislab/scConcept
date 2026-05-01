@@ -64,8 +64,6 @@ def adata():
     adata.var["gene_symbols"] = real_gene_names
     adata.obs["tissue"] = np.random.choice(["blood", "brain"], size=n_cells)
     adata.obs["cell_type"] = np.random.choice(["B cell", "T cell"], size=n_cells)
-    adata.uns["_organism"] = "hsapiens"
-    adata.uns["_tissue"] = np.array(["blood", "brain"])
 
     return adata
 
