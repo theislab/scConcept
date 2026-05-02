@@ -142,6 +142,11 @@ class Collate(BaseCollate):
         randint = int(self.rng.uniform(low, high))
         return max(min(randint, high), low)
 
+    def _resolve_panel_size(self, panel_size, n_tokens):
+        if isinstance(panel_size, float) and 0 < panel_size < 1:
+            return int(np.ceil(panel_size * n_tokens))
+        return panel_size
+
     def adapt_batch_size(self, seq_length_1, seq_length_2):
         seq_length = np.array(seq_length_1) + np.array(seq_length_2)
         seq_length_cumsum = np.cumsum(seq_length)
@@ -204,6 +209,8 @@ class Collate(BaseCollate):
 
             panel_name_1, panel_name_2 = "random", "random"
             panel_overlap = self.rng.uniform() <= float(self.panel_overlap)
+            panel_size_min = self._resolve_panel_size(self.panel_size_min, n_tokens)
+            panel_size_max = self._resolve_panel_size(self.panel_size_max, n_tokens)
 
             if (
                 self.panel_selection == "random"
@@ -211,9 +218,9 @@ class Collate(BaseCollate):
                 or is_targetted_assay
                 or species not in self.panels_dict
             ):
-                n_tokens_available = n_tokens if panel_overlap else max((n_tokens - self.panel_size_min), 0)
+                n_tokens_available = n_tokens if panel_overlap else max((n_tokens - panel_size_min), 0)
                 panel_size_1 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens_available), min(self.panel_size_max, n_tokens_available)
+                    min(panel_size_min, n_tokens_available), min(panel_size_max, n_tokens_available)
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
             else:
@@ -223,12 +230,12 @@ class Collate(BaseCollate):
 
             if panel_overlap:
                 panel_size_2 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens), min(self.panel_size_max, n_tokens)
+                    min(panel_size_min, n_tokens), min(panel_size_max, n_tokens)
                 )
                 panel_idx_2 = self.rng.choice(panel_indices, panel_size_2, replace=False)
             else:
                 panel_size_2 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens - panel_size_1), min(self.panel_size_max, n_tokens - panel_size_1)
+                    min(panel_size_min, n_tokens - panel_size_1), min(panel_size_max, n_tokens - panel_size_1)
                 )
                 panel_idx_2 = self.rng.choice(
                     np.setdiff1d(panel_indices, panel_idx_1, assume_unique=True), panel_size_2, replace=False
