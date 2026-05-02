@@ -578,6 +578,8 @@ class scConcept:
             "paths": adata_list,
             "metadata": {"species": species_list},
         }
+        dataset_kwargs["val"] = None
+        dataloader_kwargs["val"] = None
 
         # Create datamodule
         datamodule_args = {
