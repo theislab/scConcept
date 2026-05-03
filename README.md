@@ -34,9 +34,9 @@ To install the latest development version directly from GitHub:
 pip install git+https://github.com/theislab/scConcept.git@main
 ```
 
-### Training from scratch with Flash Attention
+### Optional Flash Attention speedup
 
-The standard installation is enough for loading pretrained models, extracting embeddings, and light adaptation. If you want to train scConcept from scratch with [Flash Attention][], use one of the following options.
+The standard installation is enough for loading pretrained models, extracting embeddings, and light adaptation. For faster inference, embedding extraction, adaptation, or large-scale training, install [Flash Attention][] with one of the following options.
 
 1. Recommended: `cd` to the project root and run [`./scripts/setup_env.sh`](https://github.com/theislab/scConcept/blob/main/scripts/setup_env.sh), which installs uv if needed and creates a virtual environment with the training dependencies.
 
@@ -51,7 +51,18 @@ This can take up to an hour depending on the system specifications and whether a
 
 ## How to use
 
-scConcept provides a simple API to load and adapt [pre-trained models](https://huggingface.co/theislab/scConcept/tree/main) and extract embeddings from scRNA-seq data. Here's a basic example:
+scConcept provides a simple API to load and adapt [pre-trained models](https://huggingface.co/theislab/scConcept/tree/main) and extract embeddings from scRNA-seq data.
+
+### Pre-trained models
+
+The following models are available from the [scConcept Hugging Face repository](https://huggingface.co/theislab/scConcept/tree/main). Use the value in the `model_name` column with `concept.load_config_and_model(model_name=...)`.
+
+| `model_name` | Training corpus | Architecture | Max tokens | Species | Notes |
+| --- | --- | --- | ---: | --- | --- |
+| `corpus360M[multi-species]-model170M` | 360M cells (CellxGene 2026 + scBaseCount 2025) | 170M parameters, 16 layers, 1024 hidden size, 16 heads | 20,000 | 16 species | Largest multi-species checkpoint; best suited for cross-species applications with sufficient memory. |
+| `corpus40M-model30M` | 40M cells (CellxGene 2023) | 30M parameters, 8 layers, 512 hidden size, 8 heads | 1,000 | Human | Recommended default for embedding extraction and light adaptation. |
+
+Here's a basic example:
 
 ```python
 from concept import scConcept
