@@ -51,6 +51,8 @@ class GeneEncoder(nn.Module):
                 "freeze_pretrained_vocabulary must be provided if pretrained_vocabularies is provided"
             )
             self.pretrained_embs = nn.ModuleDict()
+            logger.info("Using pretrained embeddings for gene tokens ...")
+
             for species, n_genes in vocab_sizes.items():
                 pretrained_vocab = pretrained_vocabularies[species]
                 assert pretrained_vocab.shape[0] == n_genes, (
@@ -64,10 +66,7 @@ class GeneEncoder(nn.Module):
                         f"All species must share the same pretrained vocabulary dimensionality for "
                         f"the shared adapter1, but got {pretrained_vocab.shape[1]} != {pretrained_dim}"
                     )
-                logger.info(
-                    f"Using pretrained embeddings for {species}: {n_genes} genes of size {pretrained_dim} "
-                    f"with dim_gene_embs={dim_gene_embs}"
-                )
+
                 self.pretrained_embs[species] = nn.Embedding.from_pretrained(
                     pretrained_vocab, freeze=freeze_pretrained_vocabulary, padding_idx=padding_idx
                 )
