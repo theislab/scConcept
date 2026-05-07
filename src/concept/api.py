@@ -3,10 +3,11 @@ import multiprocessing
 import os
 import shutil
 from pathlib import Path
-
 import anndata as ad
 import lightning as L
+import numpy as np
 import torch
+import torch.nn.functional as F
 from huggingface_hub import HfApi, hf_hub_download
 from lamin_dataloader import BaseCollate, InMemoryCollection
 from omegaconf import DictConfig, OmegaConf
@@ -374,6 +375,8 @@ class scConcept:
         batch_size: int = 32,
         max_tokens: int = None,
         gene_sampling_strategy: str = None,
+        return_type: str = "numpy",
+        num_workers: int = 8,
     ):
         """
         Extract embeddings from AnnData using the loaded model.
@@ -385,12 +388,15 @@ class scConcept:
             batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
+            return_type: Output type for embeddings: ``"numpy"`` (default) or ``"torch"``.
 
         Returns:
             dict: Dictionary containing 'cls_cell_emb', and optionally 'context_sizes'
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
+        if return_type not in {"numpy", "torch"}:
+            raise ValueError("return_type must be either 'numpy' or 'torch'")
 
         self.model = self.model.to(self.device)
         self.model.eval()
@@ -425,14 +431,12 @@ class scConcept:
         collate_fn = BaseCollate(
             self.tokenizer.PAD_TOKEN, max_tokens=max_tokens, gene_sampling_strategy=gene_sampling_strategy
         )
-        num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), 8)
+        num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), num_workers)
 
         # Create DataLoader
         dataloader = DataLoader(
             dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=False, drop_last=False, num_workers=num_workers
         )
-
-        logger.info(f"Processing {len(dataset)} cells...")
 
         # Collect embeddings
         all_cls_embs = []
@@ -451,14 +455,16 @@ class scConcept:
                     output = self.model.predict_step(batch, batch_idx)
 
                     # Collect embeddings
-                    all_cls_embs.append(output["cls_cell_emb"].cpu())
+                    all_cls_embs.append(output["cls_cell_emb"].detach())
 
                     # Store context sizes (actual number of tokens per cell)
                     if "context_sizes" in output:
                         all_context_sizes.extend(output["context_sizes"])
 
         # Concatenate all embeddings
-        cls_cell_embs = torch.cat(all_cls_embs, dim=0).cpu().detach().numpy()
+        cls_cell_embs = torch.cat(all_cls_embs, dim=0)
+        if return_type == "numpy":
+            cls_cell_embs = cls_cell_embs.cpu().detach().numpy()
 
         result = {"cls_cell_emb": cls_cell_embs}
 
@@ -466,9 +472,46 @@ class scConcept:
             result["context_sizes"] = all_context_sizes
 
         logger.info(f"Extracted embeddings with shape: cls={cls_cell_embs.shape}")
-        logger.info(f"Total cells processed: {len(cls_cell_embs)}")
 
         return result
+
+    def estimate_mutual_information(
+        self,
+        cell_embs_1: torch.Tensor,
+        cell_embs_2: torch.Tensor,
+    ) -> float:
+        """
+        Estimate mutual information between two aligned sets of cell embeddings.
+
+        The estimate follows the contrastive objective used by scConcept:
+        ``log(n_cells) - cross_entropy(normalized_embs_1 @ normalized_embs_2.T * logit_scale, arange(n_cells))``.
+
+        Args:
+            cell_embs_1: Tensor of shape ``(n_cells, embedding_dim)`` for the first panel/view.
+            cell_embs_2: Tensor of shape ``(n_cells, embedding_dim)`` for the second panel/view.
+
+        Returns:
+            Estimated mutual information as ``log(n_cells) - contrastive_loss``.
+        """
+        self._check_model_loaded()
+        if cell_embs_1.ndim != 2 or cell_embs_2.ndim != 2:
+            raise ValueError("cell_embs_1 and cell_embs_2 must both be 2-dimensional tensors")
+        if cell_embs_1.shape != cell_embs_2.shape:
+            raise ValueError("cell_embs_1 and cell_embs_2 must have the same shape")
+        if cell_embs_1.shape[0] < 1:
+            raise ValueError("cell_embs_1 and cell_embs_2 must contain at least one cell")
+
+        cell_embs_1 = cell_embs_1.to(self.device)
+        cell_embs_2 = cell_embs_2.to(self.device)
+        n_cells = cell_embs_1.shape[0]
+        logit_scale = self.model.logit_scale.exp().to(self.device)
+
+        with torch.no_grad():
+            logits = torch.mm(cell_embs_1, cell_embs_2.t()) * logit_scale
+            targets = torch.arange(n_cells, device=self.device)
+            loss = F.cross_entropy(logits, targets)
+
+        return float(np.log(n_cells) - loss.cpu().item())
 
     def train(self, adata_list, species=None, max_steps=None, batch_size=None):
         """Train a new model using the configuration in self.cfg.
