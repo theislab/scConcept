@@ -206,7 +206,8 @@ class scConcept:
 
         Args:
             model_name: Model name to download from HuggingFace (e.g., 'corpus40M-model30M'). List of models: https://huggingface.co/theislab/scConcept/tree/main - required if directpaths are not provided
-            config: Configuration - can be a path to config file (.yaml) as str, Path, a dictionary, or DictConfig. If provided, bypasses HuggingFace download for config
+            config: Configuration - can be a path to config file (.yaml) as str, Path, a dictionary, or DictConfig.
+                When used with ``model_name``, it is merged on top of the downloaded config.
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
             gene_mappings_path: Path to gene mappings. For multi-species models, a directory containing
                 ``{species}.csv`` files (one per species). For single-species models, a ``.pkl`` or
@@ -223,19 +224,19 @@ class scConcept:
             logger.info(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
 
             # Download files if they don't exist
-            model_path, gene_mappings_path, config, panels_dir, pretrained_vocabulary_path = self._download_files_if_needed(
-                model_name, model_dir
+            model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_path = (
+                self._download_files_if_needed(model_name, model_dir)
             )
+            base_config = self.load_config(config_path)
+            config = {} if config is None else config
+            self.cfg = OmegaConf.merge(base_config, OmegaConf.create(config))
         else:
             if not all([config, model_path, gene_mappings_path]):
                 raise ValueError("If using direct paths config, model_path, and gene_mappings_path must be provided")
+            self.cfg = self.load_config(config)
 
         self.model_name = model_name
         self.panels_dir = panels_dir
-
-        # Load config from file or use provided dict
-        if config is not None:
-            self.cfg = self.load_config(config)
 
         # Load gene mapping and build tokenizer
         gene_mappings_path = Path(str(gene_mappings_path))
