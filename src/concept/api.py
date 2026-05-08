@@ -425,6 +425,7 @@ class scConcept:
             collection=collection,
             tokenizer=self.tokenizer,
             normalization=self.cfg.datamodule.normalization,
+            show_coverage="verbose",
         )
 
         # Create BaseCollate
