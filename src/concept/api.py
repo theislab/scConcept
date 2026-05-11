@@ -376,6 +376,7 @@ class scConcept:
         batch_size: int = 32,
         max_tokens: int = None,
         gene_sampling_strategy: str = None,
+        use_learnable_embs: bool = True,
         return_type: str = "numpy",
         num_workers: int = 8,
     ):
@@ -389,6 +390,8 @@ class scConcept:
             batch_size: Batch size for dataloader (default: 32)
             max_tokens: Maximum number of tokens per cell (if None, uses config default)
             gene_sampling_strategy: Gene sampling strategy ('top-nonzero', etc.) (if None, uses config default)
+            use_learnable_embs: Whether to enable specie-specific learnable embeddings during prediction for maximum single-species performance.
+                Set to 'False' for better cross-species alignment. (default: 'True')
             return_type: Output type for embeddings: ``"numpy"`` (default) or ``"torch"``.
 
         Returns:
@@ -410,7 +413,11 @@ class scConcept:
 
         logger.info(f"Extracting embeddings from AnnData with shape {adata.shape}")
         logger.info(
-            f"Parameters: max_tokens={max_tokens}, batch_size={batch_size}, gene_sampling_strategy={gene_sampling_strategy}"
+            "Parameters: max_tokens=%s, batch_size=%s, gene_sampling_strategy=%s, use_learnable_embs=%s",
+            max_tokens,
+            batch_size,
+            gene_sampling_strategy,
+            use_learnable_embs,
         )
 
         # Resolve species
@@ -454,7 +461,7 @@ class scConcept:
                     }
 
                     # Call predict_step
-                    output = self.model.predict_step(batch, batch_idx)
+                    output = self.model.predict_step(batch, batch_idx, use_learnable_embs=use_learnable_embs)
 
                     # Collect embeddings
                     all_cls_embs.append(output["cls_cell_emb"].detach())
