@@ -254,7 +254,8 @@ def test_validation_step(mock_config, device, flash_attention):
 
 @pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("seq_lengths_available", [True, False])
-def test_predict_step(mock_config, device, flash_attention, seq_lengths_available):
+@pytest.mark.parametrize("use_learnable_embs", [False, True])
+def test_predict_step(mock_config, device, flash_attention, seq_lengths_available, use_learnable_embs):
     """Test that the model can perform a predict step"""
     # Update mock_config with parameterized flash_attention value
     mock_config["flash_attention"] = flash_attention
@@ -284,7 +285,7 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
     model.eval()
     with torch.no_grad():
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            result = model.predict_step(batch, batch_idx=0)
+            result = model.predict_step(batch, batch_idx=0, use_learnable_embs=use_learnable_embs)
 
     # Check that we get the expected keys
     expected_keys = ["pred", "cls_cell_emb", "context_sizes"]
@@ -301,6 +302,7 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
 
     # Check that outputs are on the correct device
     assert result["cls_cell_emb"].device.type == device.type
+    assert model.use_learnable_embs_freq == int(use_learnable_embs)
 
 
 @pytest.mark.parametrize(

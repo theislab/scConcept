@@ -405,6 +405,8 @@ class ContrastiveModel(L.LightningModule):
                 add_learnable_embs = int((self.global_step + 1) * self.use_learnable_embs_freq) > int(
                     self.global_step * self.use_learnable_embs_freq
                 )
+            elif self.stage == "predict":
+                add_learnable_embs = bool(self.use_learnable_embs_freq)
             else:
                 add_learnable_embs = True
 
