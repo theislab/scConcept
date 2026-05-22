@@ -1,0 +1,24 @@
+source_name: cxg_raw_2025-11-08
+species: mmulatta
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+train:
+- 885d325f-b478-408b-b184-510b4db4f85f.h5ad
+- def3f8fe-44d3-4baa-ba90-1245e1fcfcbf.h5ad
+- 6e2fbf86-9f5a-40f2-b549-47b51a57e762.h5ad
+- 1f59341c-a913-4ca3-b8af-1ea33df0e8d8.h5ad
+- e25e50f8-ed2a-4bb0-b6b6-1a4f4ea5af37.h5ad
+- 6fedc2f9-5a3b-4209-aa9a-f4d1e6e1185f.h5ad
+- 04613344-661b-4b01-8167-00dde7af8065.h5ad
+- f61d3b91-150e-40ac-83ba-9a7eae434cb6.h5ad
+- 3cb0fbb6-2486-4bc1-828c-ea3b316ebf96.h5ad
+- 361826be-5ebd-4d52-b02c-21a1264bbce0.h5ad
+- 58be58d9-e319-46ed-a7c9-299a8c5082a8.h5ad
+- 693f1ad9-0dbc-4efe-bdc3-47018d5880d6.h5ad
+- 2e877cd3-5587-4fc1-8667-a48fe9e2a695.h5ad
+- 228286c6-7e17-41e0-b1fe-3b0b334e71cc.h5ad
+- fc6ef080-9e5f-4aea-b9c4-a45a208bd288.h5ad
+- 3dd26fea-1f47-455c-b255-078061119e73.h5ad
+- 4af83f0b-2ea7-4aed-a2c7-379877cdc8ae.h5ad
+- d87ba7ec-fddf-4141-abfd-1d69e8427a42.h5ad
+val:
+- e374c7eb-d99f-4196-adb3-726eb89a37d1.h5ad

@@ -1,13 +1,18 @@
 import logging
 import multiprocessing
 import os
+import random
 from typing import Dict, List, Optional
 
 import lightning as L
+import numpy as np
+import pandas as pd
 import torch
 import torch.distributed as dist
 from anndata import AnnData
 from lamin_dataloader import InMemoryCollection, TokenizedDataset, Tokenizer
+
+from concept.dataset import MultiSpeciesTokenizedDataset, MultiSpeciesTokenizer
 from torch.utils.data import DataLoader, RandomSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -22,7 +27,7 @@ class AnnDataModule(L.LightningDataModule):
         self,
         panels_path: str,
         tokenizer: Tokenizer,
-        columns: List[str],
+        obs_keys: List[str],
         precomp_embs_key: str = None,
         normalization: str = "log1p",
         gene_sampling_strategy: str = "top-nonzero",
@@ -41,57 +46,69 @@ class AnnDataModule(L.LightningDataModule):
         self.default_max_tokens = dataset_kwargs["train"]["max_tokens"]
 
         dataset_kwargs_shared = {
-            "obs_keys": columns,
+            "obs_keys": obs_keys,
             "obsm_key": precomp_embs_key,
             "tokenizer": tokenizer,
             "normalization": normalization,
-            "uns_keys": ["_organism", "_tissue"],
         }
 
-        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]) > 0:
-            train_split = dataset_kwargs["train"].pop("split")
+        if "train" in dataset_kwargs and dataset_kwargs["train"] is not None and len(dataset_kwargs["train"]["split"]["paths"]) > 0:
+            train_split_dict = dataset_kwargs["train"].pop("split")
+            train_split = train_split_dict["paths"]
+            train_metadata = train_split_dict["metadata"]
             within_group_sampling = dataloader_kwargs["train"]["within_group_sampling"]
-            keys_to_cache = [within_group_sampling] if within_group_sampling else []
+            if isinstance(within_group_sampling, str):
+                within_group_sampling = [within_group_sampling]
+            within_group_sampling = within_group_sampling if within_group_sampling is not None else []
+            self.dataloader_kwargs["train"]["within_group_sampling"] = within_group_sampling
             self.train_collate_fn = self._get_collate_fn(dataset_kwargs["train"], stage="train", split_input=True)
 
-            if isinstance(train_split[0], AnnData):
-                assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
+            if isinstance(train_split[0], AnnData) or self.model_speed_sanity_check:
+                if self.model_speed_sanity_check:
+                    train_split = random.choices(train_split, k=5)
+                assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
                 # Use InMemoryCollection for AnnData objects
                 collection = InMemoryCollection(
                     adata_list=train_split,
-                    obs_keys=columns,
+                    obs_keys=obs_keys,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
-                    keys_to_cache=keys_to_cache,
-                    uns_keys=["_organism", "_tissue"],
+                    keys_to_cache=within_group_sampling,
                 )
             else:
                 # Use LaminDiskCollection for file paths
                 from lamin_dataloader.lamin_disk_collection import LaminDiskCollection
 
-                join = None if within_group_sampling else "outer"
+                join = None if "dataset" in within_group_sampling else "outer"
                 collection = LaminDiskCollection(
                     train_split,
                     layers_keys="X",
-                    obs_keys=columns,
-                    keys_to_cache=keys_to_cache,
+                    obs_keys=obs_keys,
+                    keys_to_cache=within_group_sampling,
                     join=join,
                     encode_labels=True,
                     parallel=True,
                     obsm_keys=precomp_embs_key,
-                    uns_keys=["_organism", "_tissue"],
                 )
 
-            self.train_dataset = TokenizedDataset(
-                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"]}
-            )
+            if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                self.train_dataset = MultiSpeciesTokenizedDataset(
+                    metadata=train_metadata,
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"},
+                )
+            else:
+                self.train_dataset = TokenizedDataset(
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["train"], "show_coverage": "summary"}
+                )
 
         if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
             self.val_datasets = {}
             for val_name, val_kwargs in dataset_kwargs["val"].items():
-                if len(val_kwargs["split"]) == 0:
+                if len(val_kwargs["split"]["paths"]) == 0:
                     continue
-                val_split = val_kwargs.pop("split")
+                val_split_dict = val_kwargs.pop("split")
+                val_split = val_split_dict["paths"]
+                val_metadata = val_split_dict["metadata"]
                 if "max_tokens" not in val_kwargs:
                     val_kwargs["max_tokens"] = self.default_max_tokens
                     logger.info(f"Setting max_tokens for {val_name} to {self.default_max_tokens}")
@@ -102,57 +119,65 @@ class AnnDataModule(L.LightningDataModule):
                     )
 
                 within_group_sampling = dataloader_kwargs["val"][val_name]["within_group_sampling"]
-                keys_to_cache = [within_group_sampling] if within_group_sampling else []
+                if isinstance(within_group_sampling, str):
+                    within_group_sampling = [within_group_sampling]
+                within_group_sampling = within_group_sampling if within_group_sampling is not None else []
+                self.dataloader_kwargs["val"][val_name]["within_group_sampling"] = within_group_sampling
                 val_collate_fn = self._get_collate_fn(val_kwargs, stage="val", split_input=True)
 
                 if isinstance(val_split[0], AnnData):
-                    assert within_group_sampling == "dataset", (
+                    assert within_group_sampling == ["dataset"], (
                         "within_group_sampling must be dataset for AnnData objects"
                     )
                     # Use InMemoryCollection for AnnData objects
                     collection = InMemoryCollection(
                         adata_list=val_split,
-                        obs_keys=columns,
+                        obs_keys=obs_keys,
                         layers_keys=["X"],
                         obsm_keys=precomp_embs_key,
-                        keys_to_cache=keys_to_cache,
-                        uns_keys=["_organism", "_tissue"],
+                        keys_to_cache=within_group_sampling,
                     )
                 else:
                     # Use LaminDiskCollection for file paths
                     from lamin_dataloader.lamin_disk_collection import LaminDiskCollection
 
-                    join = None if within_group_sampling else "outer"
+                    join = None if "dataset" in within_group_sampling else "outer"
                     collection = LaminDiskCollection(
                         val_split,
                         layers_keys="X",
-                        obs_keys=columns,
-                        keys_to_cache=keys_to_cache,
+                        obs_keys=obs_keys,
+                        keys_to_cache=within_group_sampling,
                         join=join,
                         encode_labels=True,
                         parallel=True,
                         obsm_keys=precomp_embs_key,
-                        uns_keys=["_organism", "_tissue"],
                     )
 
-                dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
+                if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                    dataset = MultiSpeciesTokenizedDataset(
+                        metadata=val_metadata,
+                        **{"collection": collection, **dataset_kwargs_shared, **val_kwargs},
+                    )
+                else:
+                    dataset = TokenizedDataset(**{"collection": collection, **dataset_kwargs_shared, **val_kwargs})
                 self.val_datasets[val_name] = (dataset, val_collate_fn)
 
-        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None and len(dataset_kwargs["test"]["split"]) > 0:
-            test_split = dataset_kwargs["test"].pop("split")
-            keys_to_cache = None
+        if "test" in dataset_kwargs and dataset_kwargs["test"] is not None and len(dataset_kwargs["test"]["split"]["paths"]) > 0:
+            test_split_dict = dataset_kwargs["test"].pop("split")
+            test_split = test_split_dict["paths"]
+            test_metadata = test_split_dict["metadata"]
             self.test_collate_fn = self._get_collate_fn(dataset_kwargs["test"], stage="test", split_input=False)
 
             if isinstance(test_split[0], AnnData):
                 # Use InMemoryCollection for AnnData objects
-                assert within_group_sampling == "dataset", "within_group_sampling must be dataset for AnnData objects"
+                assert within_group_sampling == ["dataset"], "within_group_sampling must be 'dataset' for AnnData objects"
                 collection = InMemoryCollection(
                     adata_list=test_split,
-                    obs_keys=columns,
+                    obs_keys=None,
                     layers_keys=["X"],
                     obsm_keys=precomp_embs_key,
-                    keys_to_cache=keys_to_cache,
-                    uns_keys=["_organism", "_tissue"],
+                    keys_to_cache=None,
+                    uns_keys=None,
                 )
             else:
                 # Use LaminDiskCollection for file paths
@@ -161,17 +186,23 @@ class AnnDataModule(L.LightningDataModule):
                 collection = LaminDiskCollection(
                     test_split,
                     layers_keys="X",
-                    obs_keys=columns,
-                    keys_to_cache=keys_to_cache,
+                    obs_keys=None,
+                    keys_to_cache=None,
                     join=None,
                     encode_labels=True,
                     parallel=True,
-                    uns_keys=["_organism", "_tissue"],
+                    uns_keys=None,
                 )
 
-            self.test_dataset = TokenizedDataset(
-                **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]}
-            )
+            if isinstance(self.tokenizer, MultiSpeciesTokenizer):
+                self.test_dataset = MultiSpeciesTokenizedDataset(
+                    metadata=test_metadata,
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]},
+                )
+            else:
+                self.test_dataset = TokenizedDataset(
+                    **{"collection": collection, **dataset_kwargs_shared, **dataset_kwargs["test"]}
+                )
 
         self._val_dataloader = None
         self._train_dataloader = None
@@ -204,30 +235,48 @@ class AnnDataModule(L.LightningDataModule):
         }
         return Collate(**collate_kwargs)
 
-    def _get_dataloader(self, dataset, dataloader_kwargs, collate_fn, stage):
-        sampling_key = dataloader_kwargs.pop("within_group_sampling")
+    def _get_dataloader(self, dataset, dataloader_kwargs, collate_fn, stage, loader_name=""):
+        within_group_sampling = dataloader_kwargs.pop("within_group_sampling")
         num_replicas = dist.get_world_size() if torch.distributed.is_initialized() else 1
         batch_size = dataloader_kwargs.pop("batch_size") // num_replicas
         shuffle = dataloader_kwargs.pop("shuffle")
         drop_last = dataloader_kwargs.pop("drop_last")
         num_samples = dataloader_kwargs.pop("num_samples")
+        num_groups = dataloader_kwargs.pop("num_groups", None)
+        sample_groups_equally = dataloader_kwargs.pop("sample_groups_equally", False)
         num_workers = dataloader_kwargs.pop("num_workers")
         num_workers = min(int(os.getenv("SLURM_CPUS_PER_TASK", multiprocessing.cpu_count())), num_workers)
 
-        assert drop_last == True, "drop_last must be True during training and validation"
-        assert shuffle == True, "shuffle must be True during training and validation"
+        assert drop_last, "drop_last must be True during training and validation"
+        assert shuffle, "shuffle must be True during training and validation"
 
-        if num_samples is not None and num_samples >= len(dataset):
+        if num_samples is not None and num_samples > len(dataset):
             logger.warning(
-                f"num_samples ({num_samples}) is greater than or equal to the number of samples in the dataset ({len(dataset)})."
+                f"num_samples ({num_samples}) is greater than the number of samples in the dataset ({len(dataset)})."
             )
 
-        if sampling_key:
+        sampling_keys = []
+        for key in within_group_sampling:
+            obs_list = dataset.collection._cached_obs[key]
+            sampling_keys.append(np.concatenate([np.array(obs) for obs in obs_list]))
+
+        if sampling_keys:
+            sampling_key = (
+                pd.DataFrame(np.column_stack(sampling_keys))
+                .astype(str)
+                .agg("_".join, axis=1)
+                .values
+            )
+        else:
+            sampling_key = None
+
+        if sampling_key is not None:
             sampler = WithinGroupSampler(
-                dataset.collection.storage_idx,
-                dataset.collection._cached_obs[sampling_key],
+                sampling_key,
                 batch_size * num_replicas,
                 num_samples,
+                num_groups=num_groups,
+                sample_groups_equally=sample_groups_equally,
                 shuffle=shuffle,
                 drop_last=drop_last,
                 stage=stage,
@@ -236,7 +285,7 @@ class AnnDataModule(L.LightningDataModule):
             sampler = RandomSampler(dataset, num_samples=num_samples)
 
         if torch.distributed.is_initialized():
-            sampler = DistributedSamplerWrapper(sampler, shuffle=False, drop_last=False)
+            sampler = DistributedSamplerWrapper(sampler)
 
         # torch_worker_init_fn may not exist for InMemoryCollection
         worker_init_fn = getattr(dataset.collection, "torch_worker_init_fn", None)
@@ -249,11 +298,10 @@ class AnnDataModule(L.LightningDataModule):
             worker_init_fn=worker_init_fn,
             collate_fn=collate_fn,
             num_workers=num_workers,
-            persistent_workers=(num_workers > 0),
             **dataloader_kwargs,
         )
         logger.info(
-            f"Creating '{stage}' dataloader:\n"
+            f"Creating '{stage}/{loader_name}' dataloader:\n"
             f"  - Number of batches: {len(dataloader)}\n"
             f"  - Batch size per replica: {batch_size}\n"
             f"  - Number of replicas: {num_replicas}\n"
@@ -282,7 +330,7 @@ class AnnDataModule(L.LightningDataModule):
         for val_name in self.val_loader_names:
             val_dataset, val_collate_fn = self.val_datasets[val_name]
             dataloader_kwargs = self.dataloader_kwargs["val"][val_name].copy()
-            dataloader = self._get_dataloader(val_dataset, dataloader_kwargs, val_collate_fn, "val")
+            dataloader = self._get_dataloader(val_dataset, dataloader_kwargs, val_collate_fn, "val", val_name)
             self._val_dataloader.append(dataloader)
         return self._val_dataloader
 

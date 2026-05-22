@@ -1,0 +1,43 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "c1d5dc977e49b84bde9402612b814aacdd5c464e",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "scConcept",
+      "package_name": "concept",
+      "project_description": "code for scConcept",
+      "author_full_name": "Mojtaba Bahrami",
+      "author_email": "bahrami.mojtaba.93@gmail.com",
+      "github_user": "theislab",
+      "github_repo": "scConcept",
+      "license": "MIT License",
+      "ide_integration": false,
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_exclude_on_template_update": [
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "docs/api.md",
+        "docs/index.md",
+        "docs/notebooks/example.ipynb",
+        "docs/references.bib",
+        "docs/references.md",
+        "src/**",
+        "tests/**"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse",
+      "_commit": "c1d5dc977e49b84bde9402612b814aacdd5c464e"
+    }
+  },
+  "directory": null
+}

@@ -1,0 +1,21 @@
+source_name: scbasecount-2025-02-25
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: btaurus
+train:
+- btaurus_SRP504475.h5ad
+- btaurus_SRP378160.h5ad
+- btaurus_SRP392627.h5ad
+- btaurus_SRP424248.h5ad
+- btaurus_SRP433032.h5ad
+- btaurus_SRP434627.h5ad
+- btaurus_SRP441557.h5ad
+- btaurus_ERP164261.h5ad
+- btaurus_SRP393224.h5ad
+- btaurus_SRP413638.h5ad
+- btaurus_SRP441186.h5ad
+- btaurus_SRP441912.h5ad
+- btaurus_SRP452099.h5ad
+- btaurus_SRP454461.h5ad
+- btaurus_SRP457017.h5ad
+- btaurus_SRP484815.h5ad
+val: []

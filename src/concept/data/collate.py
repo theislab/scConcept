@@ -8,9 +8,10 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+import torch
 import torch.distributed as dist
 from lamin_dataloader import BaseCollate
-from torch.utils.data import Dataset, default_collate, default_convert, get_worker_info
+from torch.utils.data import get_worker_info
 
 logger = logging.getLogger(__name__)
 
@@ -76,14 +77,12 @@ class Collate(BaseCollate):
             if self.split_input:
                 worker_info = get_worker_info()
                 if worker_info:  # In case of multi-process data loading
-                    logger.debug(
-                        f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
-                    )
-                    self._rng = np.random.default_rng(seed=seed + worker_info.id)
-                else:
-                    self._rng = np.random.default_rng(seed)
-            else:
-                self._rng = np.random.default_rng(seed)
+                    if worker_info.id == 0:
+                        logger.info(
+                            f"Device: {self.device_num}, Worker {worker_info.id} / {worker_info.num_workers}, seed: {worker_info.seed}"
+                        )
+                    seed = worker_info.seed
+            self._rng = np.random.default_rng(seed)
         return self._rng
 
     def load_panels(self, panels_path, panel_filter_regex, stage="train"):
@@ -103,17 +102,21 @@ class Collate(BaseCollate):
                 if re.search(panel_filter_regex, panel_file) and panel_file.endswith(".csv")
             ]
 
-            if panel_files:
+            if panel_files and organism_name in self.tokenizer.species:
                 panels = [
-                    self.tokenizer.encode(pd.read_csv(organism_dir / panel_file)["Ensembl_ID"].values)
+                    self.tokenizer.encode(pd.read_csv(organism_dir / panel_file)["Ensembl_ID"].values, organism_name)
                     for panel_file in panel_files
                 ]
                 self.panels_dict[organism_name] = panels
                 self.panel_names_dict[organism_name] = panel_files
 
                 if stage == "train":
-                    for i, panel_file in enumerate(panel_files):
-                        logger.info(f"Organism {organism_name}, Panel {panel_file} size: {len(panels[i])} genes")
+                    panel_sizes = [len(panel) for panel in panels]
+                    logger.info(
+                        f"Organism {organism_name}: loaded {len(panel_files)} panels "
+                        f"(genes per panel - min: {min(panel_sizes)}, "
+                        f"median: {int(np.median(panel_sizes))}, max: {max(panel_sizes)})"
+                    )
 
     def shared_feature_stats(self, batch):
         num_shared_featrues = []
@@ -139,6 +142,11 @@ class Collate(BaseCollate):
         randint = int(self.rng.uniform(low, high))
         return max(min(randint, high), low)
 
+    def _resolve_panel_size(self, panel_size, n_tokens):
+        if isinstance(panel_size, float) and 0 < panel_size < 1:
+            return int(np.ceil(panel_size * n_tokens))
+        return panel_size
+
     def adapt_batch_size(self, seq_length_1, seq_length_2):
         seq_length = np.array(seq_length_1) + np.array(seq_length_2)
         seq_length_cumsum = np.cumsum(seq_length)
@@ -150,53 +158,33 @@ class Collate(BaseCollate):
 
         return new_batch_size
 
-    def qc_mask(self, seq_length_1, seq_length_2, panel_1, panel_2, min_samples_required=5):
+    def qc_mask(self, seq_length_1, seq_length_2, panel_size_1, panel_size_2):
         seq_length_1, seq_length_2 = np.array(seq_length_1), np.array(seq_length_2)
-        panel_size_1 = np.array([len(p) for p in panel_1])
-        panel_size_2 = np.array([len(p) for p in panel_2])
         mask_1 = seq_length_1 > panel_size_1 * self.qc_threshold
         mask_2 = seq_length_2 > panel_size_2 * self.qc_threshold
         mask = mask_1 & mask_2
-        if mask.sum() < min_samples_required:
-            logger.warning(f"Less than {min_samples_required} cells passed QC threshold! Including all cells.")
-            return np.arange(len(mask))
-        return list(np.where(mask)[0])
+        return mask
 
-    # def _custom_panel_selection(self, batch):
-    #     tokens = batch[0]['tokens']
-    #     count_nnz = batch[0]['count_nnz']
-    #     if self.gene_sampling_strategy == 'random-nonzero':
-    #         # perc_nnz = count_nnz / len(batch)
-    #         # expressed_features = tokens[np.argsort(count_nnz)[::-1][:500]]
-    #         available_panels = []
-    #         panel_probs = []
-    #         for i in range(len(self.panels)):
-    #             panel = self.panels[i]
-    #             available_panels.append(i)
-    #             panel_probs.append(np.median(count_nnz[np.isin(tokens, panel)]))
-    #             # panel_probs.append(np.intersect1d(self.panels[i], expressed_features).size / len(self.panels[i]))
-    #             # if np.intersect1d(self.panels[i], expressed_features).size > (len(self.panels[i]) * 0.5):
-    #             #     available_panels.append(i)
-    #             # available_panels.append((self.panel_names[i], len(self.panels[i]), f'{panel_probs[-1]:.2f}'))
+    def _apply_items_mask(self, items_mask, batch_1, batch_2, seq_length_1, seq_length_2):
+        for i in range(len(batch_1)):
+            if not items_mask[i]:
+                batch_1[i] = {"tokens": np.array([]), "values": np.array([])}
+                batch_2[i] = {"tokens": np.array([]), "values": np.array([])}
+                seq_length_1[i] = 0
+                seq_length_2[i] = 0
 
-    #         panel_probs = panel_probs // panel_probs.sum()
-    #         # assert True==False, (batch[0]['dataset_name'], 'len(tokens)', len(tokens), 'panels', list(zip(self.panel_names, panel_probs)), count_nnz)
-    #         return available_panels, panel_probs
-
-    def _get_predesigned_panel(self, batch, organism, tissue):
-        # Randomly select a panel from that organism
-        panels = self.panels_dict[organism]
-        panel_names = self.panel_names_dict[organism]
+    def _get_predesigned_panel(self, batch, species):
+        # Randomly select a panel from that species
+        panels = self.panels_dict[species]
+        panel_names = self.panel_names_dict[species]
         i = self.rng.integers(0, len(panels))
 
-        # available_panels, panel_probs = self._custom_panel_selection(batch)
-        # i = self.rng.choice(available_panels, p=panel_probs)
         panel = panels[i]
         if self.panel_max_drop_rate is not None and self.panel_max_drop_rate > 0:
             panel_max_drop_rate = self.rng.uniform(0, self.panel_max_drop_rate)
             drop_mask = self.rng.uniform(size=len(panel)) > panel_max_drop_rate
             panel = panel[drop_mask]
-        return panel, f"{organism}/{panel_names[i]}"
+        return panel, f"{species}/{panel_names[i]}"
 
     def __call__(self, batch):
         n_tokens = len(batch[0]["tokens"])
@@ -205,15 +193,15 @@ class Collate(BaseCollate):
             {
                 "tokens": item["tokens"][permute],
                 "values": item["values"][permute],
-                #   'count_nnz': item['count_nnz'][permute],
-                #   'dataset_name': item['dataset_name'],
             }
             for item in batch
         ]
 
         if self.split_input:
-            organism, tissue = batch[0].get("_organism"), batch[0].get("_tissue")
-            assert organism is not None, "_organism is None"
+            species = [item.get("species", None) for item in batch]
+            assert species is not None, "species is None"
+            assert len(set(species)) == 1, "Multiple species in the same batch is not supported"
+            species = species[0]
 
             n_tokens = len(batch_permute[0]["tokens"])
             panel_indices = np.arange(n_tokens)
@@ -221,31 +209,33 @@ class Collate(BaseCollate):
 
             panel_name_1, panel_name_2 = "random", "random"
             panel_overlap = self.rng.uniform() <= float(self.panel_overlap)
+            panel_size_min = self._resolve_panel_size(self.panel_size_min, n_tokens)
+            panel_size_max = self._resolve_panel_size(self.panel_size_max, n_tokens)
 
             if (
                 self.panel_selection == "random"
                 or (self.panel_selection == "mixed" and self.rng.uniform() <= self.panel_selection_mixed_prob)
                 or is_targetted_assay
-                or organism not in self.panels_dict
+                or species not in self.panels_dict
             ):
-                n_tokens_available = n_tokens if panel_overlap else max((n_tokens - self.panel_size_min), 0)
+                n_tokens_available = n_tokens if panel_overlap else max((n_tokens - panel_size_min), 0)
                 panel_size_1 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens_available), min(self.panel_size_max, n_tokens_available)
+                    min(panel_size_min, n_tokens_available), min(panel_size_max, n_tokens_available)
                 )
                 panel_idx_1 = self.rng.choice(panel_indices, panel_size_1, replace=False)
             else:
-                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, organism, tissue)
+                panel, panel_name_1 = self._get_predesigned_panel(batch_permute, species)
                 panel_idx_1 = np.where(np.isin(batch_permute[0]["tokens"], panel))[0]
                 panel_size_1 = len(panel_idx_1)
 
             if panel_overlap:
                 panel_size_2 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens), min(self.panel_size_max, n_tokens)
+                    min(panel_size_min, n_tokens), min(panel_size_max, n_tokens)
                 )
                 panel_idx_2 = self.rng.choice(panel_indices, panel_size_2, replace=False)
             else:
                 panel_size_2 = self.log_int_samping(
-                    min(self.panel_size_min, n_tokens - panel_size_1), min(self.panel_size_max, n_tokens - panel_size_1)
+                    min(panel_size_min, n_tokens - panel_size_1), min(panel_size_max, n_tokens - panel_size_1)
                 )
                 panel_idx_2 = self.rng.choice(
                     np.setdiff1d(panel_indices, panel_idx_1, assume_unique=True), panel_size_2, replace=False
@@ -259,25 +249,21 @@ class Collate(BaseCollate):
                 {"tokens": item["tokens"][panel_idx_2], "values": item["values"][panel_idx_2]} for item in batch_permute
             ]
 
-            # The following can be optimized by only passing one panel per batch
-            panel_1 = [item["tokens"] for item in batch_1]
-            panel_2 = [item["tokens"] for item in batch_2]
+            panel_1 = batch_1[0]["tokens"]
+            panel_2 = batch_2[0]["tokens"]
 
             batch_1 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_1]
             batch_2 = [self.select_features(item, self.feature_max_drop_rate) for item in batch_2]
 
-            max_lenght_1 = max([len(item["tokens"]) for item in batch_1])
-            max_lenght_1 = min(max_lenght_1, self.max_tokens - 1)  # todo
-            # min_lenght_1 = min([len(item['tokens']) for item in batch_1])
-            # max_lenght_1 = min(self.int_samping(min_lenght_1, max_lenght_1), self.max_tokens)
-            max_lenght_2 = max([len(item["tokens"]) for item in batch_2])
-            max_lenght_2 = min(max_lenght_2, self.max_tokens - 1)  # todo
+            seq_length_1 = [min(len(item["tokens"]), self.max_tokens) for item in batch_1]
+            seq_length_2 = [min(len(item["tokens"]), self.max_tokens) for item in batch_2]
 
-            seq_length_1 = [min(len(item["tokens"]), max_lenght_1) for item in batch_1]
-            seq_length_2 = [min(len(item["tokens"]), max_lenght_2) for item in batch_2]
+            items_mask = np.ones(len(batch_1), dtype=bool)
 
-            batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
-            batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
+            if self.stage == "train" and self.qc_threshold is not None:
+                qc_mask = self.qc_mask(seq_length_1, seq_length_2, len(panel_1), len(panel_2))
+                items_mask &= qc_mask
+                self._apply_items_mask(items_mask, batch_1, batch_2, seq_length_1, seq_length_2)
 
             if (
                 self.stage == "train"
@@ -285,19 +271,14 @@ class Collate(BaseCollate):
                 and self.max_total_seq_length < float("inf")
             ):
                 batch_size = self.adapt_batch_size(seq_length_1, seq_length_2)
-                batch, batch_1, batch_2 = batch[:batch_size], batch_1[:batch_size], batch_2[:batch_size]
-                panel_1, panel_2 = panel_1[:batch_size], panel_2[:batch_size]
-                seq_length_1, seq_length_2 = seq_length_1[:batch_size], seq_length_2[:batch_size]
+                if batch_size < len(batch_1):
+                    items_mask[batch_size:] = False
+                    self._apply_items_mask(items_mask, batch_1, batch_2, seq_length_1, seq_length_2)
 
-            if self.stage == "train" and self.qc_threshold is not None:
-                qc_indices = self.qc_mask(seq_length_1, seq_length_2, panel_1, panel_2)
-                batch = [batch[i] for i in qc_indices]
-                batch_1 = [batch_1[i] for i in qc_indices]
-                batch_2 = [batch_2[i] for i in qc_indices]
-                panel_1 = [panel_1[i] for i in qc_indices]
-                panel_2 = [panel_2[i] for i in qc_indices]
-                seq_length_1 = [seq_length_1[i] for i in qc_indices]
-                seq_length_2 = [seq_length_2[i] for i in qc_indices]
+            max_lenght_1 = max(seq_length_1)
+            max_lenght_2 = max(seq_length_2)
+            batch_1 = [self.resize_and_pad(item, max_lenght_1) for item in batch_1]
+            batch_2 = [self.resize_and_pad(item, max_lenght_2) for item in batch_2]
 
             # self.shared_feature_stats(batch_1)
 
@@ -307,20 +288,23 @@ class Collate(BaseCollate):
             values_2 = [item["values"].astype(np.float32) for item in batch_2]
 
             return {
-                "tokens_1": default_collate(tokens_1),
-                "values_1": default_collate(values_1),
-                "tokens_2": default_collate(tokens_2),
-                "values_2": default_collate(values_2),
-                "panel_1": default_collate(panel_1),
-                "panel_2": default_collate(panel_2),
+                "tokens_1": torch.from_numpy(np.stack(tokens_1)),
+                "values_1": torch.from_numpy(np.stack(values_1)),
+                "tokens_2": torch.from_numpy(np.stack(tokens_2)),
+                "values_2": torch.from_numpy(np.stack(values_2)),
+                "panel_1": torch.from_numpy(panel_1),
+                "panel_2": torch.from_numpy(panel_2),
                 "panel_name_1": panel_name_1,
                 "panel_name_2": panel_name_2,
-                "seq_length_1": seq_length_1,
-                "seq_length_2": seq_length_2,
-                "organism": organism,
-                "tissue": tissue,
+                "seq_length_1": np.array(seq_length_1),
+                "seq_length_2": np.array(seq_length_2),
+                "items_mask": torch.from_numpy(items_mask),
                 **{
-                    key: default_collate([item[key] for item in batch])
+                    key: (
+                        np.array([item[key] for item in batch])
+                        if isinstance(batch[0][key], str)
+                        else torch.from_numpy(np.stack([item[key] for item in batch]))
+                    )
                     for key in batch[0].keys()
                     if key not in ["tokens", "values"]
                 },
@@ -331,7 +315,7 @@ class Collate(BaseCollate):
 
             max_lenght = max([len(item["tokens"]) for item in batch_])
 
-            max_lenght = min(max_lenght, self.max_tokens - 1)
+            max_lenght = min(max_lenght, self.max_tokens)
 
             batch_ = [self.resize_and_pad(item, max_lenght) for item in batch_]
 
@@ -341,10 +325,14 @@ class Collate(BaseCollate):
             )
 
             return {
-                "tokens": default_collate(tokens),
-                "values": default_collate(values),
+                "tokens": torch.from_numpy(np.stack(tokens)),
+                "values": torch.from_numpy(np.stack(values)),
                 **{
-                    key: default_collate([item[key] for item in batch])
+                    key: (
+                        np.array([item[key] for item in batch])
+                        if isinstance(batch[0][key], str)
+                        else torch.from_numpy(np.stack([item[key] for item in batch]))
+                    )
                     for key in batch[0].keys()
                     if key not in ["tokens", "values"]
                 },

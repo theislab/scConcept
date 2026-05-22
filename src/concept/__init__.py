@@ -5,4 +5,4 @@ from .api import scConcept
 
 __all__ = ["ContrastiveModel", "scConcept"]
 
-__version__ = version("scConcept")
+__version__ = version("sc-concept")

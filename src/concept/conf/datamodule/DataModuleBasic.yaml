@@ -1,30 +1,10 @@
 defaults:
-  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15
-  - split_cellxgene_mmusculus: split_cellxgene_mmusculus_2023_12_15
-  # - split_cellxgene_cjacchus: split_cellxgene_cjacchus
-  # - split_cellxgene_mmulatta: split_cellxgene_mmulatta
-  # - split_cellxgene_ptroglodytes: split_cellxgene_ptroglodytes  
-  # - split_scbasecount_hsapiens: split_scbasecount_hsapiens
-  # - split_scbasecount_mmusculus: split_scbasecount_mmusculus
-  # - split_scbasecount_mmulatta: split_scbasecount_mmulatta
-  # - split_scbasecount_cjacchus: split_scbasecount_cjacchus
-  # - split_scbasecount_ptroglodytes: split_scbasecount_ptroglodytes
-  # - split_scbasecount_btaurus: split_scbasecount_btaurus
-  # - split_scbasecount_celegans: split_scbasecount_celegans
-  # - split_scbasecount_drerio: split_scbasecount_drerio
-  # - split_scbasecount_dmelanogaster: split_scbasecount_dmelanogaster
-  # - split_scbasecount_ecaballus: split_scbasecount_ecaballus
-  # - split_scbasecount_ggallus: split_scbasecount_ggallus
-  # - split_scbasecount_ggorilla: split_scbasecount_ggorilla
-  # - split_scbasecount_hgfemale: split_scbasecount_hgfemale
-  # - split_scbasecount_ocuniculus: split_scbasecount_ocuniculus
-  # - split_scbasecount_oaries: split_scbasecount_oaries
-  # - split_scbasecount_sscrofa: split_scbasecount_sscrofa
+  - split_cellxgene_hsapiens: split_cellxgene_hsapiens_2023_12_15_primary
 
 name: DataModule
-columns: ["cell_type", "donor_id"] # include all obs keys to retrieve from dataloader
-label_keys_to_monitor: ["cell_type"]
-batch_keys_to_monitor: ["donor_id"]
+species:
+  - hsapiens
+obs_keys: ["dataset", "donor_id", "tissue", "cell_type"]
 normalization: raw
 gene_sampling_strategy: top-nonzero
 model_speed_sanity_check: False
@@ -32,7 +12,7 @@ precomp_embs_key: null
 dataset:
   train:
     split: 
-      - ${datamodule.split_cellxgene_hsapiens.train}
+      - ${datamodule.split_cellxgene_hsapiens}
     max_tokens: 1000
     panel_overlap: False
     panel_selection: mixed
@@ -45,9 +25,9 @@ dataset:
     qc_threshold: null
     max_total_seq_length: null
   val:
-    same:
+    same_as_train:
       split:
-        - ${datamodule.split_cellxgene_hsapiens.val}
+        - ${datamodule.split_cellxgene_hsapiens}
       panel_overlap: ${datamodule.dataset.train.panel_overlap}
       panel_selection: ${datamodule.dataset.train.panel_selection}
       panel_selection_mixed_prob: ${datamodule.dataset.train.panel_selection_mixed_prob}
@@ -56,19 +36,19 @@ dataset:
       panel_size_max: ${datamodule.dataset.train.panel_size_max}
     within_P200_B256:
       split:
-        - ${datamodule.split_cellxgene_hsapiens.val}
+        - ${datamodule.split_cellxgene_hsapiens}
       panel_selection: random
       panel_size_min: 200
       panel_size_max: 200
     within_P800_B256:
       split: 
-        - ${datamodule.split_cellxgene_hsapiens.val}
+        - ${datamodule.split_cellxgene_hsapiens}
       panel_selection: random
       panel_size_min: 800
       panel_size_max: 800
     within_P6400_B256:
       split:
-        - ${datamodule.split_cellxgene_hsapiens.val}
+        - ${datamodule.split_cellxgene_hsapiens}
       panel_selection: random
       panel_size_min: 6400
       panel_size_max: 6400
@@ -83,8 +63,9 @@ dataloader:
     pin_memory: True
     drop_last: True
     num_samples: null
+    num_groups: null
   val:
-    same:
+    same_as_train:
       within_group_sampling: ${datamodule.dataloader.train.within_group_sampling}
       batch_size: ${datamodule.dataloader.train.batch_size}
       shuffle: ${datamodule.dataloader.train.shuffle}
@@ -92,6 +73,8 @@ dataloader:
       pin_memory: False
       drop_last: ${datamodule.dataloader.train.drop_last}
       num_samples: 100000
+      num_groups: null
+      sample_groups_equally: True
     within_P200_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -100,6 +83,8 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
+      sample_groups_equally: True
     within_P800_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -108,6 +93,8 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
+      sample_groups_equally: True
     within_P6400_B256:
       within_group_sampling: "dataset"
       batch_size: 256
@@ -116,3 +103,5 @@ dataloader:
       pin_memory: False
       drop_last: True
       num_samples: 100000
+      num_groups: null
+      sample_groups_equally: True

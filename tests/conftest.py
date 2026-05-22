@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 import logging
 from hydra import compose, initialize
 from lamin_dataloader import GeneIdTokenizer
+from concept.dataset import MultiSpeciesTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,8 @@ def adata():
     adata = ad.AnnData(X=X)
     adata.var_names = real_gene_names
     adata.var["gene_symbols"] = real_gene_names
-    adata.uns["_organism"] = "hsapiens"
-    adata.uns["_tissue"] = "test_tissue"
+    adata.obs["tissue"] = np.random.choice(["blood", "brain"], size=n_cells)
+    adata.obs["cell_type"] = np.random.choice(["B cell", "T cell"], size=n_cells)
 
     return adata
 
@@ -73,7 +74,7 @@ def tokenizer(adata):
     gene_names = adata.var_names.tolist()
     n_genes = len(gene_names)
 
-    gene_mapping = {"<pad>": 0, "<cls>": 1, **{gene_name: i + 2 for i, gene_name in enumerate(gene_names)}}
+    gene_mapping = {"<cls>": 0, "<pad>": 1, **{gene_name: i + 2 for i, gene_name in enumerate(gene_names)}}
 
     return GeneIdTokenizer(gene_mapping)
 
@@ -97,10 +98,12 @@ def train_config(adata, tokenizer, device, tmp_path):
     # Create gene mapping pickle file
     gene_mapping = tokenizer.gene_mapping
     gene_mapping_series = pd.Series(gene_mapping, name="token")
-    gene_mapping_path = tmp_path / "gene_mapping.csv"
-    gene_mapping_series.to_csv(gene_mapping_path, index_label="gene_id")
+    gene_mappings_path = tmp_path / "hsapiens.csv"
+    gene_mapping_series.to_csv(gene_mappings_path, index_label="gene_id")
 
-    pretrained_vocabulary_path = tmp_path / "pretrained_vocabulary.csv"
+    pretrained_vocabulary_dir = tmp_path / "embeddings"
+    pretrained_vocabulary_dir.mkdir()
+    pretrained_vocabulary_path = pretrained_vocabulary_dir / "hsapiens.csv"
     gene_names = list(tokenizer.gene_mapping.keys())[2:]  # skip <pad> and <cls>
     vectors = [np.random.rand(10) for _ in gene_names]
     df = pd.DataFrame(vectors, index=gene_names)
@@ -120,15 +123,12 @@ def train_config(adata, tokenizer, device, tmp_path):
             overrides=[
                 # Override paths
                 f"PATH.PROJECT_PATH={tmp_path}",
-                f"PATH.PROJECT_DATA_PATH={tmp_path}",
                 f"PATH.CHECKPOINT_ROOT={checkpoint_dir}",
-                f"PATH.DATASET_PATH={tmp_path}",
-                f"PATH.ADATA_PATH={adata_dir}",
                 f"PATH.PANELS_PATH={panels_dir}",
-                f"PATH.GENE_MAPPING_PATH={gene_mapping_path}",
-                f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_path}",
+                f"PATH.PRETRAINED_VOCABULARY={pretrained_vocabulary_dir}",
+                f"PATH.GENE_MAPPINGS_PATH={tmp_path}",
                 # Override datamodule settings
-                "datamodule.columns=[]",
+                "datamodule.obs_keys=[]",
                 "datamodule.normalization=raw",
                 "datamodule.gene_sampling_strategy=top-nonzero",
                 "datamodule.dataset.train.max_tokens=10",
@@ -139,6 +139,7 @@ def train_config(adata, tokenizer, device, tmp_path):
                 "datamodule.dataloader.train.num_workers=2",
                 "datamodule.dataloader.val=null",
                 # Override model settings for faster testing
+                "model.dim_pretrained_vocab=10",
                 "model.dim_model=16",
                 "model.num_head=2",
                 "model.dim_hid=32",
@@ -150,15 +151,25 @@ def train_config(adata, tokenizer, device, tmp_path):
                 "model.training.devices=1",
                 "model.training.num_nodes=1",
                 f"model.training.freeze_pretrained_vocabulary={bool(pretrained_vocabulary_path)}",
-                "model.training.use_specie_embs_freq=0.8",
+                "model.training.use_learnable_embs_freq=0.8",
                 # Disable wandb
                 "wandb.enabled=False",
                 "wandb.run_name=test_name",
             ],
         )
 
-    # Manually override the split to use our test file
-    cfg.datamodule.dataset.train.split = ["test_data.h5ad"]
+    # Override GENE_MAPPINGS_PATH to use only the single test species, replacing
+    # the default multi-species interpolated paths from config.yaml.
+    OmegaConf.update(cfg, "datamodule.species", ["hsapiens"], merge=False)
+
+    # Override the split with a split-config dict so that resolve_split_list can
+    # extract the species and build the metadata dict correctly.
+    OmegaConf.update(
+        cfg,
+        "datamodule.dataset.train.split",
+        [{"source_path": str(adata_dir), "species": "hsapiens", "train": ["test_data.h5ad"], "val": []}],
+        merge=False,
+    )
     logger.info(OmegaConf.to_yaml(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)))
 
     return cfg

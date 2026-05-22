@@ -1,12 +1,12 @@
 import logging
 import os
 import sys
-from datetime import datetime
+import datetime
 
 import lightning as L
 import pandas as pd
 from hydra import compose, initialize
-from lamin_dataloader import GeneIdTokenizer
+from concept.dataset import MultiSpeciesTokenizer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.utilities import rank_zero_only
@@ -15,13 +15,15 @@ from omegaconf import DictConfig, OmegaConf
 from concept import ContrastiveModel, scConcept
 from concept.data import AnnDataModule
 from concept.utils import (
+    SLURMEnv,
     _get_callbacks,
+    build_species_gene_mappings,
     copy_files,
     get_profiler,
-    resume_wandb_config,
     load_pretrained_vocabulary,
-    merge_lists,
-    check_organism_in_h5ad_files,
+    resolve_split_list,
+    resume_wandb_config,
+    setup_logging,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,53 +39,60 @@ def train(cfg: DictConfig, build_only: bool = False):
     # Validate configuration constraints
     scConcept.validate_config(cfg)
 
+    local_rank = int(os.environ.get("SLURM_LOCALID", -1))
+    global_rank = rank_zero_only.rank
+    logger.info(f"GLOBAL_RANK: {global_rank}, LOCAL_RANK: {local_rank}")
+
     val_loader_names = []
     if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
         val_loader_names = sorted(list(cfg.datamodule.dataset.val.keys()))
 
+    tokenizer = MultiSpeciesTokenizer(build_species_gene_mappings(cfg.PATH.GENE_MAPPINGS_PATH, cfg.datamodule.species))
+    vocab_sizes = tokenizer.vocab_sizes
 
-    gene_mapping = pd.read_csv(cfg.PATH.GENE_MAPPING_PATH, index_col="gene_id")["token"].to_dict()
-    tokenizer = GeneIdTokenizer(gene_mapping)
-
-    pretrained_vocabulary = None
+    pretrained_vocabularies = None
     if "PRETRAINED_VOCABULARY" in cfg.PATH and cfg.PATH.PRETRAINED_VOCABULARY is not None:
-        pretrained_vocabulary = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer)
+        pretrained_vocabularies = load_pretrained_vocabulary(cfg.PATH.PRETRAINED_VOCABULARY, tokenizer, cfg.model.dim_pretrained_vocab)
+
+    if cfg.PATH.LOCAL_DIR is not None:
+        for key, value in cfg.datamodule.items():
+            if isinstance(value, (dict, DictConfig)) and "source_name" in value and "source_path" in value:
+                source_name = value["source_name"]
+                source_path = value["source_path"]
+                files = list(value["train"]) + list(value["val"])
+                if (global_rank == 0) or (local_rank == 0 and 'localscratch' in cfg.PATH.LOCAL_DIR):
+                    copy_files(
+                        source_path,
+                        os.path.join(cfg.PATH.LOCAL_DIR, source_name),
+                        files,
+                        compare_files=True,
+                        force_copy=False,
+                    )
+                cfg.datamodule[key]["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, source_name)
+        if "train" in cfg.datamodule.dataset and cfg.datamodule.dataset.train is not None:
+            for item in cfg.datamodule.dataset.train.split:
+                if "source_name" in item:
+                    item["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, item["source_name"])
+        if "val" in cfg.datamodule.dataset and cfg.datamodule.dataset.val is not None:
+            for val_name, val_kwargs in cfg.datamodule.dataset.val.items():
+                for item in val_kwargs.split:
+                    if "source_name" in item:
+                        item["source_path"] = os.path.join(cfg.PATH.LOCAL_DIR, item["source_name"])
 
     dataset_kwargs = OmegaConf.to_container(cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
     dataloader_kwargs = OmegaConf.to_container(cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)
 
-    merged_split = set()
     if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        dataset_kwargs["train"]["split"] = merge_lists(dataset_kwargs["train"]["split"])
-        merged_split.update(dataset_kwargs["train"]["split"])
+        paths, metadata = resolve_split_list(dataset_kwargs["train"]["split"], key="train")
+        dataset_kwargs["train"]["split"] = {"paths": paths, "metadata": metadata}
     if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
         for val_name, val_kwargs in dataset_kwargs["val"].items():
-            dataset_kwargs["val"][val_name]["split"] = merge_lists(val_kwargs["split"])
-            merged_split.update(dataset_kwargs["val"][val_name]["split"])
-
-    # Copy files to faster local directory
-    data_path = cfg.PATH.ADATA_PATH
-    if cfg.PATH.LOCAL_DIR is not None and rank_zero_only.rank == 0:
-        copy_files(
-            data_path,
-            cfg.PATH.LOCAL_DIR,
-            list(merged_split),
-            compare_files=True,
-            force_copy=False,
-        )
-        data_path = cfg.PATH.LOCAL_DIR
-
-    if "train" in dataset_kwargs and dataset_kwargs["train"] is not None:
-        dataset_kwargs["train"]["split"] = [os.path.join(data_path, file) for file in dataset_kwargs["train"]["split"]]
-    if "val" in dataset_kwargs and dataset_kwargs["val"] is not None:
-        for val_name, val_kwargs in dataset_kwargs["val"].items():
-            dataset_kwargs["val"][val_name]["split"] = [os.path.join(data_path, file) for file in val_kwargs["split"]]
-
-    check_organism_in_h5ad_files([os.path.join(data_path, file) for file in merged_split])
+            paths, metadata = resolve_split_list(val_kwargs["split"], key="val")
+            dataset_kwargs["val"][val_name]["split"] = {"paths": paths, "metadata": metadata}
 
     datamodule_args = {
         "panels_path": cfg.PATH.PANELS_PATH,
-        "columns": cfg.datamodule.columns,
+        "obs_keys": cfg.datamodule.obs_keys,
         "precomp_embs_key": cfg.datamodule.precomp_embs_key,
         "normalization": cfg.datamodule.normalization,
         "gene_sampling_strategy": cfg.datamodule.gene_sampling_strategy,
@@ -115,14 +124,23 @@ def train(cfg: DictConfig, build_only: bool = False):
             log_model=False,
             **kwargs,
         )
-        if rank_zero_only.rank == 0 and not RESUME_LOGGER:
+        if global_rank == 0 and not RESUME_LOGGER:
             wandb_logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     run_id = "dummy"
-    if rank_zero_only.rank == 0:
-        run_id = wandb_logger.experiment.id if cfg.wandb.enabled else f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    if global_rank == 0:
+        run_id = (
+            wandb_logger.experiment.id
+            if cfg.wandb.enabled
+            else f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        )
 
     CHECKPOINT_PATH = os.path.join(cfg.PATH.CHECKPOINT_ROOT, run_id)
+    os.makedirs(CHECKPOINT_PATH, exist_ok=True)
+
+    if global_rank == 0:
+        OmegaConf.save(cfg, os.path.join(CHECKPOINT_PATH, "config.yaml"))
+        logger.info("Saved resolved config to %s", os.path.join(CHECKPOINT_PATH, "config.yaml"))
 
     profiler = get_profiler(CHECKPOINT_PATH) if cfg.profiler.enabled else None
 
@@ -139,26 +157,28 @@ def train(cfg: DictConfig, build_only: bool = False):
         "check_val_every_n_epoch": cfg.model.training.check_val_every_n_epoch,
         "limit_train_batches": cfg.model.training.limit_train_batches,
         "accumulate_grad_batches": cfg.model.training.accumulate_grad_batches,
+        "gradient_clip_val": cfg.model.training.gradient_clip_val,
         "profiler": profiler,
         "callbacks": _get_callbacks(CHECKPOINT_PATH, cfg.model.training.max_steps),
+        "plugins": [SLURMEnv()] if os.environ.get("SLURM_JOB_ID", None) is not None else None,
     }
+    strategy = DDPStrategy(find_unused_parameters=True, skip_all_reduce_unused_params=True) if len(tokenizer.species) > 1 else DDPStrategy()
     trainer = L.Trainer(
         **trainer_kwargs,
-        strategy=DDPStrategy(),
+        strategy=strategy,
         precision="bf16-mixed",
         use_distributed_sampler=False,
     )
 
     model_args = {
         "config": cfg.model,
-        "pad_token_id": gene_mapping["<pad>"],
-        "cls_token_id": gene_mapping["<cls>"],
-        "vocab_size": len(gene_mapping),
-        "pretrained_vocabulary": pretrained_vocabulary,
+        "pad_token_id": tokenizer.PAD_TOKEN,
+        "cls_token_id": tokenizer.CLS_TOKEN,
+        "vocab_sizes": vocab_sizes,
+        "pretrained_vocabularies": pretrained_vocabularies,
         "world_size": trainer.world_size,
         "val_loader_names": val_loader_names,
-        "label_keys_to_monitor": cfg.datamodule.label_keys_to_monitor,
-        "batch_keys_to_monitor": cfg.datamodule.batch_keys_to_monitor,
+        "obs_keys": cfg.datamodule.obs_keys,
         "precomp_embs_key": cfg.datamodule.precomp_embs_key,
     }
 
@@ -168,6 +188,8 @@ def train(cfg: DictConfig, build_only: bool = False):
         checkpoint_file = os.path.join(cfg.PATH.CHECKPOINT_ROOT, cfg.initialize.run_id, cfg.initialize.checkpoint)
         if cfg.initialize.create_new_run:
             model = ContrastiveModel.load_from_checkpoint(checkpoint_file, **model_args, strict=False)
+            if cfg.model.training.validate_before_training:
+                trainer.validate(model=model, datamodule=datamodule)
         else:
             model = ContrastiveModel(**model_args)
             ckpt_path = checkpoint_file
@@ -176,7 +198,6 @@ def train(cfg: DictConfig, build_only: bool = False):
         if cfg.model.training.validate_before_training:
             trainer.validate(model=model, datamodule=datamodule)
 
-
     if build_only:
         return trainer, model, datamodule
 
@@ -184,10 +205,11 @@ def train(cfg: DictConfig, build_only: bool = False):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-        format="%(levelname)s: %(message)s",
-    )
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (65536, hard))
+
+    setup_logging()
     L.seed_everything(42)
 
     bash_cfg = OmegaConf.from_cli()

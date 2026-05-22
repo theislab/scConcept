@@ -18,7 +18,7 @@ sys.path.insert(0, str(HERE / "extensions"))
 
 # NOTE: If you installed your project in editable mode, this might be stale.
 #       If this is the case, reinstall it to refresh the metadata
-info = metadata("scConcept")
+info = metadata("sc-concept")
 project_name = info["Name"]
 author = info["Author"]
 copyright = f"{datetime.now():%Y}, {author}."
@@ -52,6 +52,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autosummary",
+    "sphinx.ext.doctest",
     "sphinx.ext.napoleon",
     "sphinxcontrib.bibtex",
     "sphinx_autodoc_typehints",
@@ -64,6 +65,7 @@ extensions = [
 
 autosummary_generate = True
 autodoc_member_order = "groupwise"
+autodoc_mock_imports = ["flash_attn"]
 default_role = "literal"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
@@ -97,6 +99,15 @@ intersphinx_mapping = {
     "anndata": ("https://anndata.readthedocs.io/en/stable/", None),
     "scanpy": ("https://scanpy.readthedocs.io/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    ## General
+    "matplotlib": ("https://matplotlib.org/stable/", None),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    ## Deep learning
+    "torch": ("https://docs.pytorch.org/docs/stable", None),
+    "lightning": ("https://lightning.ai/docs/pytorch/stable/", None),
+    ## Special
+    "scvi-tools": ("https://docs.scvi-tools.org/en/stable/", None),
 }
 
 # List of patterns, relative to source directory, that match files and

@@ -4,47 +4,42 @@ Integration tests for the training pipeline and model.
 This test suite provides comprehensive testing of the ContrastiveModel
 and the training workflow.
 
-Note: flash_attn and _encode are conditionally mocked:
-- If flash-attn is installed: Uses real implementation
-- If flash-attn is not installed: Uses mocked implementation
-- Log method is always mocked to avoid trainer reference errors
 """
 
+import importlib.util
 import logging
-import sys
+import os
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
-logger = logging.getLogger(__name__)
-
-# Check if flash-attn is installed
-try:
-    import flash_attn
-
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
-
-logger.info(f"\n\nFLASH_ATTN_AVAILABLE: {FLASH_ATTN_AVAILABLE}")
-
-# Mock flash_attn and its submodules only if flash-attn is not installed
-if not FLASH_ATTN_AVAILABLE:
-    logger.info("Mocking flash_attn")
-    sys.modules["flash_attn"] = MagicMock()
-    sys.modules["flash_attn.modules"] = MagicMock()
-    sys.modules["flash_attn.modules.mha"] = MagicMock()
-
-# Now we can import the modules
 from lamin_dataloader import BaseCollate, InMemoryCollection, TokenizedDataset
 from torch.utils.data import DataLoader
 
 from concept import ContrastiveModel
 
+logger = logging.getLogger(__name__)
 
-def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=None):
+FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
+IS_GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+FLASH_ATTENTION_PARAMS = [
+    False,
+    pytest.param(
+        True,
+        marks=pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_attn is not installed"),
+    ),
+]
+
+def _mock_encode(
+    self,
+    tokens,
+    values,
+    src_key_padding_mask=None,
+    seq_lengths=None,
+    return_padded_embeddings=False,
+):
     """
     Mock the _encode function to avoid complex transformer computations.
     Returns mock embeddings and cell embeddings with correct shapes.
@@ -57,35 +52,21 @@ def _mock_encode(self, tokens, values, src_key_padding_mask=None, seq_lengths=No
     return embs_padded, cell_embs
 
 
-def _mock_log(self, *args, **kwargs):
-    """Mock the log method to avoid trainer reference errors."""
-    pass
-
-
-@pytest.fixture(autouse=True)
-def mock_model_methods():
-    """Automatically mock model methods for all tests in this module."""
-    # Always mock log to avoid trainer reference errors
-    with patch.object(ContrastiveModel, "log", _mock_log):
-        # Only mock _encode if flash-attn is not available
-        if not FLASH_ATTN_AVAILABLE:
-            with patch.object(ContrastiveModel, "_encode", _mock_encode):
-                yield
-        else:
-            yield
-
 
 @pytest.fixture
 def mock_config():
     """Create a mock configuration for testing"""
     return {
         "flash_attention": False,  # Set to False to use regular transformer
+        "dim_gene_embs": 64,
         "dim_model": 64,
         "num_head": 4,
         "dim_hid": 128,
         "nlayers": 2,
         "dropout": 0.1,
         "decoder_head": False,
+        "mask_value": -1,
+        "cls_value": -2,
         "mask_padding": False,
         "input_encoding": "rank_encoding",
         "pe_max_len": 1000,
@@ -106,7 +87,7 @@ def mock_config():
             "optimizer_class": "AdamW",
             "scheduler": "warmup",
             "freeze_pretrained_vocabulary": None,
-            "use_specie_embs_freq": None,
+            "use_learnable_embs_freq": None,
             "warmup": 100,
             "max_steps": 1000,
             "min_lr": 0.0,
@@ -117,46 +98,45 @@ def mock_config():
 def test_model_initialization(mock_config, device):
     """Test that the model can be initialized with mock config"""
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=[]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=[]
     )
 
     # Move model to device
     model = model.to(device)
 
     assert model is not None
-    assert model.vocab_size == 100
+    assert "hsapiens" in model.gene_token_encoder.learnable_embs
     assert model.dim_model == 64
     assert model.num_head == 4
     assert model.device.type == device.type
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("use_pretrained_vocabulary", [False, True])
 def test_training_step(mock_config, device, flash_attention, use_pretrained_vocabulary):
     """Test that the model can perform a training step"""
     # Update mock_config with parameterized flash_attention value
+    vocab_size = 20
     mock_config["flash_attention"] = flash_attention
     mock_config["training"]["scheduler"] = None
 
     if use_pretrained_vocabulary:
-        fixed_idx = 2
         # Create a pretrained vocabulary with a known value and keep reference for later
         with torch.no_grad():
-            pretrained_vocabulary = {fixed_idx: torch.ones(256, requires_grad=False)}
+            pretrained_vocabulary = torch.ones(vocab_size, 256, requires_grad=False)
         mock_config["training"]["freeze_pretrained_vocabulary"] = True
-        mock_config["training"]["use_specie_embs_freq"] = 1.0
+        mock_config["training"]["use_learnable_embs_freq"] = 1.0
     else:
         pretrained_vocabulary = None
 
-    vocab_size = 20
     model = ContrastiveModel(
         config=mock_config,
         cls_token_id=0,
         pad_token_id=1,
-        vocab_size=vocab_size,
+        vocab_sizes={"hsapiens": vocab_size},
         world_size=1,
         val_loader_names=["val_test"],
-        pretrained_vocabulary=pretrained_vocabulary,
+        pretrained_vocabularies={"hsapiens": pretrained_vocabulary} if pretrained_vocabulary is not None else None,
     )
 
     # Move model to device
@@ -183,19 +163,18 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "organism": "hsapiens",
-        "tissue": "test_tissue",
+        "species": ["hsapiens"] * batch_size,
     }
 
     # Test training step
     model.train()
-    # Keep a copy of pretrained embedding tensor before backward if it is used
+    # Keep a copy of pretrained pretrained_embs tensor before backward if it is used
     if use_pretrained_vocabulary:
-        pretrained_embed_before = model.gene_token_encoder.embedding.weight.clone()
+        pretrained_embed_before = model.gene_token_encoder.pretrained_embs["hsapiens"].weight.clone()
         # Capture a deepcopy of all model parameters before training step
     params_before = {name: param.clone().detach() for name, param in model.named_parameters()}
 
-    with patch.object(model, "log_metrics") as mock_log:
+    with patch.object(model, "log_metric") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             loss = model.training_step(batch, batch_idx=0)
 
@@ -224,20 +203,17 @@ def test_training_step(mock_config, device, flash_attention, use_pretrained_voca
                     assert not torch.equal(before, param), f"Parameter {name} was not updated!"
 
         if use_pretrained_vocabulary:
-            assert torch.equal(pretrained_embed_before[fixed_idx], model.gene_token_encoder.embedding.weight[fixed_idx])
-            assert not torch.equal(
-                pretrained_embed_before[fixed_idx + 1], model.gene_token_encoder.embedding.weight[fixed_idx + 1]
-            )
+            assert torch.equal(pretrained_embed_before, model.gene_token_encoder.pretrained_embs["hsapiens"].weight)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 def test_validation_step(mock_config, device, flash_attention):
     """Test that the model can perform a validation step and calls model.log appropriately"""
     # Update mock_config with parameterized flash_attention value
     mock_config["flash_attention"] = flash_attention
 
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=["test_val"]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=["test_val"]
     )
 
     # Move model to device
@@ -262,13 +238,12 @@ def test_validation_step(mock_config, device, flash_attention):
         "panel_name_2": "test_panel_2",
         "seq_length_1": [seq_len] * batch_size,
         "seq_length_2": [seq_len] * batch_size,
-        "organism": "hsapiens",
-        "tissue": "test_tissue",
+        "species": ["hsapiens"] * batch_size,
     }
 
     # Test validation step and check model.log calls
     model.eval()
-    with torch.no_grad(), patch.object(model, "log_metrics") as mock_log:
+    with torch.no_grad(), patch.object(model, "log_metric") as mock_log:
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             model.validation_step(batch, batch_idx=0, dataloader_idx=0)
 
@@ -277,15 +252,16 @@ def test_validation_step(mock_config, device, flash_attention):
         assert any(call == "val/test_val/loss_cont" for call in call_args_list)
 
 
-@pytest.mark.parametrize("flash_attention", [False, True])
+@pytest.mark.parametrize("flash_attention", FLASH_ATTENTION_PARAMS)
 @pytest.mark.parametrize("seq_lengths_available", [True, False])
-def test_predict_step(mock_config, device, flash_attention, seq_lengths_available):
+@pytest.mark.parametrize("use_learnable_embs", [False, True])
+def test_predict_step(mock_config, device, flash_attention, seq_lengths_available, use_learnable_embs):
     """Test that the model can perform a predict step"""
     # Update mock_config with parameterized flash_attention value
     mock_config["flash_attention"] = flash_attention
 
     model = ContrastiveModel(
-        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_size=100, world_size=1, val_loader_names=["val_test"]
+        config=mock_config, pad_token_id=0, cls_token_id=1, vocab_sizes={"hsapiens": 100}, world_size=1, val_loader_names=["val_test"]
     )
 
     # Move model to device
@@ -302,22 +278,22 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
         "dataset": torch.randint(0, 2, (batch_size,)).to(device),
         "panel_name": "test_panel",
         "seq_lengths": [seq_len] * batch_size if seq_lengths_available else None,
+        "species": ["hsapiens"] * batch_size,
     }
 
     # Test predict step
     model.eval()
     with torch.no_grad():
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            result = model.predict_step(batch, batch_idx=0)
+            result = model.predict_step(batch, batch_idx=0, use_learnable_embs=use_learnable_embs)
 
     # Check that we get the expected keys
-    expected_keys = ["pred", "cls_cell_emb", "mean_cell_emb", "context_sizes"]
+    expected_keys = ["pred", "cls_cell_emb", "context_sizes"]
     for key in expected_keys:
         assert key in result
 
     # Check output shapes
     assert result["cls_cell_emb"].shape == (batch_size, mock_config["dim_model"])
-    assert result["mean_cell_emb"].shape == (batch_size, mock_config["dim_model"])
     assert isinstance(result["context_sizes"], tuple)
     assert len(result["context_sizes"]) == 2  # (context_size, nonzero_cnt)
 
@@ -326,7 +302,7 @@ def test_predict_step(mock_config, device, flash_attention, seq_lengths_availabl
 
     # Check that outputs are on the correct device
     assert result["cls_cell_emb"].device.type == device.type
-    assert result["mean_cell_emb"].device.type == device.type
+    assert model.use_learnable_embs_freq == int(use_learnable_embs)
 
 
 @pytest.mark.parametrize(
@@ -352,12 +328,14 @@ def test_predict_step_with_lamin_dataloader(
         config=mock_config,
         pad_token_id=0,
         cls_token_id=1,
-        vocab_size=len(tokenizer.gene_mapping),
+        vocab_sizes={"hsapiens": len(tokenizer.gene_mapping)},
         world_size=1,
         val_loader_names=[],
     )
     model = model.to(device)
     model.eval()
+
+    model.set_active_species("hsapiens")
 
     # Create InMemory TokenizedDataset
     test_dataset = TokenizedDataset(collection=InMemoryCollection([adata]), tokenizer=tokenizer, normalization="raw")
@@ -383,14 +361,13 @@ def test_predict_step_with_lamin_dataloader(
                 all_outputs.append(output)
 
                 # Verify output structure
-                expected_keys = ["pred", "cls_cell_emb", "mean_cell_emb"]
+                expected_keys = ["pred", "cls_cell_emb"]
                 for key in expected_keys:
                     assert key in output, f"Missing key: {key}"
 
                 # Verify output shapes
                 actual_batch_size = batch["tokens"].shape[0]
                 assert output["cls_cell_emb"].shape == (actual_batch_size, mock_config["dim_model"])
-                assert output["mean_cell_emb"].shape == (actual_batch_size, mock_config["dim_model"])
 
                 # Only test first few batches to keep test fast
                 if batch_idx >= 2:
@@ -401,19 +378,28 @@ def test_predict_step_with_lamin_dataloader(
 
     # Test that we can concatenate all cell embeddings
     all_cls_embs = torch.cat([output["cls_cell_emb"] for output in all_outputs], dim=0)
-    all_mean_embs = torch.cat([output["mean_cell_emb"] for output in all_outputs], dim=0)
 
     # Verify final shapes
     total_cells = sum(batch["tokens"].shape[0] for batch in list(dataloader)[:3])
     assert all_cls_embs.shape[0] == total_cells
-    assert all_mean_embs.shape[0] == total_cells
     assert all_cls_embs.shape[1] == mock_config["dim_model"]
-    assert all_mean_embs.shape[1] == mock_config["dim_model"]
 
 
-@pytest.mark.skipif(not FLASH_ATTN_AVAILABLE, reason="flash_att is not available")
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "corpus40M-model30M",
+        pytest.param(
+            "corpus230M[human]-model170M",
+            marks=pytest.mark.skipif(
+                IS_GITHUB_ACTIONS,
+                reason="large API integration model is too heavy for GitHub Actions",
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize("use_direct_paths", [False, True])
-def test_api_integration(adata, use_direct_paths, tmp_path):
+def test_api_integration(adata, model_name, use_direct_paths, tmp_path):
     """Integration test for scConcept class with real HuggingFace model
 
     Tests both loading methods:
@@ -431,27 +417,27 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     # Test model loading with either method
     if use_direct_paths:
         # Download model files to get paths for direct path testing
-        model_name = "Corpus-30M"
         model_dir = Path(sc_concept.cache_dir) / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
 
         # Download files
-        model_path, gene_mapping_path, config_path, panels_dir = sc_concept._download_files_if_needed(
+        model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_path = sc_concept._download_files_if_needed(
             model_name, model_dir
         )
 
         # Load using direct paths
         sc_concept = scConcept()
-        logger.info(f"Loading model from {model_path}, {gene_mapping_path}, {config_path}, {panels_dir}")
+        logger.info(f"Loading model from {model_path}, {gene_mappings_path}, {config_path}, {panels_dir}")
         sc_concept.load_config_and_model(
-            config=str(config_path),
-            model_path=str(model_path),
-            gene_mapping_path=str(gene_mapping_path),
-            panels_dir=str(panels_dir),
+            config=config_path,
+            model_path=model_path,
+            gene_mappings_path=gene_mappings_path,
+            panels_dir=panels_dir,
+            pretrained_vocabulary_path = pretrained_vocabulary_path
         )
     else:
         # Load using model_name (original method)
-        sc_concept.load_config_and_model(model_name="Corpus-30M")
+        sc_concept.load_config_and_model(model_name)
 
     # Verify model is loaded correctly
     assert sc_concept.model is not None
@@ -468,24 +454,20 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     )
 
     # Verify result structure
-    expected_keys = ["cls_cell_emb", "mean_cell_emb"]
+    expected_keys = ["cls_cell_emb"]
     for key in expected_keys:
         assert key in result, f"Missing key: {key}"
 
     # Verify embedding shapes
     n_cells = adata.shape[0]
     assert result["cls_cell_emb"].shape == (n_cells, sc_concept.model.dim_model)
-    assert result["mean_cell_emb"].shape == (n_cells, sc_concept.model.dim_model)
 
     # Verify embeddings are numpy arrays
     assert isinstance(result["cls_cell_emb"], np.ndarray)
-    assert isinstance(result["mean_cell_emb"], np.ndarray)
 
     # Verify embeddings are not all zeros or NaNs
     assert not np.all(result["cls_cell_emb"] == 0)
-    assert not np.all(result["mean_cell_emb"] == 0)
     assert not np.any(np.isnan(result["cls_cell_emb"]))
-    assert not np.any(np.isnan(result["mean_cell_emb"]))
 
     # Test training with pre-trained model (resuming/fine-tuning)
     # Store initial model state for comparison
@@ -498,13 +480,14 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     # Use small max_steps and batch_size to keep test fast
     training_max_steps = 3
     training_batch_size = 8
+    sc_concept.cfg.datamodule.dataset.train.panel_size_min = len(adata.var) // 2
 
     # Verify model is in eval mode before training
     assert not sc_concept.model.training, "Model should be in eval mode after loading"
 
     # Run training
     sc_concept.train(
-        adata_list=adata, organism="hsapiens", max_steps=training_max_steps, batch_size=training_batch_size
+        adata_list=adata, species="hsapiens", max_steps=training_max_steps, batch_size=training_batch_size
     )
 
     # Verify model is still valid after training
@@ -524,11 +507,12 @@ def test_api_integration(adata, use_direct_paths, tmp_path):
     assert parameters_changed, "Model parameters should have changed after training"
 
 
-def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
-    """Integration test for AnnDataModule with AnnData objects
+@pytest.mark.parametrize("use_stored_adata", [False, True], ids=["in_memory", "stored"])
+def test_anndatamodule_integration(adata, tokenizer, device, tmp_path, use_stored_adata):
+    """Integration test for AnnDataModule with AnnData objects (in-memory or stored on disk).
 
     Tests that AnnDataModule can:
-    - Initialize with AnnData objects
+    - Initialize with AnnData objects (in-memory) or paths to h5ad files (stored)
     - Create train and test dataloaders
     - Iterate through dataloaders and produce valid batches
     - Handle collate functions properly
@@ -547,18 +531,21 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     panel_df = pd.DataFrame({"Ensembl_ID": panel_genes})
     panel_df.to_csv(panel_file, index=False)
 
-    # Configuration for AnnDataModule
-    split = {
-        "train": [adata],  # List of AnnData objects
-        "val": [adata],
-        "test": [adata],
-    }
+    # Build split: in-memory AnnData list or paths to stored h5ad files
+    if use_stored_adata:
+        adata_dir = tmp_path / "h5ads"
+        adata_dir.mkdir()
+        adata_path = adata_dir / "test_data.h5ad"
+        adata.write(adata_path)
+        split = {"paths": [str(adata_path)], "metadata": {"species": ["hsapiens"]}}
+    else:
+        split = {"paths": [adata], "metadata": {"species": ["hsapiens"]}}
 
-    columns = []  # No obs columns needed for basic test
+    obs_keys = []  # No obs keys needed for basic test
 
     dataset_kwargs = {
         "train": {
-            "split": [adata],
+            "split": split,
             "max_tokens": 20,
             "panel_selection": "mixed",
             "panel_selection_mixed_prob": 0.5,
@@ -570,7 +557,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         },
         "val": {
             "val_1": {
-                "split": [adata],
+                "split": split,
                 "max_tokens": 20,
                 "panel_selection": "random",
                 "panel_selection_mixed_prob": 0.5,
@@ -580,7 +567,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
             }
         },
         "test": {
-            "split": [adata],
+            "split": split,
             "max_tokens": 20,
         },
     }
@@ -597,7 +584,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
         },
         "val": {
             "val_1": {
-                "within_group_sampling": "dataset",
+                "within_group_sampling": ["dataset", "tissue"] if use_stored_adata else "dataset",
                 "batch_size": 4,
                 "shuffle": True,
                 "drop_last": True,
@@ -618,7 +605,7 @@ def test_anndatamodule_integration(adata, tokenizer, device, tmp_path):
     datamodule = AnnDataModule(
         panels_path=str(panels_dir),
         tokenizer=tokenizer,
-        columns=columns,
+        obs_keys=obs_keys,
         precomp_embs_key=None,
         normalization="raw",
         gene_sampling_strategy="top-nonzero",
@@ -751,9 +738,15 @@ def test_train_integration(train_config):
     - Run training for a few steps
     - Complete without errors
     """
+    from contextlib import nullcontext
     from unittest.mock import MagicMock, patch
 
     from concept.train import train
+
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train.DDPStrategy", return_value="auto")
 
     # Mock wandb logger to avoid needing real credentials
     mock_logger = MagicMock()
@@ -762,10 +755,37 @@ def test_train_integration(train_config):
     mock_logger.experiment.config = MagicMock()
 
     # Mock rank_zero_only to always return 0 (single process)
-    with patch("concept.train.rank_zero_only.rank", 0):
-        with patch("concept.train.WandbLogger", return_value=mock_logger):
-            # Run training
-            train(train_config)
+    with strategy_patch:
+        with patch("concept.train.rank_zero_only.rank", 0):
+            with patch("concept.train.WandbLogger", return_value=mock_logger):
+                # Run training
+                train(train_config)
+
+
+def test_train_fabric_integration(train_config):
+    """Integration test for train_fabric.py FabricTrainer pipeline
+
+    Tests that FabricTrainer can:
+    - Load configuration and set up Fabric
+    - Create datamodule with AnnData files
+    - Initialize model and optimizer
+    - Run training for a few steps
+    - Complete without errors
+    """
+    from contextlib import nullcontext
+    from unittest.mock import patch
+
+    from concept.train_fabric import FabricTrainer
+
+    strategy_patch = nullcontext()
+    if not torch.cuda.is_available():
+        train_config.model.training.accelerator = "auto"
+        strategy_patch = patch("concept.train_fabric.DDPStrategy", return_value="auto")
+
+    # train_config has wandb.enabled=False so no WandbLogger mock needed
+    with strategy_patch:
+        trainer = FabricTrainer(train_config)
+        trainer.fit()
 
 
 

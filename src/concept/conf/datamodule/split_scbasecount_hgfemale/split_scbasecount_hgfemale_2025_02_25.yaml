@@ -1,0 +1,9 @@
+source_name: scbasecount-2025-02-25
+source_path: ${PATH.PROJECT_PATH}/data/${.source_name}/h5ads
+species: hgfemale
+train:
+- hgfemale_SRP384257.h5ad
+- hgfemale_ERP143345.h5ad
+- hgfemale_ERP143352.h5ad
+- hgfemale_ERP143930.h5ad
+val: []

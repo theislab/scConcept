@@ -11,5 +11,6 @@ changelog.md
 contributing.md
 references.md
 
-notebooks/example
+notebooks/embedding_extraction
+notebooks/mutual_information_estimation
 ```
