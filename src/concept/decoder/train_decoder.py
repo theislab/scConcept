@@ -32,17 +32,12 @@ class GeneExpressionDataset(Dataset):
         """
         self.cell_embeddings = torch.from_numpy(adata.obsm[cell_emb_key]).float()
 
-        # Handle layer_key: use adata.layers[layer_key] if provided, otherwise adata.X
+        # Keep expression data in its original representation and only densify
+        # the selected rows during item fetching.
         if layer_key is not None:
-            expression_data = adata.layers[layer_key]
+            self.expressions = adata.layers[layer_key]
         else:
-            expression_data = adata.X
-
-        # Convert to dense array if sparse
-        if hasattr(expression_data, 'todense'):
-            self.expressions = torch.from_numpy(np.array(expression_data.todense())).float()
-        else:
-            self.expressions = torch.from_numpy(np.array(expression_data)).float()
+            self.expressions = adata.X
 
         # Handle gene_id_key being "index" or a column name
         if gene_id_key == "index":
@@ -59,11 +54,21 @@ class GeneExpressionDataset(Dataset):
     def __len__(self):
         return len(self.cell_embeddings)
 
+    def _expression_slice_to_tensor(self, idx):
+        expression_slice = self.expressions[idx]
+
+        if hasattr(expression_slice, "toarray"):
+            expression_slice = expression_slice.toarray()
+        elif hasattr(expression_slice, "todense"):
+            expression_slice = expression_slice.todense()
+
+        return torch.from_numpy(np.asarray(expression_slice)).float()
+
     def __getitem__(self, idx):
         return {
             "cell_embedding": self.cell_embeddings[idx],
             "gene_indices": self.gene_indices,
-            "expressions": self.expressions[idx],
+            "expressions": self._expression_slice_to_tensor(idx).squeeze(0),
         }
 
 
@@ -87,6 +92,7 @@ def train_decoder(
     val_split: float = 0.1,
     num_workers: int = 4,
     use_flash_attn: bool | None = None,
+    reconstruction_loss: str = "mse",
 ):
     """
     Train decoder model on AnnData.
@@ -133,6 +139,8 @@ def train_decoder(
     use_flash_attn : bool | None
         Whether to use FlashAttention for the transformer decoder. If None, uses
         FlashAttention only when CUDA is available.
+    reconstruction_loss : str
+        Reconstruction loss to use: "mse", "nb", or "negative_binomial".
     """
     print(f"Using AnnData with {adata.n_obs} cells x {adata.n_vars} genes")
 
@@ -180,6 +188,7 @@ def train_decoder(
             lr=lr,
             weight_decay=weight_decay,
             use_flash_attn=use_flash_attn,
+            reconstruction_loss=reconstruction_loss,
         )
     elif model_type == "mlp":
         model = MLPDecoderModel(
@@ -189,6 +198,7 @@ def train_decoder(
             dropout=dropout,
             lr=lr,
             weight_decay=weight_decay,
+            reconstruction_loss=reconstruction_loss,
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Must be 'transformer' or 'mlp'")
@@ -256,6 +266,13 @@ def main():
     parser.add_argument("--val_split", type=float, default=0.1, help="Validation split fraction")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of data loading workers")
     parser.add_argument(
+        "--reconstruction_loss",
+        type=str,
+        default="mse",
+        choices=["mse", "nb", "negative_binomial"],
+        help="Reconstruction loss to use",
+    )
+    parser.add_argument(
         "--use_flash_attn",
         default=None,
         action=argparse.BooleanOptionalAction,
@@ -288,6 +305,7 @@ def main():
         val_split=args.val_split,
         num_workers=args.num_workers,
         use_flash_attn=args.use_flash_attn,
+        reconstruction_loss=args.reconstruction_loss,
     )
 
 

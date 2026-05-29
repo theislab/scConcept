@@ -33,6 +33,47 @@ def _mock_log(*args, **kwargs):
     return None
 
 
+def test_decoder_reconstruction_loss_masks_unobserved_values():
+    from concept.decoder.decoder_model import _masked_reconstruction_loss
+
+    predictions = torch.tensor([[1.0, 10.0, 3.0]])
+    target_expressions = torch.tensor([[2.0, -1.0, 1.0]])
+
+    loss = _masked_reconstruction_loss(predictions, target_expressions, "mse")
+
+    assert torch.isclose(loss, torch.tensor(2.5))
+
+
+def test_decoder_negative_binomial_loss(device):
+    from concept.decoder import TransformerDecoderModel
+
+    model = TransformerDecoderModel(
+        num_genes=10,
+        cell_emb_dim=16,
+        dim_model=8,
+        num_head=2,
+        dim_hid=16,
+        nlayers=1,
+        reconstruction_loss="nb",
+        use_flash_attn=False,
+    ).to(device)
+
+    batch = {
+        "cell_embedding": torch.randn(2, 16, device=device),
+        "gene_indices": torch.arange(4, device=device).unsqueeze(0).expand(2, -1),
+        "expressions": torch.tensor([[0.0, 1.0, -1.0, 3.0], [2.0, -1.0, 0.0, 1.0]], device=device),
+    }
+
+    with patch.object(model, "log", _mock_log):
+        loss = model.training_step(batch, batch_idx=0)
+
+    assert isinstance(loss, torch.Tensor)
+    assert loss.requires_grad
+    assert not torch.isnan(loss)
+    assert loss.item() >= 0
+    assert model.nb_log_theta is not None
+
+
 def test_decoder_model_integration(device):
     """Integration test for TransformerDecoderModel.
 

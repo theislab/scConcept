@@ -8,10 +8,59 @@ Output: scalar gene expression count for each gene
 import lightning as L
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from concept.modules.flash_attention_layer import FlashTransformerDecoderLayer
 from concept.modules.transformer import TransformerDecoder
+
+
+def _normalize_reconstruction_loss(reconstruction_loss: str) -> str:
+    if reconstruction_loss == "nb":
+        return "negative_binomial"
+    if reconstruction_loss not in {"mse", "negative_binomial"}:
+        raise ValueError(
+            f"Unknown reconstruction_loss: {reconstruction_loss}. Must be 'mse', 'nb', or 'negative_binomial'"
+        )
+    return reconstruction_loss
+
+
+def _log_nb_positive(x: Tensor, mu: Tensor, theta: Tensor, eps: float = 1e-8) -> Tensor:
+    """Negative binomial log-likelihood with mean/dispersion parameterization."""
+    log_theta_mu_eps = torch.log(theta + mu + eps)
+    return (
+        theta * (torch.log(theta + eps) - log_theta_mu_eps)
+        + x * (torch.log(mu + eps) - log_theta_mu_eps)
+        + torch.lgamma(x + theta)
+        - torch.lgamma(theta)
+        - torch.lgamma(x + 1)
+    )
+
+
+def _masked_reconstruction_loss(
+    predictions: Tensor,
+    target_expressions: Tensor,
+    loss_fn: str,
+    theta: Tensor | None = None,
+) -> Tensor:
+    """Calculate reconstruction loss only where expressions are observed."""
+    observed = target_expressions != -1
+    if not observed.any():
+        return predictions.sum() * 0.0
+
+    predictions = predictions[observed]
+    target_expressions = target_expressions[observed].float()
+
+    if loss_fn == "mse":
+        return F.mse_loss(predictions, target_expressions)
+    if loss_fn == "negative_binomial":
+        if theta is None:
+            raise ValueError("theta must be provided for negative_binomial loss")
+        mu = F.softplus(predictions.float())
+        theta = F.softplus(theta[observed].float())
+        return -_log_nb_positive(target_expressions, mu, theta).mean()
+
+    raise ValueError(f"Unknown reconstruction_loss: {loss_fn}. Must be 'mse' or 'negative_binomial'")
 
 
 class MLPDecoderModel(L.LightningModule):
@@ -28,6 +77,7 @@ class MLPDecoderModel(L.LightningModule):
         dropout: float = 0.1,
         lr: float = 1e-4,
         weight_decay: float = 0.01,
+        reconstruction_loss: str = "mse",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -36,6 +86,7 @@ class MLPDecoderModel(L.LightningModule):
         self.cell_emb_dim = cell_emb_dim
         self.lr = lr
         self.weight_decay = weight_decay
+        self.reconstruction_loss = _normalize_reconstruction_loss(reconstruction_loss)
 
         # Default hidden dimensions if not provided
         if hidden_dims is None:
@@ -56,6 +107,9 @@ class MLPDecoderModel(L.LightningModule):
         layers.append(nn.Linear(in_dim, num_genes))
 
         self.mlp = nn.Sequential(*layers)
+        self.nb_log_theta = (
+            nn.Parameter(torch.zeros(num_genes)) if self.reconstruction_loss == "negative_binomial" else None
+        )
 
     def forward(self, cell_embedding: Tensor, gene_indices: Tensor | None = None) -> Tensor:
         """
@@ -74,13 +128,17 @@ class MLPDecoderModel(L.LightningModule):
         predictions = self.mlp(cell_embedding)  # (batch_size, num_genes)
         return predictions
 
+    def _loss(self, predictions: Tensor, target_expressions: Tensor) -> Tensor:
+        theta = self.nb_log_theta.unsqueeze(0).expand_as(predictions) if self.nb_log_theta is not None else None
+        return _masked_reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+
     def training_step(self, batch, batch_idx):
-        """Training step with MSE loss."""
+        """Training step."""
         cell_embedding = batch["cell_embedding"]  # (batch_size, cell_emb_dim)
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
         predictions = self(cell_embedding)
-        loss = nn.functional.mse_loss(predictions, target_expressions)
+        loss = self._loss(predictions, target_expressions)
 
         self.log("train/loss", loss, prog_bar=True)
         return loss
@@ -91,7 +149,7 @@ class MLPDecoderModel(L.LightningModule):
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
         predictions = self(cell_embedding)
-        loss = nn.functional.mse_loss(predictions, target_expressions)
+        loss = self._loss(predictions, target_expressions)
 
         self.log("val/loss", loss, prog_bar=True)
         return loss
@@ -122,6 +180,7 @@ class TransformerDecoderModel(L.LightningModule):
         lr: float = 1e-4,
         weight_decay: float = 0.01,
         use_flash_attn: bool | None = None,
+        reconstruction_loss: str = "mse",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -131,6 +190,7 @@ class TransformerDecoderModel(L.LightningModule):
         self.dim_model = dim_model
         self.lr = lr
         self.weight_decay = weight_decay
+        self.reconstruction_loss = _normalize_reconstruction_loss(reconstruction_loss)
         if use_flash_attn is None:
             use_flash_attn = torch.cuda.is_available()
 
@@ -153,6 +213,9 @@ class TransformerDecoderModel(L.LightningModule):
 
         # Expression prediction head: maps from dim_model to scalar
         self.expression_head = nn.Linear(dim_model, 1)
+        self.nb_log_theta = (
+            nn.Parameter(torch.zeros(num_genes)) if self.reconstruction_loss == "negative_binomial" else None
+        )
 
     def forward(self, cell_embedding: Tensor, gene_indices: Tensor) -> Tensor:
         """
@@ -184,14 +247,18 @@ class TransformerDecoderModel(L.LightningModule):
 
         return predictions
 
+    def _loss(self, predictions: Tensor, target_expressions: Tensor, gene_indices: Tensor) -> Tensor:
+        theta = self.nb_log_theta[gene_indices] if self.nb_log_theta is not None else None
+        return _masked_reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+
     def training_step(self, batch, batch_idx):
-        """Training step with MSE loss."""
+        """Training step."""
         cell_embedding = batch["cell_embedding"]  # (batch_size, cell_emb_dim)
         gene_indices = batch["gene_indices"]  # (batch_size, num_genes)
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
         predictions = self(cell_embedding, gene_indices)
-        loss = nn.functional.mse_loss(predictions, target_expressions)
+        loss = self._loss(predictions, target_expressions, gene_indices)
 
         self.log("train/loss", loss, prog_bar=True)
         return loss
@@ -203,7 +270,7 @@ class TransformerDecoderModel(L.LightningModule):
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
         predictions = self(cell_embedding, gene_indices)
-        loss = nn.functional.mse_loss(predictions, target_expressions)
+        loss = self._loss(predictions, target_expressions, gene_indices)
 
         self.log("val/loss", loss, prog_bar=True)
         return loss
