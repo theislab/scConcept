@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from .decoder_model import MLPDecoderModel, TransformerDecoderModel
+from concept.decoder.decoder_model import MLPDecoderModel, TransformerDecoderModel
 
 
 class GeneExpressionDataset(Dataset):
@@ -86,6 +86,7 @@ def train_decoder(
     max_epochs: int = 10,
     val_split: float = 0.1,
     num_workers: int = 4,
+    use_flash_attn: bool | None = None,
 ):
     """
     Train decoder model on AnnData.
@@ -129,6 +130,9 @@ def train_decoder(
         Fraction of data to use for validation
     num_workers : int
         Number of workers for data loading
+    use_flash_attn : bool | None
+        Whether to use FlashAttention for the transformer decoder. If None, uses
+        FlashAttention only when CUDA is available.
     """
     print(f"Using AnnData with {adata.n_obs} cells x {adata.n_vars} genes")
 
@@ -175,6 +179,7 @@ def train_decoder(
             dropout=dropout,
             lr=lr,
             weight_decay=weight_decay,
+            use_flash_attn=use_flash_attn,
         )
     elif model_type == "mlp":
         model = MLPDecoderModel(
@@ -202,6 +207,7 @@ def train_decoder(
 
     # Use CUDA if available, otherwise CPU
     accelerator = "cuda" if torch.cuda.is_available() else "cpu"
+    precision = "bf16-mixed" if accelerator == "cuda" else "32-true"
 
     trainer = L.Trainer(
         max_epochs=max_epochs,
@@ -210,7 +216,7 @@ def train_decoder(
         callbacks=[checkpoint_callback],
         default_root_dir=output_dir,
         log_every_n_steps=10,
-        precision="bf16-mixed",
+        precision=precision,
     )
 
     # Train
@@ -249,6 +255,12 @@ def main():
     parser.add_argument("--max_epochs", type=int, default=10, help="Maximum number of epochs")
     parser.add_argument("--val_split", type=float, default=0.1, help="Validation split fraction")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of data loading workers")
+    parser.add_argument(
+        "--use_flash_attn",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Use FlashAttention for transformer decoder. Defaults to CUDA availability.",
+    )
 
     args = parser.parse_args()
 
@@ -275,6 +287,7 @@ def main():
         max_epochs=args.max_epochs,
         val_split=args.val_split,
         num_workers=args.num_workers,
+        use_flash_attn=args.use_flash_attn,
     )
 
 

@@ -3,9 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import logging
 
-logger = logging.getLogger(__name__)
 from torch import Tensor
 
 from concept.modules.mha import FallbackMHA
@@ -207,10 +205,10 @@ class FlashTransformerDecoderLayer(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
 
-        if use_flash_attn:
-            logger.info("Using FlashAttention")
+        mha_cls = _resolve_mha_cls(use_flash_attn)
+        self.use_flash_attn = use_flash_attn
         # Self-attention
-        self.self_attn = MHA(
+        self.self_attn = mha_cls(
             embed_dim=d_model,
             num_heads=nhead,
             dropout=dropout,
@@ -219,7 +217,7 @@ class FlashTransformerDecoderLayer(nn.Module):
         )
 
         # Cross-attention
-        self.multihead_attn = MHA(
+        self.multihead_attn = mha_cls(
             embed_dim=d_model,
             num_heads=nhead,
             dropout=dropout,
@@ -299,47 +297,71 @@ class FlashTransformerDecoderLayer(nn.Module):
         if memory_mask is not None:
             raise ValueError("FlashTransformerDecoderLayer does not support memory_mask")
 
-        # Flash attention expects inverted padding mask
-        if tgt_key_padding_mask is not None:
-            tgt_key_padding_mask = ~tgt_key_padding_mask
-
-        if memory_key_padding_mask is not None:
-            memory_key_padding_mask = ~memory_key_padding_mask
-
         if self.norm_scheme == "pre":
-            # Self-attention block
-            tgt = self.norm1(tgt)
-            tgt2 = self.self_attn(
-                tgt, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=tgt_key_padding_mask
+            attn_tgt = self.norm1(tgt)
+            tgt2 = self._self_attention(
+                attn_tgt,
+                key_padding_mask=tgt_key_padding_mask,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
             )
             tgt = tgt + self.dropout1(tgt2)
 
-            # Cross-attention block
-            tgt = self.norm2(tgt)
-            tgt2 = self.multihead_attn(tgt, x_kv=memory, key_padding_mask=memory_key_padding_mask)
+            attn_tgt = self.norm2(tgt)
+            tgt2 = self._cross_attention(
+                attn_tgt,
+                memory,
+                memory_key_padding_mask=memory_key_padding_mask,
+            )
             tgt = tgt + self.dropout2(tgt2)
 
-            # Feedforward block
-            tgt = self.norm3(tgt)
-            tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+            tgt2 = self.linear2(self.dropout(self.activation(self.linear1(self.norm3(tgt)))))
             tgt = tgt + self.dropout3(tgt2)
         else:
-            # Self-attention block
-            tgt2 = self.self_attn(
-                tgt, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, key_padding_mask=tgt_key_padding_mask
+            tgt2 = self._self_attention(
+                tgt,
+                key_padding_mask=tgt_key_padding_mask,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
             )
-            tgt = tgt + self.dropout1(tgt2)
-            tgt = self.norm1(tgt)
+            tgt = self.norm1(tgt + self.dropout1(tgt2))
 
-            # Cross-attention block
-            tgt2 = self.multihead_attn(tgt, x_kv=memory, key_padding_mask=memory_key_padding_mask)
-            tgt = tgt + self.dropout2(tgt2)
-            tgt = self.norm2(tgt)
+            tgt2 = self._cross_attention(
+                tgt,
+                memory,
+                memory_key_padding_mask=memory_key_padding_mask,
+            )
+            tgt = self.norm2(tgt + self.dropout2(tgt2))
 
-            # Feedforward block
             tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
-            tgt = tgt + self.dropout3(tgt2)
-            tgt = self.norm3(tgt)
+            tgt = self.norm3(tgt + self.dropout3(tgt2))
 
         return tgt
 
+    def _self_attention(
+        self,
+        tgt: Tensor,
+        key_padding_mask: Optional[Tensor] = None,
+        cu_seqlens: Optional[Tensor] = None,
+        max_seqlen: Optional[Tensor] = None,
+    ) -> Tensor:
+        if self.use_flash_attn:
+            flash_key_padding_mask = None if key_padding_mask is None else ~key_padding_mask
+            return self.self_attn(
+                tgt,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                key_padding_mask=flash_key_padding_mask,
+            )
+        return self.self_attn(tgt, key_padding_mask=key_padding_mask)
+
+    def _cross_attention(
+        self,
+        tgt: Tensor,
+        memory: Tensor,
+        memory_key_padding_mask: Optional[Tensor] = None,
+    ) -> Tensor:
+        if self.use_flash_attn:
+            flash_key_padding_mask = None if memory_key_padding_mask is None else ~memory_key_padding_mask
+            return self.multihead_attn(tgt, x_kv=memory, key_padding_mask=flash_key_padding_mask)
+        return self.multihead_attn(tgt, x_kv=memory, key_padding_mask=memory_key_padding_mask)

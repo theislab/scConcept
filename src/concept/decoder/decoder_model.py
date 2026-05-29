@@ -121,6 +121,7 @@ class TransformerDecoderModel(L.LightningModule):
         dropout: float = 0.1,
         lr: float = 1e-4,
         weight_decay: float = 0.01,
+        use_flash_attn: bool | None = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -130,6 +131,8 @@ class TransformerDecoderModel(L.LightningModule):
         self.dim_model = dim_model
         self.lr = lr
         self.weight_decay = weight_decay
+        if use_flash_attn is None:
+            use_flash_attn = torch.cuda.is_available()
 
         # Cell embedding adaptation layer
         self.cell_emb_adapter = nn.Linear(cell_emb_dim, dim_model)
@@ -143,6 +146,7 @@ class TransformerDecoderModel(L.LightningModule):
             nhead=num_head,
             dim_feedforward=dim_hid,
             dropout=dropout,
+            use_flash_attn=use_flash_attn,
         )
         decoder_norm = nn.LayerNorm(dim_model)
         self.decoder = TransformerDecoder(decoder_layer, nlayers, decoder_norm)
