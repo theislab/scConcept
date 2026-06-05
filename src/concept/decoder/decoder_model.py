@@ -25,6 +25,13 @@ def _normalize_reconstruction_loss(reconstruction_loss: str) -> str:
     return reconstruction_loss
 
 
+def _normalize_output_gene_ids(output_gene_ids: list[str]) -> list[str]:
+    output_gene_ids = [str(gene_id) for gene_id in output_gene_ids]
+    if len(output_gene_ids) == 0:
+        raise ValueError("output_gene_ids must contain at least one gene")
+    return output_gene_ids
+
+
 def _log_nb_positive(x: Tensor, mu: Tensor, theta: Tensor, eps: float = 1e-8) -> Tensor:
     """Negative binomial log-likelihood with mean/dispersion parameterization."""
     log_theta_mu_eps = torch.log(theta + mu + eps)
@@ -37,30 +44,50 @@ def _log_nb_positive(x: Tensor, mu: Tensor, theta: Tensor, eps: float = 1e-8) ->
     )
 
 
-def _masked_reconstruction_loss(
+def _reconstruction_loss(
     predictions: Tensor,
     target_expressions: Tensor,
     loss_fn: str,
     theta: Tensor | None = None,
 ) -> Tensor:
-    """Calculate reconstruction loss only where expressions are observed."""
-    observed = target_expressions != -1
-    if not observed.any():
-        return predictions.sum() * 0.0
-
-    predictions = predictions[observed]
-    target_expressions = target_expressions[observed].float()
+    target_expressions = target_expressions.float()
 
     if loss_fn == "mse":
+        predictions = F.softplus(predictions.float())
         return F.mse_loss(predictions, target_expressions)
     if loss_fn == "negative_binomial":
         if theta is None:
             raise ValueError("theta must be provided for negative_binomial loss")
-        mu = F.softplus(predictions.float())
-        theta = F.softplus(theta[observed].float())
+        library_size = target_expressions.sum(dim=-1, keepdim=True)
+        mu = library_size.float() * F.softmax(predictions.float(), dim=-1)
+        theta = F.softplus(theta.float())
         return -_log_nb_positive(target_expressions, mu, theta).mean()
 
     raise ValueError(f"Unknown reconstruction_loss: {loss_fn}. Must be 'mse' or 'negative_binomial'")
+
+
+def _total_count_normalize(values: Tensor, target_sum: float) -> Tensor:
+    total_counts = values.sum(dim=-1, keepdim=True)
+    normalized = values / total_counts.clamp_min(torch.finfo(values.dtype).tiny) * target_sum
+    return torch.where(total_counts > 0, normalized, values)
+
+
+def _decode_predictions(
+    predictions: Tensor,
+    reconstruction_loss: str,
+    theta: Tensor | None = None,
+) -> dict[str, Tensor]:
+    result = {"predictions": predictions}
+    if reconstruction_loss == "mse":
+        predictions = torch.expm1(F.softplus(predictions.float()))
+        result["predictions"] = _total_count_normalize(predictions, target_sum=1.0)
+    if reconstruction_loss == "negative_binomial":
+        if theta is None:
+            raise ValueError("theta must be provided for negative_binomial decode")
+        mu = F.softmax(predictions.float(), dim=-1)
+        result["theta"] = F.softplus(theta)
+        result["predictions"] = mu
+    return result
 
 
 class MLPDecoderModel(L.LightningModule):
@@ -71,7 +98,7 @@ class MLPDecoderModel(L.LightningModule):
 
     def __init__(
         self,
-        num_genes: int,
+        output_gene_ids: list[str],
         cell_emb_dim: int,
         hidden_dims: list[int] | None = None,
         dropout: float = 0.1,
@@ -80,13 +107,18 @@ class MLPDecoderModel(L.LightningModule):
         reconstruction_loss: str = "mse",
     ):
         super().__init__()
+        output_gene_ids = _normalize_output_gene_ids(output_gene_ids)
+        num_genes = len(output_gene_ids)
+        model_type = "mlp"
         self.save_hyperparameters()
 
         self.num_genes = num_genes
+        self.model_type = model_type
         self.cell_emb_dim = cell_emb_dim
         self.lr = lr
         self.weight_decay = weight_decay
         self.reconstruction_loss = _normalize_reconstruction_loss(reconstruction_loss)
+        self.output_gene_ids = output_gene_ids
 
         # Default hidden dimensions if not provided
         if hidden_dims is None:
@@ -111,34 +143,82 @@ class MLPDecoderModel(L.LightningModule):
             nn.Parameter(torch.zeros(num_genes)) if self.reconstruction_loss == "negative_binomial" else None
         )
 
+    def _normalize_gene_indices(self, cell_embedding: Tensor, gene_indices: Tensor | None = None) -> Tensor:
+        if gene_indices is None:
+            gene_indices = torch.arange(self.num_genes, device=cell_embedding.device)
+
+        if gene_indices.dim() == 1:
+            gene_indices = gene_indices.unsqueeze(0).expand(cell_embedding.shape[0], -1)
+
+        return gene_indices
+
+    def _gather_gene_values(self, values: Tensor, gene_indices: Tensor) -> Tensor:
+        if values.shape == gene_indices.shape:
+            return values
+        if values.shape[-1] != self.num_genes:
+            raise ValueError(
+                "values must either match gene_indices shape or contain one value per output gene "
+                f"(got values shape {tuple(values.shape)} and gene_indices shape {tuple(gene_indices.shape)})"
+            )
+        return torch.gather(values, dim=-1, index=gene_indices)
+
     def forward(self, cell_embedding: Tensor, gene_indices: Tensor | None = None) -> Tensor:
         """
         Forward pass.
 
         Args:
             cell_embedding: Cell embedding of shape (batch_size, cell_emb_dim)
-            gene_indices: Gene indices of shape (batch_size, num_genes) - not used in MLP model,
-                         included for API compatibility with TransformerDecoderModel
+            gene_indices: Optional gene indices of shape (num_genes_in_batch,) or
+                (batch_size, num_genes_in_batch). If provided, predictions are
+                subset to these genes.
 
         Returns
         -------
-        predictions: Gene expression predictions of shape (batch_size, num_genes)
+        predictions: Gene expression predictions of shape (batch_size, num_genes_in_batch)
+            when gene_indices is provided, otherwise (batch_size, num_genes)
         """
         # MLP directly predicts all gene expressions from cell embedding
         predictions = self.mlp(cell_embedding)  # (batch_size, num_genes)
+        if gene_indices is not None:
+            gene_indices = self._normalize_gene_indices(cell_embedding, gene_indices)
+            predictions = self._gather_gene_values(predictions, gene_indices)
         return predictions
 
-    def _loss(self, predictions: Tensor, target_expressions: Tensor) -> Tensor:
-        theta = self.nb_log_theta.unsqueeze(0).expand_as(predictions) if self.nb_log_theta is not None else None
-        return _masked_reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+    def _loss(
+        self,
+        predictions: Tensor,
+        target_expressions: Tensor,
+        gene_indices: Tensor | None = None,
+    ) -> Tensor:
+        if gene_indices is not None:
+            target_expressions = self._gather_gene_values(target_expressions, gene_indices)
+            theta = self.nb_log_theta[gene_indices] if self.nb_log_theta is not None else None
+        else:
+            theta = self.nb_log_theta.unsqueeze(0).expand_as(predictions) if self.nb_log_theta is not None else None
+        return _reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+
+    def decode(
+        self,
+        cell_embedding: Tensor,
+        gene_indices: Tensor | None = None,
+    ) -> dict[str, Tensor]:
+        gene_indices = self._normalize_gene_indices(cell_embedding, gene_indices)
+        predictions = self(cell_embedding, gene_indices)
+        theta = self.nb_log_theta[gene_indices] if self.nb_log_theta is not None else None
+        result = _decode_predictions(predictions, self.reconstruction_loss, theta)
+        result["gene_indices"] = gene_indices
+        return result
 
     def training_step(self, batch, batch_idx):
         """Training step."""
         cell_embedding = batch["cell_embedding"]  # (batch_size, cell_emb_dim)
+        gene_indices = batch.get("gene_indices")
+        if gene_indices is not None:
+            gene_indices = self._normalize_gene_indices(cell_embedding, gene_indices)
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
-        predictions = self(cell_embedding)
-        loss = self._loss(predictions, target_expressions)
+        predictions = self(cell_embedding, gene_indices)
+        loss = self._loss(predictions, target_expressions, gene_indices)
 
         self.log("train/loss", loss, prog_bar=True)
         return loss
@@ -146,13 +226,19 @@ class MLPDecoderModel(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         """Validation step."""
         cell_embedding = batch["cell_embedding"]  # (batch_size, cell_emb_dim)
+        gene_indices = batch.get("gene_indices")
+        if gene_indices is not None:
+            gene_indices = self._normalize_gene_indices(cell_embedding, gene_indices)
         target_expressions = batch["expressions"]  # (batch_size, num_genes)
 
-        predictions = self(cell_embedding)
-        loss = self._loss(predictions, target_expressions)
+        predictions = self(cell_embedding, gene_indices)
+        loss = self._loss(predictions, target_expressions, gene_indices)
 
         self.log("val/loss", loss, prog_bar=True)
         return loss
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["model_type"] = self.model_type
 
     def configure_optimizers(self):
         """Configure AdamW optimizer with cosine annealing."""
@@ -170,7 +256,7 @@ class TransformerDecoderModel(L.LightningModule):
 
     def __init__(
         self,
-        num_genes: int,
+        output_gene_ids: list[str],
         cell_emb_dim: int,
         dim_model: int = 128,
         num_head: int = 8,
@@ -183,14 +269,19 @@ class TransformerDecoderModel(L.LightningModule):
         reconstruction_loss: str = "mse",
     ):
         super().__init__()
+        output_gene_ids = _normalize_output_gene_ids(output_gene_ids)
+        num_genes = len(output_gene_ids)
+        model_type = "transformer"
         self.save_hyperparameters()
 
         self.num_genes = num_genes
+        self.model_type = model_type
         self.cell_emb_dim = cell_emb_dim
         self.dim_model = dim_model
         self.lr = lr
         self.weight_decay = weight_decay
         self.reconstruction_loss = _normalize_reconstruction_loss(reconstruction_loss)
+        self.output_gene_ids = output_gene_ids
         if use_flash_attn is None:
             use_flash_attn = torch.cuda.is_available()
 
@@ -247,9 +338,25 @@ class TransformerDecoderModel(L.LightningModule):
 
         return predictions
 
-    def _loss(self, predictions: Tensor, target_expressions: Tensor, gene_indices: Tensor) -> Tensor:
+    def _loss(
+        self,
+        predictions: Tensor,
+        target_expressions: Tensor,
+        gene_indices: Tensor,
+    ) -> Tensor:
         theta = self.nb_log_theta[gene_indices] if self.nb_log_theta is not None else None
-        return _masked_reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+        return _reconstruction_loss(predictions, target_expressions, self.reconstruction_loss, theta)
+
+    def decode(
+        self,
+        cell_embedding: Tensor,
+        gene_indices: Tensor,
+    ) -> dict[str, Tensor]:
+        predictions = self(cell_embedding, gene_indices)
+        theta = self.nb_log_theta[gene_indices] if self.nb_log_theta is not None else None
+        result = _decode_predictions(predictions, self.reconstruction_loss, theta)
+        result["gene_indices"] = gene_indices
+        return result
 
     def training_step(self, batch, batch_idx):
         """Training step."""
@@ -274,6 +381,9 @@ class TransformerDecoderModel(L.LightningModule):
 
         self.log("val/loss", loss, prog_bar=True)
         return loss
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["model_type"] = self.model_type
 
     def configure_optimizers(self):
         """Configure AdamW optimizer with cosine annealing."""

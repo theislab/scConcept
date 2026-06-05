@@ -59,7 +59,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         use_flash_attn=True,
         device=None,
         dtype=None,
-        norm_scheme="post",  # "pre" or "post"
+        norm_scheme="pre",  # "pre" or "post"
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -200,7 +200,7 @@ class FlashTransformerDecoderLayer(nn.Module):
         use_flash_attn=True,
         device=None,
         dtype=None,
-        norm_scheme="post",  # "pre" or "post"
+        norm_scheme="pre",  # "pre" or "post"
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()

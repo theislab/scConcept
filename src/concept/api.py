@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from .data import AnnDataModule
 from .dataset import MultiSpeciesTokenizedDataset, MultiSpeciesTokenizer
+from .decoder import MLPDecoderModel, TransformerDecoderModel
 from .model import ContrastiveModel
 from .utils import (
     build_species_gene_mappings,
@@ -49,23 +50,27 @@ class scConcept:
         self.cfg = self.load_config(cfg) if cfg is not None else None
         self.cache_dir = cache_dir
         self.model = None
+        self.decoder_model = None
         self.tokenizer = None
         self.device = None
         self.gene_mappings_path = None
 
-    def _download_files_if_needed(self, model_name: str, model_dir: Path):
+    def _download_files_if_needed(self, model_name: str, model_dir: Path, decoder_model_name: str = "mlp-nb.ckpt"):
         """
-        Download model checkpoint, config, per-species gene mapping CSVs, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
+        Download model checkpoint, optional decoder checkpoint, config, per-species gene mapping CSVs,
+        panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
 
         Args:
             model_name: Model name (e.g., 'corpus40M-model30M')
             model_dir: Directory to cache downloaded files
+            decoder_model_name: Name of the decoder model checkpoint to download (default: 'mlp-nb.ckpt')
         """
         model_path = model_dir / "model.ckpt"
         gene_mappings_path = model_dir / "gene_mappings"
         config_path = model_dir / "config.yaml"
         panels_dir = model_dir / "panels"
         pretrained_vocabulary_dir = model_dir / "pretrained_vocabulary"
+        decoder_model_path = model_dir / "decoder" / decoder_model_name
 
         model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -190,13 +195,49 @@ class scConcept:
         except Exception as e:
             logger.warning(f"Could not download pretrained vocabulary directory: {e}")
 
-        return model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_dir_resolved
+        decoder_model_path_resolved = None
+        try:
+            repo_files = api.list_repo_files(repo_id=self.repo_id, repo_type="model")
+            decoder_repo_path = f"{model_name}/decoder/{decoder_model_name}"
+            if decoder_repo_path in repo_files:
+                decoder_model_path.parent.mkdir(parents=True, exist_ok=True)
+                if not decoder_model_path.exists():
+                    logger.info(
+                        "Downloading decoder model from HuggingFace Hub "
+                        f"({self.repo_id}/{decoder_repo_path})..."
+                    )
+                    downloaded_path = hf_hub_download(
+                        repo_id=self.repo_id,
+                        filename=decoder_repo_path,
+                        cache_dir=str(model_dir.parent),
+                    )
+                    if downloaded_path != str(decoder_model_path):
+                        shutil.copy2(downloaded_path, str(decoder_model_path))
+                    logger.info(f"Decoder model saved to {decoder_model_path}")
+                else:
+                    logger.info(f"Decoder model already exists at {decoder_model_path}")
+                decoder_model_path_resolved = decoder_model_path
+            else:
+                logger.info(f"No decoder model found in HuggingFace Hub ({self.repo_id}/{decoder_repo_path})")
+        except Exception as e:
+            logger.warning(f"Could not download decoder model: {e}")
+
+        return (
+            model_path,
+            gene_mappings_path,
+            config_path,
+            panels_dir,
+            pretrained_vocabulary_dir_resolved,
+            decoder_model_path_resolved,
+        )
 
     def load_config_and_model(
         self,
         model_name: str = None,
         config: str | Path | dict | DictConfig = None,
         model_path: str | Path = None,
+        decoder_model_name: str = "mlp-nb.ckpt",
+        decoder_model_path: str | Path = None,
         gene_mappings_path: str | Path = None,
         panels_dir: str | Path = None,
         pretrained_vocabulary_path: str | Path = None,
@@ -209,6 +250,9 @@ class scConcept:
             config: Configuration - can be a path to config file (.yaml) as str, Path, a dictionary, or DictConfig.
                 When used with ``model_name``, it is merged on top of the downloaded config.
             model_path: Path to model checkpoint file (.ckpt) - if provided, bypasses HuggingFace download
+            decoder_model_name: Name of the decoder model checkpoint to download (default: 'mlp-nb.ckpt')
+            decoder_model_path: Optional path to a decoder checkpoint file (.ckpt). If provided, the decoder is
+                loaded and can be used through ``decode()``.
             gene_mappings_path: Path to gene mappings. For multi-species models, a directory containing
                 ``{species}.csv`` files (one per species). For single-species models, a ``.pkl`` or
                 ``.csv`` file. If provided, bypasses HuggingFace download
@@ -224,9 +268,18 @@ class scConcept:
             logger.info(f"Loading config and model from HuggingFace Hub ({self.repo_id}/{model_name})...")
 
             # Download files if they don't exist
-            model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_path = (
-                self._download_files_if_needed(model_name, model_dir)
+            (
+                model_path,
+                gene_mappings_path,
+                config_path,
+                panels_dir,
+                pretrained_vocabulary_path,
+                downloaded_decoder_model_path,
+            ) = (
+                self._download_files_if_needed(model_name, model_dir, decoder_model_name)
             )
+            if decoder_model_path is None:
+                decoder_model_path = downloaded_decoder_model_path
             base_config = self.load_config(config_path)
             config = {} if config is None else config
             self.cfg = OmegaConf.merge(base_config, OmegaConf.create(config))
@@ -238,6 +291,8 @@ class scConcept:
         self.model_name = model_name
         self.panels_dir = panels_dir
 
+        # Get device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Load gene mapping and build tokenizer
         gene_mappings_path = Path(str(gene_mappings_path))
         self.gene_mappings_path = gene_mappings_path
@@ -266,12 +321,30 @@ class scConcept:
             self.model = ContrastiveModel(**model_args)
             fabric.load(str(model_path), {"model": self.model})
 
-        # Get device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = self.model.to(self.device)
         self.model.eval()
 
+        if decoder_model_path is not None:
+            self.decoder_model = self._load_decoder_model(decoder_model_path)
+            self.decoder_model = self.decoder_model.to(self.device)
+            self.decoder_model.eval()
+
         logger.info(f"Model loaded successfully on {self.device}")
+
+    def _load_decoder_model(self, decoder_model_path: str | Path):
+        checkpoint = torch.load(decoder_model_path, map_location="cpu")
+        model_type = checkpoint.get("model_type")
+
+        if model_type == "transformer":
+            decoder_cls = TransformerDecoderModel
+        elif model_type == "mlp":
+            decoder_cls = MLPDecoderModel
+        else:
+            raise ValueError(
+                f"Decoder checkpoint must contain model_type as 'transformer' or 'mlp': {decoder_model_path}"
+            )
+
+        return decoder_cls.load_from_checkpoint(str(decoder_model_path), map_location="cpu")
 
     @staticmethod
     def load_config(config: str | Path | dict | DictConfig):
@@ -291,6 +364,10 @@ class scConcept:
     def _check_model_loaded(self):
         if self.model is None or self.cfg is None or self.gene_mappings_path is None:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
+
+    def _check_decoder_loaded(self):
+        if self.decoder_model is None:
+            raise ValueError("Decoder model not loaded. Call load_config_and_model(decoder_model_path=...) first.")
 
     @property
     def species(self) -> list[str]:
@@ -314,6 +391,68 @@ class scConcept:
             casefolded_gene_name_to_id.setdefault(gene_name.casefold(), gene_id)
 
         return [casefolded_gene_name_to_id.get(gene_name.casefold(), np.nan) for gene_name in gene_names]
+
+    def map_gene_ids_to_names(self, species: str, gene_ids: list[str]) -> list[object]:
+        """Map gene IDs to gene names case-insensitively, using ``nan`` for unavailable gene IDs."""
+        import numpy as np
+
+        self._check_model_loaded()
+        gene_name_to_id = self.get_gene_name_to_id_mapping(species)
+        casefolded_gene_id_to_name: dict[str, str] = {}
+        for gene_name, gene_id in gene_name_to_id.items():
+            casefolded_gene_id_to_name.setdefault(gene_id.casefold(), gene_name)
+
+        return [casefolded_gene_id_to_name.get(gene_id.casefold(), np.nan) for gene_id in gene_ids]
+
+    def decode(
+        self,
+        cell_embeddings: torch.Tensor | np.ndarray,
+        batch_size: int = 128,
+    ) -> dict[str, torch.Tensor | list[str]]:
+        """Decode cell embeddings into gene expression predictions."""
+        self._check_decoder_loaded()
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+
+        if isinstance(cell_embeddings, np.ndarray):
+            cell_embeddings = torch.from_numpy(cell_embeddings)
+        elif not isinstance(cell_embeddings, torch.Tensor):
+            cell_embeddings = torch.as_tensor(cell_embeddings)
+
+        if cell_embeddings.ndim == 1:
+            cell_embeddings = cell_embeddings.unsqueeze(0)
+        elif cell_embeddings.ndim != 2:
+            raise ValueError("cell_embeddings must be a 1- or 2-dimensional tensor or array")
+
+        self.decoder_model = self.decoder_model.to(self.device)
+        self.decoder_model.eval()
+
+        cell_embeddings = cell_embeddings.to(self.device).float()
+        base_gene_indices = torch.arange(self.decoder_model.num_genes, device=self.device)
+        predictions = []
+        gene_indices = []
+        theta_params = []
+
+        with torch.no_grad():
+            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                for start in range(0, cell_embeddings.shape[0], batch_size):
+                    batch_embeddings = cell_embeddings[start : start + batch_size]
+                    batch_gene_indices = base_gene_indices.unsqueeze(0).expand(batch_embeddings.shape[0], -1)
+                    batch_output = self.decoder_model.decode(batch_embeddings, batch_gene_indices)
+                    predictions.append(batch_output["predictions"].detach().cpu().float())
+                    gene_indices.append(batch_output["gene_indices"].detach().cpu())
+                    if "theta" in batch_output:
+                        theta_params.append(batch_output["theta"].detach().cpu().float())
+
+        result = {
+            "predictions": torch.cat(predictions, dim=0),
+            "gene_indices": torch.cat(gene_indices, dim=0),
+            "output_gene_ids": self.decoder_model.output_gene_ids,
+        }
+        if theta_params:
+            result["theta"] = torch.cat(theta_params, dim=0)
+
+        return result
 
     @staticmethod
     def validate_config(cfg: DictConfig):
@@ -522,7 +661,7 @@ class scConcept:
 
         return float(np.log(n_cells) - loss.cpu().item())
 
-    def train(self, adata_list, species=None, max_steps=None, batch_size=None):
+    def train(self, adata_list, species=None, max_steps=None, batch_size=None, num_workers: int = 8):
         """Train a new model using the configuration in self.cfg.
 
         Uses self.model if it exists, otherwise initializes a new model.
@@ -537,6 +676,8 @@ class scConcept:
                 not file path strings.
             max_steps: Optional maximum number of training steps. If provided, overrides config value.
             batch_size: Optional batch size for training. If provided, overrides config value.
+            num_workers: Number of data loading workers for training. Clamped to available SLURM CPUs
+                by the datamodule, matching ``extract_embeddings`` behavior. Defaults to 8.
 
         Examples::
 
@@ -576,6 +717,7 @@ class scConcept:
             if "train" not in self.cfg.datamodule.dataloader:
                 self.cfg.datamodule.dataloader.train = {}
             self.cfg.datamodule.dataloader.train.batch_size = batch_size
+        self.cfg.datamodule.dataloader.train.num_workers = num_workers
 
         dataset_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataset, resolve=True, throw_on_missing=True)
         dataloader_kwargs = OmegaConf.to_container(self.cfg.datamodule.dataloader, resolve=True, throw_on_missing=True)

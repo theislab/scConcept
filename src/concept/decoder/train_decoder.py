@@ -1,6 +1,7 @@
 """Training script for decoder models (Transformer or MLP)."""
 
 import argparse
+from numbers import Integral, Real
 from pathlib import Path
 
 import anndata as ad
@@ -9,13 +10,66 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from concept.decoder.decoder_model import MLPDecoderModel, TransformerDecoderModel
+from concept.decoder.decoder_model import (
+    MLPDecoderModel,
+    TransformerDecoderModel,
+    _normalize_reconstruction_loss,
+)
+
+
+MSE_NORMALIZATION_TARGET_SUM = 1e4
+
+
+def _normalize_mse_expressions(expressions: torch.Tensor) -> torch.Tensor:
+    total_counts = expressions.sum(dim=-1, keepdim=True)
+    normalized = expressions / total_counts.clamp_min(torch.finfo(expressions.dtype).tiny)
+    normalized = normalized * MSE_NORMALIZATION_TARGET_SUM
+    normalized = torch.where(total_counts > 0, normalized, expressions)
+    return torch.log1p(normalized)
+
+
+def _parse_gene_sample_size(value: str) -> int | float:
+    try:
+        parsed = int(value)
+    except ValueError:
+        parsed = float(value)
+    return parsed
+
+
+def _resolve_gene_sample_size(gene_sample_size: int | float | None, num_genes: int) -> int | None:
+    if gene_sample_size is None:
+        return None
+
+    if isinstance(gene_sample_size, bool):
+        raise TypeError("gene_sample_size must be None, a float fraction, or an integer gene count")
+
+    if isinstance(gene_sample_size, Integral):
+        sample_size = int(gene_sample_size)
+        if sample_size < 1 or sample_size > num_genes:
+            raise ValueError(f"integer gene_sample_size must be between 1 and {num_genes}")
+        return sample_size
+
+    if isinstance(gene_sample_size, Real):
+        fraction = float(gene_sample_size)
+        if fraction <= 0 or fraction > 1:
+            raise ValueError("float gene_sample_size must be greater than 0 and at most 1")
+        return max(1, int(num_genes * fraction))
+
+    raise TypeError("gene_sample_size must be None, a float fraction, or an integer gene count")
 
 
 class GeneExpressionDataset(Dataset):
     """Dataset for gene expression prediction."""
 
-    def __init__(self, adata: ad.AnnData, cell_emb_key: str, gene_id_key: str, layer_key: str | None = None):
+    def __init__(
+        self,
+        adata: ad.AnnData,
+        cell_emb_key: str,
+        gene_id_key: str,
+        layer_key: str | None = None,
+        gene_sample_size: int | float | None = None,
+        normalize_expressions: bool = False,
+    ):
         """
         Initialize dataset from AnnData.
 
@@ -29,8 +83,14 @@ class GeneExpressionDataset(Dataset):
             Key for gene IDs in adata.var (use "index" to use adata.var.index)
         layer_key : str | None
             Optional key for expression data in adata.layers. If None, uses adata.X
+        gene_sample_size : int | float | None
+            If None, return all genes. If int, randomly sample that many genes per
+            item. If float, randomly sample that fraction of genes per item.
+        normalize_expressions : bool
+            If True, apply total count normalization to 1e4 followed by log1p.
         """
         self.cell_embeddings = torch.from_numpy(adata.obsm[cell_emb_key]).float()
+        self.normalize_expressions = normalize_expressions
 
         # Keep expression data in its original representation and only densify
         # the selected rows during item fetching.
@@ -50,6 +110,7 @@ class GeneExpressionDataset(Dataset):
         # Create gene ID to index mapping
         self.gene_to_idx = {gene_id: idx for idx, gene_id in enumerate(self.gene_ids)}
         self.gene_indices = torch.arange(self.num_genes)
+        self.gene_sample_size = _resolve_gene_sample_size(gene_sample_size, self.num_genes)
 
     def __len__(self):
         return len(self.cell_embeddings)
@@ -65,10 +126,18 @@ class GeneExpressionDataset(Dataset):
         return torch.from_numpy(np.asarray(expression_slice)).float()
 
     def __getitem__(self, idx):
+        gene_indices = self.gene_indices
+        expressions = self._expression_slice_to_tensor(idx).squeeze(0)
+        if self.normalize_expressions:
+            expressions = _normalize_mse_expressions(expressions)
+        if self.gene_sample_size is not None:
+            gene_indices = torch.randperm(self.num_genes)[: self.gene_sample_size]
+            expressions = expressions[gene_indices]
+
         return {
             "cell_embedding": self.cell_embeddings[idx],
-            "gene_indices": self.gene_indices,
-            "expressions": self._expression_slice_to_tensor(idx).squeeze(0),
+            "gene_indices": gene_indices,
+            "expressions": expressions,
         }
 
 
@@ -93,6 +162,7 @@ def train_decoder(
     num_workers: int = 4,
     use_flash_attn: bool | None = None,
     reconstruction_loss: str = "mse",
+    gene_sample_size: int | float | None = None,
 ):
     """
     Train decoder model on AnnData.
@@ -141,11 +211,22 @@ def train_decoder(
         FlashAttention only when CUDA is available.
     reconstruction_loss : str
         Reconstruction loss to use: "mse", "nb", or "negative_binomial".
+    gene_sample_size : int | float | None
+        If None, train on all genes. If int, randomly sample that many genes per
+        dataset item. If float, randomly sample that fraction of genes per item.
     """
     print(f"Using AnnData with {adata.n_obs} cells x {adata.n_vars} genes")
+    reconstruction_loss = _normalize_reconstruction_loss(reconstruction_loss)
 
     # Create dataset
-    dataset = GeneExpressionDataset(adata, cell_emb_key, gene_id_key, layer_key)
+    dataset = GeneExpressionDataset(
+        adata,
+        cell_emb_key,
+        gene_id_key,
+        layer_key,
+        gene_sample_size,
+        normalize_expressions=reconstruction_loss == "mse",
+    )
 
     # Split into train/val
     val_size = int(len(dataset) * val_split)
@@ -172,13 +253,13 @@ def train_decoder(
 
     # Initialize model
     cell_emb_dim = dataset.cell_embeddings.shape[1]
-    num_genes = dataset.num_genes
+    output_gene_ids = [str(gene_id) for gene_id in dataset.gene_ids]
 
-    print(f"Initializing {model_type} model with cell_emb_dim={cell_emb_dim}, num_genes={num_genes}")
+    print(f"Initializing {model_type} model with cell_emb_dim={cell_emb_dim}, num_genes={len(output_gene_ids)}")
 
     if model_type == "transformer":
         model = TransformerDecoderModel(
-            num_genes=num_genes,
+            output_gene_ids=output_gene_ids,
             cell_emb_dim=cell_emb_dim,
             dim_model=dim_model,
             num_head=num_head,
@@ -192,7 +273,7 @@ def train_decoder(
         )
     elif model_type == "mlp":
         model = MLPDecoderModel(
-            num_genes=num_genes,
+            output_gene_ids=output_gene_ids,
             cell_emb_dim=cell_emb_dim,
             hidden_dims=hidden_dims,
             dropout=dropout,
@@ -212,7 +293,8 @@ def train_decoder(
         filename="decoder-{epoch:02d}",
         monitor="val/loss",
         mode="min",
-        save_top_k=3,
+        save_top_k=1,
+        save_last="link",
     )
 
     # Use CUDA if available, otherwise CPU
@@ -266,6 +348,15 @@ def main():
     parser.add_argument("--val_split", type=float, default=0.1, help="Validation split fraction")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of data loading workers")
     parser.add_argument(
+        "--gene_sample_size",
+        type=_parse_gene_sample_size,
+        default=None,
+        help=(
+            "Random gene subset size per dataset item. Use an integer count "
+            "or a float fraction between 0 and 1. Defaults to all genes."
+        ),
+    )
+    parser.add_argument(
         "--reconstruction_loss",
         type=str,
         default="mse",
@@ -306,6 +397,7 @@ def main():
         num_workers=args.num_workers,
         use_flash_attn=args.use_flash_attn,
         reconstruction_loss=args.reconstruction_loss,
+        gene_sample_size=args.gene_sample_size,
     )
 
 
