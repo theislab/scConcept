@@ -19,7 +19,7 @@ dataset:
     panel_selection: mixed
     panel_selection_mixed_prob: 0.25
     panel_filter_regex: ".*"
-    panel_size_min: 400
+    panel_size_min: 0.02
     panel_size_max: 60000
     panel_max_drop_rate: 0.5
     feature_max_drop_rate: null
