@@ -55,7 +55,8 @@ class scConcept:
 
     def _download_files_if_needed(self, model_name: str, model_dir: Path):
         """
-        Download model checkpoint, config, per-species gene mapping CSVs, panels, and pretrained vocabulary from HuggingFace Hub if they don't exist.
+        Download model checkpoint, root template config, model config, per-species gene mapping CSVs, panels,
+        and pretrained vocabulary from HuggingFace Hub if they don't exist.
 
         Args:
             model_name: Model name (e.g., 'corpus40M-model30M')
@@ -63,6 +64,7 @@ class scConcept:
         """
         model_path = model_dir / "model.ckpt"
         gene_mappings_path = model_dir / "gene_mappings"
+        root_config_path = model_dir.parent / "config.yaml"
         config_path = model_dir / "config.yaml"
         panels_dir = model_dir / "panels"
         pretrained_vocabulary_dir = model_dir / "pretrained_vocabulary"
@@ -83,6 +85,19 @@ class scConcept:
             logger.info(f"Checkpoint saved to {model_path}")
         else:
             logger.info(f"Checkpoint already exists at {model_path}")
+
+        # Download repository-level template config so HuggingFace counts downloads.
+        if not root_config_path.exists():
+            try:
+                downloaded_path = hf_hub_download(
+                    repo_id=self.repo_id,
+                    filename="config.yaml",
+                    cache_dir=str(model_dir.parent),
+                )
+                if downloaded_path != str(root_config_path):
+                    shutil.copy2(downloaded_path, str(root_config_path))
+            except Exception as e:
+                logger.warning(f"Could not download root config.yaml: {e}")
 
         # Download gene mappings directory if needed
         api = HfApi()
