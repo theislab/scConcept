@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/_static/images/Logo.png" alt="scConcept" width="500">
+  <img src="https://raw.githubusercontent.com/theislab/scConcept/main/docs/_static/images/Logo.png" alt="scConcept" width="500">
 </p>
 
 # scConcept
