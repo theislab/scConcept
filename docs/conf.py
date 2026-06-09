@@ -132,6 +132,8 @@ html_theme_options = {
     "use_repository_button": True,
     "path_to_docs": "docs/",
     "navigation_with_keys": False,
+    "light_logo": "images/Logo.png",
+    "dark_logo": "images/Logo.png",
 }
 
 pygments_style = "default"
