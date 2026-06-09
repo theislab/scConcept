@@ -59,7 +59,7 @@ scConcept provides a simple API to load and adapt [pre-trained models](https://h
 
 ### Pre-trained models
 
-The following models are available from the [scConcept Hugging Face repository](https://huggingface.co/theislab/scConcept/tree/main). Use the value in the `model_name` column with `concept.load_config_and_model(model_name=...)`.
+The following models are available from the [scConcept Hugging Face repository](https://huggingface.co/theislab/scConcept/). Use the value in the `model_name` column with `concept.load_config_and_model(model_name=...)`.
 
 | `model_name` | Training corpus | Architecture | Max tokens | Species | Notes |
 | --- | --- | --- | ---: | --- | --- |
