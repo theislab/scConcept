@@ -3,7 +3,6 @@
 # PROJECT_PATH/
 # ├── data/
 # │   └── <dataset_name>/
-# │       ├── pc_gene_token_mapping.pkl
 # │       └── h5ads/
 # │           ├── <adata_1>.h5ad
 # │           ├── <adata_2>.h5ad
@@ -21,7 +20,10 @@
 # |           └── <mouse_gene_embeddings>.csv
 # |           └── ...
 # |   └── vocabulary/
-# |       └── <gene_token_mapping>.csv
+# |       └── token_mappings_per_specie/
+# |           ├── hsapiens.csv
+# |           ├── mmusculus.csv
+# |           └── ...
 
 defaults:
   - model: ContrastiveModel
@@ -57,4 +59,3 @@ PATH:
     - cjacchus
     - mmulatta
     - ptroglodytes
-

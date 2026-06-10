@@ -118,9 +118,7 @@ adata.obsm['X_scConcept_adapted'] = result['cls_cell_emb']
 
 ## Large-scale pre-training from scratch
 
-`scConcept.train()` is only for light adaptation of pretrained models or small trainings on the fly. Use [train.py](https://github.com/theislab/scConcept/blob/main/src/concept/train.py) for distributed model pre-training from scratch over large corpus of data.
-
-Before using `train.py` follow the instructions on [lamindb](https://github.com/laminlabs/lamindb) for setting up a lamin instance.
+`scConcept.train()` is only for light adaptation of pretrained models or small trainings on the fly. See the [pre-training from scratch guide](https://scconcept.readthedocs.io/en/latest/pretraining.html) for distributed large-scale training, including the expected project layout, configuration files, and example command-line overrides.
 
 
 ## Troubleshooting
