@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/theislab/scConcept/main/docs/_static/images/Logo.png" alt="scConcept" width="500">
+</p>
+
 # scConcept
 
 [![Tests][badge-tests]][tests]
@@ -55,7 +59,7 @@ scConcept provides a simple API to load and adapt [pre-trained models](https://h
 
 ### Pre-trained models
 
-The following models are available from the [scConcept Hugging Face repository](https://huggingface.co/theislab/scConcept/tree/main). Use the value in the `model_name` column with `concept.load_config_and_model(model_name=...)`.
+The following models are available from the [scConcept Hugging Face repository](https://huggingface.co/theislab/scConcept/). Use the value in the `model_name` column with `concept.load_config_and_model(model_name=...)`.
 
 | `model_name` | Training corpus | Architecture | Max tokens | Species | Notes |
 | --- | --- | --- | ---: | --- | --- |
@@ -114,9 +118,7 @@ adata.obsm['X_scConcept_adapted'] = result['cls_cell_emb']
 
 ## Large-scale pre-training from scratch
 
-`scConcept.train()` is only for light adaptation of pretrained models or small trainings on the fly. Use [train.py](https://github.com/theislab/scConcept/blob/main/src/concept/train.py) for distributed model pre-training from scratch over large corpus of data.
-
-Before using `train.py` follow the instructions on [lamindb](https://github.com/laminlabs/lamindb) for setting up a lamin instance.
+`scConcept.train()` is only for light adaptation of pretrained models or small trainings on the fly. See the [pre-training from scratch guide](https://scconcept.readthedocs.io/en/latest/pretraining.html) for distributed large-scale training, including the expected project layout, configuration files, and example command-line overrides.
 
 
 ## Troubleshooting

@@ -7,6 +7,8 @@
 :maxdepth: 1
 
 api.md
+installation.md
+pretraining.md
 changelog.md
 contributing.md
 references.md
