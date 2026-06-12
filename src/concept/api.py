@@ -396,7 +396,6 @@ class scConcept:
 
     def map_gene_names_to_ids(self, species: str, gene_names: list[str]) -> list[object]:
         """Map gene names to gene IDs case-insensitively, using ``nan`` for unavailable gene names."""
-        import numpy as np
 
         self._check_model_loaded()
         gene_name_to_id = self.get_gene_name_to_id_mapping(species)
@@ -404,11 +403,10 @@ class scConcept:
         for gene_name, gene_id in gene_name_to_id.items():
             casefolded_gene_name_to_id.setdefault(gene_name.casefold(), gene_id)
 
-        return [casefolded_gene_name_to_id.get(gene_name.casefold(), np.nan) for gene_name in gene_names]
+        return [casefolded_gene_name_to_id.get(gene_name.casefold(), gene_name) for gene_name in gene_names]
 
     def map_gene_ids_to_names(self, species: str, gene_ids: list[str]) -> list[object]:
         """Map gene IDs to gene names case-insensitively, using ``nan`` for unavailable gene IDs."""
-        import numpy as np
 
         self._check_model_loaded()
         gene_name_to_id = self.get_gene_name_to_id_mapping(species)
@@ -416,7 +414,7 @@ class scConcept:
         for gene_name, gene_id in gene_name_to_id.items():
             casefolded_gene_id_to_name.setdefault(gene_id.casefold(), gene_name)
 
-        return [casefolded_gene_id_to_name.get(gene_id.casefold(), np.nan) for gene_id in gene_ids]
+        return [casefolded_gene_id_to_name.get(gene_id.casefold(), gene_id) for gene_id in gene_ids]
 
     def decode(
         self,
