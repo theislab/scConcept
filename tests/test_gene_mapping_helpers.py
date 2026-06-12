@@ -40,7 +40,7 @@ def test_api_gene_name_to_id_helpers(tmp_path):
     mapped_genes = api.map_gene_names_to_ids("hsapiens", ["malat1", "UNKNOWN", "tp53"])
 
     assert mapped_genes[0] == "ENSG000002"
-    assert np.isnan(mapped_genes[1])
+    assert mapped_genes[0] == "UNKNOWN"
     assert mapped_genes[2] == "ENSG000001"
 
 
