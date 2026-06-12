@@ -58,3 +58,47 @@ class TransformerEncoder(nn.Module):
         if self.norm is not None:
             output = self.norm(output)
         return output
+
+
+class TransformerDecoder(nn.Module):
+    def __init__(
+        self,
+        decoder_layer,
+        num_layers: int,
+        norm: Optional[nn.Module] = None,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.layers = _get_clones(decoder_layer, num_layers)
+        self.num_layers = num_layers
+        self.norm = norm
+
+    def forward(
+        self,
+        tgt: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        tgt_key_padding_mask=None,
+        memory_key_padding_mask=None,
+        cu_seqlens: Optional[Tensor] = None,
+        max_seqlen: Optional[Tensor] = None,
+        is_causal=False,
+    ):
+        output = tgt
+        for mod in self.layers:
+            output = mod(
+                output,
+                memory,
+                tgt_mask=tgt_mask,
+                memory_mask=memory_mask,
+                tgt_key_padding_mask=tgt_key_padding_mask,
+                memory_key_padding_mask=memory_key_padding_mask,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                is_causal=is_causal,
+            )
+        if self.norm is not None:
+            output = self.norm(output)
+        return output

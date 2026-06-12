@@ -39,8 +39,6 @@ class FallbackMHA(nn.Module):
         super().__init__()
         if use_flash_attn:
             raise ValueError("FallbackMHA only supports use_flash_attn=False")
-        if cross_attn:
-            raise NotImplementedError("FallbackMHA only supports self-attention")
         if num_heads_kv not in (None, num_heads):
             raise NotImplementedError("FallbackMHA does not support grouped-query attention")
         if any(
@@ -77,8 +75,13 @@ class FallbackMHA(nn.Module):
         self.softmax_scale = softmax_scale
         self.dropout_p = dropout
 
-        qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
-        self.Wqkv = nn.Linear(embed_dim, qkv_dim, bias=qkv_proj_bias, **factory_kwargs)
+        if self.cross_attn:
+            kv_dim = 2 * self.head_dim * self.num_heads_kv
+            self.Wq = nn.Linear(embed_dim, embed_dim, bias=qkv_proj_bias, **factory_kwargs)
+            self.Wkv = nn.Linear(embed_dim, kv_dim, bias=qkv_proj_bias, **factory_kwargs)
+        else:
+            qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
+            self.Wqkv = nn.Linear(embed_dim, qkv_dim, bias=qkv_proj_bias, **factory_kwargs)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=out_proj_bias, **factory_kwargs)
 
     def forward(
@@ -92,8 +95,10 @@ class FallbackMHA(nn.Module):
         inference_params=None,
         **kwargs,
     ):
-        if x_kv is not None or mixer_subset is not None or inference_params is not None:
-            raise NotImplementedError("FallbackMHA only supports plain self-attention")
+        if mixer_subset is not None or inference_params is not None:
+            raise NotImplementedError("FallbackMHA only supports plain training/inference-free attention")
+        if x_kv is not None and not self.cross_attn:
+            raise ValueError("x_kv is only supported for cross-attention")
         if cu_seqlens is not None or max_seqlen is not None:
             raise ValueError("FallbackMHA only supports padded inputs without cu_seqlens/max_seqlen")
         if kwargs:
@@ -103,21 +108,31 @@ class FallbackMHA(nn.Module):
             raise ValueError("FallbackMHA expects padded batch-first inputs of shape (batch, seq, dim)")
 
         batch_size, seqlen, _ = x.shape
-        qkv = self.Wqkv(x).view(batch_size, seqlen, 3, self.num_heads, self.head_dim)
-        q, k, v = qkv.unbind(dim=2)
+        if self.cross_attn:
+            kv_input = x if x_kv is None else x_kv
+            if kv_input.dim() != 3 or kv_input.shape[0] != batch_size:
+                raise ValueError("x_kv must have shape (batch, seq, dim)")
+            kv_seqlen = kv_input.shape[1]
+            q = self.Wq(x).view(batch_size, seqlen, self.num_heads, self.head_dim)
+            kv = self.Wkv(kv_input).view(batch_size, kv_seqlen, 2, self.num_heads_kv, self.head_dim)
+            k, v = kv.unbind(dim=2)
+        else:
+            kv_seqlen = seqlen
+            qkv = self.Wqkv(x).view(batch_size, seqlen, 3, self.num_heads, self.head_dim)
+            q, k, v = qkv.unbind(dim=2)
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
         attn_mask = None
         if key_padding_mask is not None:
-            if key_padding_mask.shape != (batch_size, seqlen):
+            if key_padding_mask.shape != (batch_size, kv_seqlen):
                 raise ValueError("key_padding_mask must have shape (batch, seq)")
             attn_mask = torch.zeros(
                 batch_size,
                 1,
                 1,
-                seqlen,
+                kv_seqlen,
                 dtype=q.dtype,
                 device=q.device,
             )

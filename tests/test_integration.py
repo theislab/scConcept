@@ -421,9 +421,14 @@ def test_api_integration(adata, model_name, use_direct_paths, tmp_path):
         model_dir.mkdir(parents=True, exist_ok=True)
 
         # Download files
-        model_path, gene_mappings_path, config_path, panels_dir, pretrained_vocabulary_path = sc_concept._download_files_if_needed(
-            model_name, model_dir
-        )
+        (
+            model_path,
+            gene_mappings_path,
+            config_path,
+            panels_dir,
+            pretrained_vocabulary_path,
+            _decoder_model_path,
+        ) = sc_concept._download_files_if_needed(model_name, model_dir)
 
         # Load using direct paths
         sc_concept = scConcept()
@@ -786,7 +791,6 @@ def test_train_fabric_integration(train_config):
     with strategy_patch:
         trainer = FabricTrainer(train_config)
         trainer.fit()
-
 
 if __name__ == "__main__":
     pytest.main([__file__])
