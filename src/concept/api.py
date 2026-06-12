@@ -552,6 +552,9 @@ class scConcept:
             raise ValueError("Model not loaded. Call load_config_and_model() first.")
         if return_type not in {"numpy", "torch"}:
             raise ValueError("return_type must be either 'numpy' or 'torch'")
+        if adata.is_view:
+            logger.info("Input AnnData object is a view. Creating a copy before extracting embeddings.")
+            adata = adata.copy()
 
         self.model = self.model.to(self.device)
         self.model.eval()
@@ -762,6 +765,11 @@ class scConcept:
                 )
         else:
             raise ValueError("adata_list must be an AnnData object, a file path string, or a list of these")
+
+        for idx, item in enumerate(adata_list):
+            if isinstance(item, ad.AnnData) and item.is_view:
+                logger.info(f"Input AnnData object at index {idx} is a view. Creating a copy before training.")
+                adata_list[idx] = item.copy()
 
         # Infer species where not provided (only possible for AnnData items, not file paths)
         species_list = []
