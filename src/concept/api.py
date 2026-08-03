@@ -259,6 +259,7 @@ class scConcept:
         gene_mappings_path: str | Path = None,
         panels_dir: str | Path = None,
         pretrained_vocabulary_path: str | Path = None,
+        strict: bool = True,
     ):
         """
         Load configuration and initialize the model.
@@ -276,6 +277,8 @@ class scConcept:
                 ``.csv`` file. If provided, bypasses HuggingFace download
             panels_dir: Path to panels directory - if provided, bypasses HuggingFace download
             pretrained_vocabulary_path: Path to pretrained vocabulary directory (containing .csv files) - if provided, overrides config PATH.PRETRAINED_VOCABULARY
+            strict: Whether to strictly enforce that the keys in the checkpoint match the keys returned by the
+                model's state_dict (default: True). Passed to ``ContrastiveModel.load_from_checkpoint``.
         """
 
         if model_name:
@@ -330,7 +333,7 @@ class scConcept:
             "pretrained_vocabularies": pretrained_vocabularies,
         }
         try:
-            self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=True)
+            self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=strict)
         except Exception:
             logger.info("load_from_checkpoint failed; retrying with Fabric loader...")
             from lightning.fabric import Fabric
