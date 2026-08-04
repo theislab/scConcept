@@ -351,6 +351,7 @@ class scConcept:
             self.decoder_model.eval()
 
         logger.info(f"Model loaded successfully on {self.device}")
+        logger.info(f"Supported species: {', '.join(self.cfg.datamodule.species)}")
 
     def _load_decoder_model(self, decoder_model_path: str | Path):
         checkpoint = torch.load(decoder_model_path, map_location="cpu")
