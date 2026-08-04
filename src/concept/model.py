@@ -198,6 +198,7 @@ class ContrastiveModel(L.LightningModule):
         SCCONCEPT_DEBUG_PANELS        - validate panel consistency during validation
         SCCONCEPT_DEBUG_PREDICT_BATCH - dump batch tokens/values during predict_step
         SCCONCEPT_DEBUG_SAMPLE_STATS  - log per-step sample_stats during training_step
+        SCCONCEPT_DEBUG_PRECOMP_EMBS  - log whether precomputed embeddings are used each step
     """
 
     def __init__(
@@ -222,6 +223,7 @@ class ContrastiveModel(L.LightningModule):
         self.debug_panels = _env_flag("SCCONCEPT_DEBUG_PANELS")
         self.debug_predict_batch = _env_flag("SCCONCEPT_DEBUG_PREDICT_BATCH")
         self.debug_sample_stats = _env_flag("SCCONCEPT_DEBUG_SAMPLE_STATS")
+        self.debug_precomp_embs = _env_flag("SCCONCEPT_DEBUG_PRECOMP_EMBS")
         self.flash_attention = config["flash_attention"]
         if self.flash_attention and not FLASH_ATTN_AVAILABLE:
             logger.warning(
@@ -550,7 +552,11 @@ class ContrastiveModel(L.LightningModule):
             cell_embs_1 = self.projection(cell_embs_1)
             cell_embs_2 = self.projection(cell_embs_2)
 
-        if not self.precomp_embs_key or self.precomp_embs_key not in batch:
+        using_precomp_embs = bool(self.precomp_embs_key) and self.precomp_embs_key in batch
+        if self.debug_precomp_embs:
+            logger.debug(f"using precomputed embeddings: {using_precomp_embs}")
+
+        if not using_precomp_embs:
             cell_embs_1 = F.normalize(cell_embs_1, p=2, dim=1)
             cell_embs_2 = F.normalize(cell_embs_2, p=2, dim=1)
             logits = torch.mm(cell_embs_1, cell_embs_2.t()) * self.logit_scale.exp()
