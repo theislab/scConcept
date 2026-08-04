@@ -197,7 +197,7 @@ class ContrastiveModel(L.LightningModule):
         SCCONCEPT_DEBUG_PANELS        - validate panel consistency during validation
         SCCONCEPT_DEBUG_PREDICT_BATCH - dump batch tokens/values during predict_step
         SCCONCEPT_DEBUG_SAMPLE_STATS  - log per-step sample_stats during training_step
-        SCCONCEPT_DEBUG_PRECOMP_EMBS  - log whether precomputed embeddings are used each step
+        SCCONCEPT_DEBUG_PRECOMP_EMBS  - log whether precomputed embeddings are used on each logging step
     """
 
     def __init__(
@@ -547,7 +547,7 @@ class ContrastiveModel(L.LightningModule):
             cell_embs_2 = self.projection(cell_embs_2)
 
         using_precomp_embs = bool(self.precomp_embs_key) and self.precomp_embs_key in batch
-        if self.debug_precomp_embs:
+        if self.debug_precomp_embs and self.LOGGING_STEP:
             logger.debug(f"using precomputed embeddings: {using_precomp_embs}")
 
         if not using_precomp_embs:
