@@ -197,6 +197,7 @@ class ContrastiveModel(L.LightningModule):
         SCCONCEPT_DEBUG_ARGMAX_MATCH  - log periodic argmax/match diagnostics during training
         SCCONCEPT_DEBUG_PANELS        - validate panel consistency during validation
         SCCONCEPT_DEBUG_PREDICT_BATCH - dump batch tokens/values during predict_step
+        SCCONCEPT_DEBUG_SAMPLE_STATS  - log per-step sample_stats during training_step
     """
 
     def __init__(
@@ -220,6 +221,7 @@ class ContrastiveModel(L.LightningModule):
         self.debug_argmax_match = _env_flag("SCCONCEPT_DEBUG_ARGMAX_MATCH")
         self.debug_panels = _env_flag("SCCONCEPT_DEBUG_PANELS")
         self.debug_predict_batch = _env_flag("SCCONCEPT_DEBUG_PREDICT_BATCH")
+        self.debug_sample_stats = _env_flag("SCCONCEPT_DEBUG_SAMPLE_STATS")
         self.flash_attention = config["flash_attention"]
         if self.flash_attention and not FLASH_ATTN_AVAILABLE:
             logger.warning(
@@ -688,6 +690,8 @@ class ContrastiveModel(L.LightningModule):
             self.log_metrics_dict(metrics, "train", batch_size=len(batch["tokens_1"]))
             sample_stats = self._get_sample_stats(batch)
             sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
+            if self.debug_sample_stats:
+                logger.debug(f"sample_stats: {sample_stats}")
             self.sample_stats["train"].append(sample_stats)
 
         if self.LOGGING_STEP and "panel_1" in batch and "panel_2" in batch:
