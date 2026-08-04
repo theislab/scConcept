@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 FLASH_ATTN_AVAILABLE = importlib.util.find_spec("flash_attn") is not None
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 class GeneEncoder(nn.Module):
     def __init__(
         self,
@@ -185,6 +189,16 @@ class ContrastiveModel(L.LightningModule):
 
     The model combines gene/value encoders with a transformer backbone and supports
     contrastive and MLM-style objectives used for single-cell representation learning.
+
+    Debug logging is controlled per-topic via environment variables (set to "1", "true",
+    "yes", or "on" to enable) rather than a constructor argument:
+        SCCONCEPT_DEBUG_BATCH_VALUES  - dump raw batch values for the first few train batches
+        SCCONCEPT_DEBUG_SEQLEN_CORR   - log correlation between logits and sequence length
+        SCCONCEPT_DEBUG_ARGMAX_MATCH  - log periodic argmax/match diagnostics during training
+        SCCONCEPT_DEBUG_PANELS        - validate panel consistency during validation
+        SCCONCEPT_DEBUG_PREDICT_BATCH - dump batch tokens/values during predict_step
+        SCCONCEPT_DEBUG_SAMPLE_STATS  - log per-step sample_stats during training_step
+        SCCONCEPT_DEBUG_PRECOMP_EMBS  - log whether precomputed embeddings are used each step
     """
 
     def __init__(
@@ -198,13 +212,18 @@ class ContrastiveModel(L.LightningModule):
         world_size: int = 1,
         val_loader_names=[],
         obs_keys: List[str] = [],
-        debug: bool = False,
     ):
         if config["mlm_loss_weight"] > 0:
             assert config["decoder_head"] == True, "Decoder head must be enabled for MLM loss"
 
         super().__init__()
-        self.debug = debug
+        self.debug_batch_values = _env_flag("SCCONCEPT_DEBUG_BATCH_VALUES")
+        self.debug_seqlen_corr = _env_flag("SCCONCEPT_DEBUG_SEQLEN_CORR")
+        self.debug_argmax_match = _env_flag("SCCONCEPT_DEBUG_ARGMAX_MATCH")
+        self.debug_panels = _env_flag("SCCONCEPT_DEBUG_PANELS")
+        self.debug_predict_batch = _env_flag("SCCONCEPT_DEBUG_PREDICT_BATCH")
+        self.debug_sample_stats = _env_flag("SCCONCEPT_DEBUG_SAMPLE_STATS")
+        self.debug_precomp_embs = _env_flag("SCCONCEPT_DEBUG_PRECOMP_EMBS")
         self.flash_attention = config["flash_attention"]
         if self.flash_attention and not FLASH_ATTN_AVAILABLE:
             logger.warning(
@@ -488,7 +507,7 @@ class ContrastiveModel(L.LightningModule):
             "seq_lengths": list(batch["seq_length_2"]),
         }
 
-        if self.debug and batch_idx < 5 and self.stage == "train":
+        if self.debug_batch_values and batch_idx < 5 and self.stage == "train":
             logger.debug(f"batch_1 values: {batch_1['values'][0]}")
             logger.debug(f"batch_2 values: {batch_2['values'][0]}")
 
@@ -533,7 +552,11 @@ class ContrastiveModel(L.LightningModule):
             cell_embs_1 = self.projection(cell_embs_1)
             cell_embs_2 = self.projection(cell_embs_2)
 
-        if not self.precomp_embs_key or self.precomp_embs_key not in batch:
+        using_precomp_embs = bool(self.precomp_embs_key) and self.precomp_embs_key in batch
+        if self.debug_precomp_embs:
+            logger.debug(f"using precomputed embeddings: {using_precomp_embs}")
+
+        if not using_precomp_embs:
             cell_embs_1 = F.normalize(cell_embs_1, p=2, dim=1)
             cell_embs_2 = F.normalize(cell_embs_2, p=2, dim=1)
             logits = torch.mm(cell_embs_1, cell_embs_2.t()) * self.logit_scale.exp()
@@ -615,7 +638,7 @@ class ContrastiveModel(L.LightningModule):
             metrics["views_mixing_score"] = views_mixing_score.detach()
             metrics["views_mixing_score_top_5"] = views_mixing_score_top_5.detach()
 
-        if self.debug and self.LOGGING_STEP:
+        if self.debug_seqlen_corr and self.LOGGING_STEP:
             nonzero_cnt_1 = (batch_1["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
             nonzero_cnt_2 = (batch_2["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
             nonzero_cnt_1 = self.all_gather_concat(nonzero_cnt_1)
@@ -635,7 +658,7 @@ class ContrastiveModel(L.LightningModule):
             metrics["knn_r2_seqlength"] = length_r2.detach() if hasattr(length_r2, "detach") else length_r2
 
         if (
-            self.debug
+            self.debug_argmax_match
             and self.world_size == 1
             and self.global_rank == 0
             and self.stage == "train"
@@ -673,6 +696,8 @@ class ContrastiveModel(L.LightningModule):
             self.log_metrics_dict(metrics, "train", batch_size=len(batch["tokens_1"]))
             sample_stats = self._get_sample_stats(batch)
             sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
+            if self.debug_sample_stats:
+                logger.debug(f"sample_stats: {sample_stats}")
             self.sample_stats["train"].append(sample_stats)
 
         if self.LOGGING_STEP and "panel_1" in batch and "panel_2" in batch:
@@ -708,7 +733,7 @@ class ContrastiveModel(L.LightningModule):
         sample_stats.update({k: metrics[k] for k in ["recall@1", "recall@1_combined"]})
         self.sample_stats["val"][val_name].append(sample_stats)
 
-        if self.debug and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
+        if self.debug_panels and "panel_1" in batch and "panel_2" in batch and self.LOGGING_STEP:
             self._validate_panels(batch["panel_1"], batch["panel_2"])
 
     def predict_step(self, batch, batch_idx, use_learnable_embs: bool = True):
@@ -723,7 +748,7 @@ class ContrastiveModel(L.LightningModule):
 
         batch = self.add_cls_token(batch)
 
-        if self.debug and batch_idx % 20 == 0:
+        if self.debug_predict_batch and batch_idx % 20 == 0:
             logger.debug(f"batch tokens: {batch['tokens'][0]}")
             logger.debug(f"batch values: {batch['values'][0]}")
 
@@ -858,7 +883,6 @@ class ContrastiveModel(L.LightningModule):
             if key in batch:
                 value = self.all_gather_concat(batch[key])
                 sample_stats[f"same_{key}"] = (value[0] == value).all().detach()
-
         return sample_stats
 
     def add_cls_token(self, batch):
