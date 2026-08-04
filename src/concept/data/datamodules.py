@@ -45,6 +45,8 @@ class AnnDataModule(L.LightningDataModule):
         self.dataloader_kwargs = dataloader_kwargs
         self.default_max_tokens = dataset_kwargs["train"]["max_tokens"]
 
+        obsm_keys = [precomp_embs_key] if precomp_embs_key is not None else None
+
         dataset_kwargs_shared = {
             "obs_keys": obs_keys,
             "obsm_key": precomp_embs_key,
@@ -72,7 +74,7 @@ class AnnDataModule(L.LightningDataModule):
                     adata_list=train_split,
                     obs_keys=obs_keys,
                     layers_keys=["X"],
-                    obsm_keys=precomp_embs_key,
+                    obsm_keys=obsm_keys,
                     keys_to_cache=within_group_sampling,
                 )
             else:
@@ -88,7 +90,7 @@ class AnnDataModule(L.LightningDataModule):
                     join=join,
                     encode_labels=True,
                     parallel=True,
-                    obsm_keys=precomp_embs_key,
+                    obsm_keys=obsm_keys,
                 )
 
             if isinstance(self.tokenizer, MultiSpeciesTokenizer):
@@ -131,7 +133,7 @@ class AnnDataModule(L.LightningDataModule):
                         adata_list=val_split,
                         obs_keys=obs_keys,
                         layers_keys=["X"],
-                        obsm_keys=precomp_embs_key,
+                        obsm_keys=obsm_keys,
                         keys_to_cache=within_group_sampling,
                     )
                 else:
@@ -147,7 +149,7 @@ class AnnDataModule(L.LightningDataModule):
                         join=join,
                         encode_labels=True,
                         parallel=True,
-                        obsm_keys=precomp_embs_key,
+                        obsm_keys=obsm_keys,
                     )
 
                 if isinstance(self.tokenizer, MultiSpeciesTokenizer):
@@ -172,7 +174,7 @@ class AnnDataModule(L.LightningDataModule):
                     adata_list=test_split,
                     obs_keys=None,
                     layers_keys=["X"],
-                    obsm_keys=precomp_embs_key,
+                    obsm_keys=obsm_keys,
                     keys_to_cache=None,
                     uns_keys=None,
                 )
