@@ -192,9 +192,8 @@ class ContrastiveModel(L.LightningModule):
 
     Debug logging is controlled per-topic via environment variables (set to "1", "true",
     "yes", or "on" to enable) rather than a constructor argument:
-        SCCONCEPT_DEBUG_BATCH_VALUES  - dump raw batch values for the first few train batches
         SCCONCEPT_DEBUG_SEQLEN_CORR   - log correlation between logits and sequence length
-        SCCONCEPT_DEBUG_ARGMAX_MATCH  - log periodic argmax/match diagnostics during training
+        SCCONCEPT_DEBUG_ARGMAX_MATCH  - log argmax/match diagnostics on each logging step during training
         SCCONCEPT_DEBUG_PANELS        - validate panel consistency during validation
         SCCONCEPT_DEBUG_PREDICT_BATCH - dump batch tokens/values during predict_step
         SCCONCEPT_DEBUG_SAMPLE_STATS  - log per-step sample_stats during training_step
@@ -217,7 +216,6 @@ class ContrastiveModel(L.LightningModule):
             assert config["decoder_head"] == True, "Decoder head must be enabled for MLM loss"
 
         super().__init__()
-        self.debug_batch_values = _env_flag("SCCONCEPT_DEBUG_BATCH_VALUES")
         self.debug_seqlen_corr = _env_flag("SCCONCEPT_DEBUG_SEQLEN_CORR")
         self.debug_argmax_match = _env_flag("SCCONCEPT_DEBUG_ARGMAX_MATCH")
         self.debug_panels = _env_flag("SCCONCEPT_DEBUG_PANELS")
@@ -507,10 +505,6 @@ class ContrastiveModel(L.LightningModule):
             "seq_lengths": list(batch["seq_length_2"]),
         }
 
-        if self.debug_batch_values and batch_idx < 5 and self.stage == "train":
-            logger.debug(f"batch_1 values: {batch_1['values'][0]}")
-            logger.debug(f"batch_2 values: {batch_2['values'][0]}")
-
         if self.values_only_sanity_check:
             batch_1["values"] = batch_1["values"][:, torch.randperm(batch_1["tokens"].size(1))]
             batch_2["values"] = batch_2["values"][:, torch.randperm(batch_2["tokens"].size(1))]
@@ -662,7 +656,7 @@ class ContrastiveModel(L.LightningModule):
             and self.world_size == 1
             and self.global_rank == 0
             and self.stage == "train"
-            and batch_idx % 1000 == 0
+            and self.LOGGING_STEP
         ):
             logger.debug(f"Argmax: {logits_both_batch.argmax(dim=1)}")
             logger.debug(f'batch_1["tokens"][0]: {batch_1["tokens"][0]}')
@@ -744,11 +738,11 @@ class ContrastiveModel(L.LightningModule):
 
         context_size = batch["tokens"].shape[1]
         nonzero_cnt = (batch["tokens"] != self.PAD_TOKEN_ID).sum(dim=1)
-        # logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
 
         batch = self.add_cls_token(batch)
 
         if self.debug_predict_batch and batch_idx % 20 == 0:
+            logger.debug("%d, %d", int(context_size), nonzero_cnt[0].item())
             logger.debug(f"batch tokens: {batch['tokens'][0]}")
             logger.debug(f"batch values: {batch['values'][0]}")
 
