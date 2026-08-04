@@ -765,7 +765,8 @@ class ContrastiveModel(L.LightningModule):
         if self.projection_dim:
             cell_embs = self.projection(cell_embs)
 
-        cell_embs = F.normalize(cell_embs, p=2, dim=1)
+        if not self.precomp_embs_key:
+            cell_embs = F.normalize(cell_embs, p=2, dim=1)
 
         return {
             "pred": pred,

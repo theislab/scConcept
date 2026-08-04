@@ -331,6 +331,7 @@ class scConcept:
             "cls_token_id": self.tokenizer.CLS_TOKEN,
             "vocab_sizes": self.tokenizer.vocab_sizes,
             "pretrained_vocabularies": pretrained_vocabularies,
+            "precomp_embs_key": self.cfg.datamodule.precomp_embs_key,
         }
         try:
             self.model = ContrastiveModel.load_from_checkpoint(str(model_path), **model_args, strict=strict)
@@ -853,6 +854,7 @@ class scConcept:
                 self.model.world_size = 1
             if hasattr(self.model, "val_loader_names"):
                 self.model.val_loader_names = []
+            self.model.precomp_embs_key = self.cfg.datamodule.precomp_embs_key
             self.model.train()
         else:
             model_args = {
@@ -862,6 +864,7 @@ class scConcept:
                 "vocab_sizes": self.tokenizer.vocab_sizes,
                 "world_size": 1,
                 "val_loader_names": [],
+                "precomp_embs_key": self.cfg.datamodule.precomp_embs_key,
             }
             self.model = ContrastiveModel(**model_args)
 
