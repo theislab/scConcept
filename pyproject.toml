@@ -22,14 +22,13 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "anndata",
   # for debug logging (referenced from the issue template)
   "session-info2",
-  "numpy",
-  "pandas",
+  "numpy<3",
+  "pandas<3",
   "torch==2.9",
   "torchvision",
-  "lightning",
+  "lightning<3",
   "scanpy>=1.10.0",
   "hydra-core",
   "wandb>=0.20",
