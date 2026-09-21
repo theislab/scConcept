@@ -546,11 +546,11 @@ class ContrastiveModel(L.LightningModule):
             cell_embs_1 = self.projection(cell_embs_1)
             cell_embs_2 = self.projection(cell_embs_2)
 
-        using_precomp_embs = bool(self.precomp_embs_key) and self.precomp_embs_key in batch
         if self.debug_precomp_embs and self.LOGGING_STEP:
+            using_precomp_embs = bool(self.precomp_embs_key) and self.precomp_embs_key in batch
             logger.debug(f"using precomputed embeddings: {using_precomp_embs}")
 
-        if not using_precomp_embs:
+        if not self.precomp_embs_key:
             cell_embs_1 = F.normalize(cell_embs_1, p=2, dim=1)
             cell_embs_2 = F.normalize(cell_embs_2, p=2, dim=1)
             logits = torch.mm(cell_embs_1, cell_embs_2.t()) * self.logit_scale.exp()
@@ -558,7 +558,8 @@ class ContrastiveModel(L.LightningModule):
             cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
             logits_both_batch = torch.mm(cell_embs_concat_1, cell_embs_concat_2.t()) * self.logit_scale.exp()
         else:
-            cell_embs_2 = self.all_gather_concat(batch[self.precomp_embs_key])
+            if self.precomp_embs_key in batch:
+                cell_embs_2 = self.all_gather_concat(batch[self.precomp_embs_key])
             logits = (1.0 / (torch.cdist(cell_embs_1, cell_embs_2, p=2) + 1e-4)) * self.logit_scale.exp()
             cell_embs_concat_1 = torch.concat([cell_embs_1, cell_embs_2], dim=0)
             cell_embs_concat_2 = torch.concat([cell_embs_2, cell_embs_1], dim=0)
