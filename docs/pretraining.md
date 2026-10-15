@@ -152,7 +152,7 @@ To use a different config group, override it on the command line. For example:
 ```bash
 python src/concept/train.py \
   PATH.PROJECT_PATH=/path/to/project \
-  datamodule=DataModuleAdvanced \
+  datamodule=DataModuleAdvanced_2025_Primary \
   model.training.max_steps=1000000
 ```
 
