@@ -8,7 +8,7 @@
 [![Documentation][badge-docs]][documentation]
 
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/scConcept/test.yaml?branch=main
-[badge-docs]: https://img.shields.io/readthedocs/scConcept
+[badge-docs]: https://img.shields.io/readthedocs/scconcept
 
 This repository contains the python package to train and use scConcept (Single-cell contrastive cell pre-training) method for single-cell transcriptomics.
 
